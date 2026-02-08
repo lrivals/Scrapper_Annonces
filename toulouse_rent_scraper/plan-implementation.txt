@@ -1,0 +1,278 @@
+Parfait 👍
+Linux + Python, et **SeLoger** comme cible principale → on part sur une **approche robuste et réaliste**, parce que SeLoger est **JS-heavy + anti-scraping**.
+
+Je te donne **un plan d’implémentation précis**, orienté *production personnelle*, avec les **bons choix techniques** (pas naïfs).
+
+---
+
+# 🧭 PLAN D’IMPLÉMENTATION – SCRAPER SELOGER (Linux / Python)
+
+## 🎯 Objectif rappel
+
+* Trouver **des annonces de location**
+* 📍 **proches de l’ENAC (Rangueil / Ramonville)**
+* 💰 **loyer ≤ 450 €**
+* 🔗 **récupérer le lien exact de l’annonce**
+* Automatisable et maintenable
+
+---
+
+## ⚠️ Réalité SeLoger (important)
+
+SeLoger :
+
+* ❌ ne fournit PAS le contenu dans le HTML brut
+* ❌ bloque `requests` / `BeautifulSoup` seuls
+* ❌ détecte Selenium “basique”
+* ✅ fonctionne avec **Playwright** (meilleur choix en 2026)
+
+👉 **Conclusion technique**
+➡️ Python + **Playwright** (et non Selenium)
+
+---
+
+## 🧩 PHASE 0 — Environnement Linux
+
+### 0.1 Dépendances système
+
+```bash
+sudo apt update
+sudo apt install python3 python3-pip -y
+```
+
+### 0.2 Environnement virtuel
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+```
+
+### 0.3 Librairies Python
+
+```bash
+pip install playwright pandas geopy python-dotenv
+```
+
+Installer les navigateurs Playwright :
+
+```bash
+playwright install chromium
+```
+
+---
+
+## 🧩 PHASE 1 — Définition des critères SeLoger
+
+### 1.1 Critères métier
+
+| Critère       | Valeur               |
+| ------------- | -------------------- |
+| Type          | Location             |
+| Budget max    | 450 €                |
+| Ville         | Toulouse             |
+| Quartiers     | Rangueil, Ramonville |
+| Distance ENAC | ≤ 2 km               |
+| Type logement | Studio / Chambre     |
+
+---
+
+### 1.2 Adresse ENAC (référence)
+
+```
+ENAC
+7 Avenue Édouard Belin
+31400 Toulouse
+```
+
+👉 Servira au calcul de distance GPS.
+
+---
+
+## 🧩 PHASE 2 — Analyse SeLoger (manuelle)
+
+Quand tu fais une recherche sur SeLoger :
+
+* Les filtres sont encodés **dans l’URL**
+* Les annonces sont chargées **dynamiquement**
+* Le lien final de chaque annonce est **accessible**
+
+Exemple de structure (indicatif) :
+
+```
+https://www.seloger.com/list.htm?projects=1&types=1&priceMax=450&locations=...
+```
+
+⚠️ L’ID des quartiers est spécifique à SeLoger → on les récupère **via inspection réseau**.
+
+---
+
+## 🧩 PHASE 3 — Architecture logicielle
+
+```
+seloger_scraper/
+│
+├── main.py
+├── seloger_scraper.py
+├── filters.py
+├── geo.py
+├── storage.py
+└── config.py
+```
+
+---
+
+## 🧩 PHASE 4 — Scraper SeLoger (Playwright)
+
+### 4.1 Rôle du scraper
+
+* Charger la page avec filtres
+* Attendre le rendu JS
+* Extraire :
+
+  * lien annonce
+  * prix
+  * localisation
+  * surface (si dispo)
+
+---
+
+### 4.2 Logique Playwright (simplifiée)
+
+```python
+from playwright.sync_api import sync_playwright
+
+def scrape_seloger(url):
+    results = []
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+
+        page.goto(url, timeout=60000)
+        page.wait_for_selector("article")
+
+        cards = page.query_selector_all("article")
+
+        for card in cards:
+            try:
+                link = card.query_selector("a").get_attribute("href")
+                price = card.inner_text()
+                results.append({
+                    "site": "SeLoger",
+                    "link": link,
+                    "raw": price
+                })
+            except:
+                continue
+
+        browser.close()
+
+    return results
+```
+
+👉 **Lien = priorité absolue**, les autres infos peuvent être enrichies ensuite.
+
+---
+
+## 🧩 PHASE 5 — Filtrage ENAC (clé du projet)
+
+### 5.1 Géocodage
+
+* Extraire adresse ou quartier
+* Convertir → coordonnées GPS
+* Calculer distance ENAC ↔ annonce
+
+```python
+from geopy.distance import geodesic
+```
+
+Critère :
+
+```python
+if distance_km <= 2:
+    keep = True
+```
+
+---
+
+## 🧩 PHASE 6 — Normalisation & nettoyage
+
+Structure finale standardisée :
+
+```python
+{
+  "site": "SeLoger",
+  "price": 430,
+  "district": "Rangueil",
+  "distance_enac": 1.4,
+  "url": "...",
+  "scraped_at": "2026-02-06"
+}
+```
+
+---
+
+## 🧩 PHASE 7 — Déduplication
+
+Stratégie simple mais efficace :
+
+* clé unique = `(prix + quartier + surface)`
+* si déjà vu → ignore
+
+---
+
+## 🧩 PHASE 8 — Stockage
+
+### Option recommandée
+
+➡️ **SQLite**
+
+Pourquoi ?
+
+* Léger
+* Persistant
+* Déduplication facile
+* Automatisable
+
+---
+
+## 🧩 PHASE 9 — Automatisation Linux
+
+### Cron (toutes les 8h)
+
+```bash
+crontab -e
+```
+
+```bash
+0 */8 * * * /home/user/seloger/venv/bin/python main.py
+```
+
+---
+
+## 🚀 PHASE 10 — Extensions futures
+
+* Ajout PAP / Bien’ici
+* Alertes Telegram
+* Score “attractivité”
+* Historique des prix
+* Détection annonces fraîchement publiées
+
+---
+
+## ✅ Prochaine étape concrète (je te guide)
+
+👉 **Étape suivante logique** :
+
+1. Je te fais **l’URL SeLoger exacte** avec :
+
+   * Toulouse
+   * budget ≤ 450 €
+   * quartiers ENAC
+2. Puis :
+
+   * scraper Playwright **prêt à lancer**
+   * filtrage ENAC inclus
+
+Dis-moi juste :
+👉 **tu veux rayon 2 km ou 3 km autour de l’ENAC ?**

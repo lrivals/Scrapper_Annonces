@@ -1,0 +1,8 @@
+# Core dependencies
+playwright>=1.40.0
+playwright-stealth>=2.0.0
+geopy>=2.4.0
+
+# Development dependencies
+pytest>=7.4.0
+pytest-cov>=4.1.0

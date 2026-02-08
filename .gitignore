@@ -1,0 +1,18 @@
+# Environnement virtuel
+venv/
+env/
+.env
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Logs et Données (on ne versionne pas la DB locale ni les logs)
+toulouse_rent_scraper/logs/*.log
+toulouse_rent_scraper/data/*.sqlite
+toulouse_rent_scraper/data/browser_profile/
+
+# Fichiers système et IDE
+.DS_Store
+.vscode/
+.idea/
