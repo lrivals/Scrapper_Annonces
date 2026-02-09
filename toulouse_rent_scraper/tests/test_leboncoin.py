@@ -43,7 +43,15 @@ class TestLeBonCoinExtract:
     def _make_card(self, href=None, title=None, price=None, location=None):
         """Crée un mock de carte LeBonCoin."""
         card = MagicMock()
-        card.get_attribute.return_value = href
+
+        def get_attribute(attr):
+            if attr == "href":
+                return href
+            if attr == "aria-label":
+                return title
+            return None
+
+        card.get_attribute.side_effect = get_attribute
 
         def query_selector(selector):
             el = MagicMock()
@@ -59,6 +67,12 @@ class TestLeBonCoinExtract:
             return None
 
         card.query_selector.side_effect = query_selector
+        if location:
+            sr_el = MagicMock()
+            sr_el.inner_text.return_value = f"Située à {location}."
+            card.query_selector_all.return_value = [sr_el]
+        else:
+            card.query_selector_all.return_value = []
         card.inner_text.return_value = f"{title}\n{price}\n{location}"
         return card
 

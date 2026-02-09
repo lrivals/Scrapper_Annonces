@@ -4,6 +4,7 @@
 # =========================
 
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 from typing import Dict
 
@@ -28,9 +29,17 @@ def init_db():
             location_raw TEXT,
             distance_enac_km REAL,
             url TEXT UNIQUE,
-            scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+
+    # Migration : ajout de created_at si la colonne n'existe pas
+    cur.execute("PRAGMA table_info(annonces)")
+    columns = [row[1] for row in cur.fetchall()]
+    if "created_at" not in columns:
+        cur.execute("ALTER TABLE annonces ADD COLUMN created_at TIMESTAMP")
+        cur.execute("UPDATE annonces SET created_at = scraped_at WHERE created_at IS NULL")
 
     conn.commit()
     conn.close()
@@ -65,8 +74,9 @@ def insert_annonce(annonce: Dict) -> bool:
             price,
             location_raw,
             distance_enac_km,
-            url
-        ) VALUES (?, ?, ?, ?, ?, ?)
+            url,
+            created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
     """, (
         annonce.get("site"),
         annonce.get("title"),
@@ -74,6 +84,7 @@ def insert_annonce(annonce: Dict) -> bool:
         annonce.get("location_raw"),
         annonce.get("distance_enac_km"),
         annonce.get("url"),
+        datetime.now().isoformat(),
     ))
 
     conn.commit()

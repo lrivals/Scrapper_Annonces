@@ -4,12 +4,14 @@
 # =========================
 
 import argparse
+from datetime import datetime
 
 from scrapers import SCRAPERS
 from scrapers.seloger import SeLogerScraper
 from scrapers.leboncoin import LeBonCoinScraper
 from filters.price_and_distance import apply_price_and_distance_filter
 from storage.sqlite import init_db, insert_annonce
+from reporting.generator import generate_summary_reports
 from utils.logger import setup_logger
 from utils.validation import validate_annonce
 
@@ -43,6 +45,8 @@ def main():
 
     sites_label = ", ".join(s().site_name() for s in scrapers_to_run)
     logger.info(f"Demarrage du scraper Toulouse / ENAC — sites: {sites_label}")
+
+    run_start_time = datetime.now()
 
     try:
         # Initialisation base
@@ -119,6 +123,10 @@ def main():
         logger.info(f"  - Annonces rejetées : {total_rejected}")
         logger.info(f"  - Nouvelles annonces insérées : {total_inserted}")
         logger.info("🎯 Terminé.")
+
+        # Génération des rapports Markdown
+        generate_summary_reports(run_start_time)
+        logger.info("📄 Rapports générés dans le dossier reports/")
 
     except Exception as e:
         logger.error(f"❌ Erreur critique dans le pipeline : {e}", exc_info=True)

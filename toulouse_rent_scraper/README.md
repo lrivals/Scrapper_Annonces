@@ -55,14 +55,27 @@ python main.py
 ```
 
 Le script va :
-1. **Scraper** SeLoger avec les critères définis
+1. **Scraper** SeLoger et LeBonCoin avec les critères définis
 2. **Filtrer** les annonces par prix et distance ENAC
 3. **Stocker** les nouvelles annonces dans `data/annonces.sqlite`
-4. **Générer** des logs dans `logs/`
+4. **Générer** des rapports Markdown dans `reports/`
+5. **Générer** des logs dans `logs/`
+
+### Options
+
+```bash
+python main.py --seloger     # SeLoger uniquement
+python main.py --leboncoin   # LeBonCoin uniquement
+python main.py --all         # Tous les sites (défaut)
+```
 
 ### Consulter les résultats
 
-Les annonces sont stockées dans `data/annonces.sqlite`. Vous pouvez les consulter avec :
+Après chaque exécution, deux rapports sont générés automatiquement dans `reports/` :
+- **`nouvelles_annonces.md`** — Les annonces ajoutées lors de cette exécution
+- **`toutes_les_annonces.md`** — Tableau complet de toutes les annonces en base
+
+Vous pouvez aussi interroger la base directement :
 
 ```bash
 sqlite3 data/annonces.sqlite "SELECT title, price, distance_enac_km, url FROM annonces ORDER BY distance_enac_km;"
@@ -95,13 +108,17 @@ toulouse_rent_scraper/
 ├── requirements.txt       # Dépendances Python
 │
 ├── scrapers/              # Scrapers par site
-│   └── seloger.py
+│   ├── seloger.py
+│   └── leboncoin.py
 │
 ├── filters/               # Filtres métier
 │   └── price_and_distance.py
 │
 ├── storage/               # Stockage SQLite
 │   └── sqlite.py
+│
+├── reporting/             # Génération de rapports
+│   └── generator.py
 │
 ├── geo/                   # Géolocalisation
 │   └── distance.py
@@ -114,8 +131,13 @@ toulouse_rent_scraper/
 ├── tests/                 # Tests unitaires
 │   ├── conftest.py
 │   ├── test_filters.py
+│   ├── test_leboncoin.py
 │   ├── test_storage.py
 │   └── test_validation.py
+│
+├── reports/               # Rapports générés (gitignored)
+│   ├── nouvelles_annonces.md
+│   └── toutes_les_annonces.md
 │
 ├── data/                  # Données générées
 │   └── annonces.sqlite
@@ -206,7 +228,8 @@ Usage personnel - ENAC Toulouse
 
 ## 🔧 Améliorations futures
 
-- [ ] Scraper multi-sites (LeBonCoin, PAP)
+- [x] Scraper multi-sites (SeLoger, LeBonCoin)
+- [x] Rapports Markdown automatiques
 - [ ] Notifications par email/Telegram
 - [ ] Dashboard de visualisation (Streamlit)
 - [ ] API REST
@@ -214,4 +237,4 @@ Usage personnel - ENAC Toulouse
 
 ---
 
-**Dernière mise à jour :** 2026-02-06
+**Dernière mise à jour :** 2026-02-09
