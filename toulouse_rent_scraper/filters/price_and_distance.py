@@ -6,7 +6,7 @@
 import re
 from typing import Dict, Optional
 
-from config import MAX_RENT_EUR, MAX_DISTANCE_KM
+from config import MAX_RENT_EUR, MIN_RENT_EUR, MAX_DISTANCE_KM
 from geo.distance import distance_from_enac_km
 
 
@@ -42,7 +42,7 @@ def apply_price_and_distance_filter(annonce: Dict) -> Optional[Dict]:
 
     # ---- PRIX ----
     price = parse_price(annonce.get("price"))
-    if price is None or price > MAX_RENT_EUR:
+    if price is None or price < MIN_RENT_EUR or price > MAX_RENT_EUR:
         return None
 
     # ---- LOCALISATION ----

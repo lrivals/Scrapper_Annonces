@@ -24,7 +24,7 @@ Sprint 2 (API & Dashboard)
 
 | Sprint | Titre | Statut | Progression | Début | Fin |
 |--------|-------|--------|-------------|-------|-----|
-| 1 | Notifications & Export | 🔲 À faire | 0/6 | — | — |
+| 1 | Notifications & Export | 🔵 En cours | 3/6 | 2026-02-09 | — |
 | 2 | API REST & Dashboard | 🔲 À faire | 0/6 | — | — |
 | 3 | Enrichissement annonces | 🔲 À faire | 0/6 | — | — |
 | 4 | Scraper PAP.fr | 🔲 À faire | 0/6 | — | — |
@@ -40,12 +40,12 @@ Sprint 2 (API & Dashboard)
 
 | # | Tâche | Statut | Notes |
 |---|-------|--------|-------|
-| 1.1 | Fix parsing prix SeLoger | 🔲 | Prix à 11€ dans la DB |
-| 1.2 | Export CSV/JSON | 🔲 | |
-| 1.3 | Notifications Telegram | 🔲 | Nécessite création bot |
-| 1.4 | Notification email SMTP | 🔲 | |
-| 1.5 | Purge annonces expirées | 🔲 | |
-| 1.6 | Tests notifications | 🔲 | |
+| 1.1 | Fix parsing prix SeLoger | ✅ | MIN_RENT_EUR=50, 24 annonces purgées |
+| 1.2 | Export CSV/JSON | ✅ | `--export csv/json`, 10 tests |
+| 1.3 | Notifications Telegram | ⏸️ | Reporté |
+| 1.4 | Notification email SMTP | ⏸️ | Reporté |
+| 1.5 | Purge annonces expirées | ✅ | `--purge`, colonne status, 6 tests |
+| 1.6 | Tests notifications | ⏸️ | Dépend de 1.3/1.4 |
 
 ---
 
@@ -116,7 +116,7 @@ Sprint 2 (API & Dashboard)
 | v0.1 | 2026-02-06 | MVP — Scraper SeLoger + filtres + SQLite |
 | v0.2 | 2026-02-08 | Ajout scraper LeBonCoin |
 | v0.3 | 2026-02-09 | Module reporting Markdown + colonne `created_at` + fix tests LBC |
-| v0.4 | — | *Sprint 1 — Notifications & Export* |
+| v0.4 | 2026-02-09 | Sprint 1 partiel — Fix prix, export CSV/JSON, purge expirées |
 | v0.5 | — | *Sprint 3+4 — Enrichissement + PAP.fr* |
 | v0.6 | — | *Sprint 5 — Rapports avancés* |
 | v1.0 | — | *Sprint 2 — API REST + Dashboard + Docker* |
@@ -132,6 +132,8 @@ Sprint 2 (API & Dashboard)
 | 2026-02-08 | `data-test-id` pour LBC | Migration depuis `data-qa-id`, plus stable |
 | 2026-02-09 | `created_at` via migration auto | Compatibilité avec DB existantes sans perte de données |
 | 2026-02-09 | PAP.fr comme 3ème source | 100% particuliers, pas de frais d'agence, bon volume Toulouse |
+| 2026-02-09 | Colonne `status` (active/expired) | Migration auto, purge via HEAD request |
+| 2026-02-09 | MIN_RENT_EUR = 50 | Filtrer garages et prix aberrants (11-21€) |
 
 ---
 

@@ -34,12 +34,17 @@ def init_db():
         )
     """)
 
-    # Migration : ajout de created_at si la colonne n'existe pas
+    # Migrations
     cur.execute("PRAGMA table_info(annonces)")
     columns = [row[1] for row in cur.fetchall()]
+
     if "created_at" not in columns:
         cur.execute("ALTER TABLE annonces ADD COLUMN created_at TIMESTAMP")
         cur.execute("UPDATE annonces SET created_at = scraped_at WHERE created_at IS NULL")
+
+    if "status" not in columns:
+        cur.execute("ALTER TABLE annonces ADD COLUMN status TEXT DEFAULT 'active'")
+        cur.execute("UPDATE annonces SET status = 'active' WHERE status IS NULL")
 
     conn.commit()
     conn.close()

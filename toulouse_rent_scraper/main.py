@@ -12,6 +12,8 @@ from scrapers.leboncoin import LeBonCoinScraper
 from filters.price_and_distance import apply_price_and_distance_filter
 from storage.sqlite import init_db, insert_annonce
 from reporting.generator import generate_summary_reports
+from reporting.exporter import run_export
+from storage.cleaner import check_expired_annonces
 from utils.logger import setup_logger
 from utils.validation import validate_annonce
 
@@ -30,6 +32,8 @@ def parse_args():
     group.add_argument("--seloger", action="store_true", help="Scanner uniquement SeLoger")
     group.add_argument("--leboncoin", action="store_true", help="Scanner uniquement LeBonCoin")
     group.add_argument("--all", action="store_true", default=True, help="Scanner tous les sites (defaut)")
+    parser.add_argument("--export", choices=["csv", "json"], help="Exporter les annonces en CSV ou JSON")
+    parser.add_argument("--purge", action="store_true", help="Vérifier et marquer les annonces expirées")
     return parser.parse_args()
 
 
@@ -127,6 +131,19 @@ def main():
         # Génération des rapports Markdown
         generate_summary_reports(run_start_time)
         logger.info("📄 Rapports générés dans le dossier reports/")
+
+        # Purge des annonces expirées si demandé
+        if args.purge:
+            logger.info("Vérification des annonces expirées...")
+            summary = check_expired_annonces()
+            logger.info(
+                f"Purge : {summary['expired']} expirées / {summary['checked']} vérifiées"
+            )
+
+        # Export CSV/JSON si demandé
+        if args.export:
+            export_path = run_export(args.export)
+            logger.info(f"📦 Export {args.export.upper()} généré : {export_path}")
 
     except Exception as e:
         logger.error(f"❌ Erreur critique dans le pipeline : {e}", exc_info=True)

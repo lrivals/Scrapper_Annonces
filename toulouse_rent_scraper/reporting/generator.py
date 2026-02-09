@@ -67,8 +67,13 @@ def generate_summary_reports(run_start_time: datetime):
             con.row_factory = sqlite3.Row
             cur = con.cursor()
 
-            new_annonces = cur.execute("SELECT * FROM annonces WHERE created_at >= ?", (run_start_time,)).fetchall()
-            all_annonces = cur.execute("SELECT * FROM annonces ORDER BY created_at DESC").fetchall()
+            new_annonces = cur.execute(
+                "SELECT * FROM annonces WHERE created_at >= ? AND COALESCE(status, 'active') = 'active'",
+                (run_start_time,),
+            ).fetchall()
+            all_annonces = cur.execute(
+                "SELECT * FROM annonces WHERE COALESCE(status, 'active') = 'active' ORDER BY created_at DESC"
+            ).fetchall()
 
         _generate_new_ads_report(new_annonces)
         _generate_all_ads_report(all_annonces)

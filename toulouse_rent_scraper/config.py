@@ -25,6 +25,7 @@ MAX_DISTANCE_KM = 10
 # =========================
 
 MAX_RENT_EUR = 500
+MIN_RENT_EUR = 50
 
 PROPERTY_TYPES = [
     "studio",
