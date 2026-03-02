@@ -6,24 +6,10 @@
 import argparse
 from datetime import datetime
 
-from scrapers import SCRAPERS
-from scrapers.seloger import SeLogerScraper
-from scrapers.leboncoin import LeBonCoinScraper
-from filters.price_and_distance import apply_price_and_distance_filter
-from storage.sqlite import init_db, insert_annonce
-from reporting.generator import generate_summary_reports
-from reporting.exporter import run_export
-from storage.cleaner import check_expired_annonces
 from utils.logger import setup_logger
-from utils.validation import validate_annonce
 
 # Configuration du logger
 logger = setup_logger('main')
-
-SCRAPER_MAP = {
-    "seloger": SeLogerScraper,
-    "leboncoin": LeBonCoinScraper,
-}
 
 
 def parse_args():
@@ -34,16 +20,51 @@ def parse_args():
     group.add_argument("--all", action="store_true", default=True, help="Scanner tous les sites (defaut)")
     parser.add_argument("--export", choices=["csv", "json"], help="Exporter les annonces en CSV ou JSON")
     parser.add_argument("--purge", action="store_true", help="Vérifier et marquer les annonces expirées")
+    parser.add_argument("--ui", action="store_true", help="Lancer l'interface web de navigation des annonces")
+    parser.add_argument("--port", type=int, default=5000, help="Port pour l'interface web (defaut: 5000)")
+    parser.add_argument("--check-links", action="store_true", dest="check_links",
+                        help="Vérifier les liens via navigateur et marquer les annonces expirées")
+    parser.add_argument("--limit", type=int, default=None,
+                        help="Nombre max d'annonces à vérifier avec --check-links")
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
 
+    if args.ui:
+        from ui import run_ui
+        run_ui(port=args.port)
+        return
+
+    if args.check_links:
+        from storage.cleaner import check_links_playwright
+        summary = check_links_playwright(limit=args.limit)
+        print(
+            f"Vérification terminée : {summary['checked']} vérifiées, "
+            f"{summary['expired']} expirées, {summary['errors']} erreurs"
+        )
+        return
+
+    from scrapers import SCRAPERS
+    from scrapers.seloger import SeLogerScraper
+    from scrapers.leboncoin import LeBonCoinScraper
+    from filters.price_and_distance import apply_price_and_distance_filter
+    from storage.sqlite import init_db, insert_annonce
+    from reporting.generator import generate_summary_reports
+    from reporting.exporter import run_export
+    from storage.cleaner import check_expired_annonces
+    from utils.validation import validate_annonce
+
+    scraper_map = {
+        "seloger": SeLogerScraper,
+        "leboncoin": LeBonCoinScraper,
+    }
+
     if args.seloger:
-        scrapers_to_run = [SCRAPER_MAP["seloger"]]
+        scrapers_to_run = [scraper_map["seloger"]]
     elif args.leboncoin:
-        scrapers_to_run = [SCRAPER_MAP["leboncoin"]]
+        scrapers_to_run = [scraper_map["leboncoin"]]
     else:
         scrapers_to_run = SCRAPERS
 

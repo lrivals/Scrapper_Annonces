@@ -177,6 +177,15 @@ SCRAPE_FREQUENCY_HOURS = 8
 
 
 # =========================
+# 🔍 ENRICHISSEMENT
+# =========================
+
+ENRICHMENT_MIN_DELAY = 5.0
+ENRICHMENT_MAX_DELAY = 10.0
+ENRICHMENT_DEFAULT_LIMIT = 50
+
+
+# =========================
 # 🔧 DIVERS
 # =========================
 
