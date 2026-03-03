@@ -170,6 +170,24 @@ TEMPLATE = """<!DOCTYPE html>
       color: var(--text-main);
     }
 
+    .btn-order {
+      padding: 12px 14px;
+      background: white;
+      color: var(--text-main);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 1rem;
+      font-weight: 700;
+      line-height: 1;
+      transition: all 0.2s;
+      flex-shrink: 0;
+    }
+    .btn-order:hover {
+      border-color: var(--text-main);
+      background: #f9fafb;
+    }
+
     /* ---- Card Grid ---- */
     .grid {
       display: grid;
@@ -369,11 +387,17 @@ TEMPLATE = """<!DOCTYPE html>
 
       <div class="filter-group">
         <label>Trier par</label>
-        <select name="sort">
-          <option value="price"            {% if current_sort == 'price' %}selected{% endif %}>Prix</option>
-          <option value="distance_enac_km" {% if current_sort == 'distance_enac_km' %}selected{% endif %}>Distance ENAC</option>
-          <option value="created_at"       {% if current_sort == 'created_at' %}selected{% endif %}>Derniers ajouts</option>
-        </select>
+        <div style="display:flex;gap:8px;align-items:center">
+          <select name="sort">
+            <option value="price"            {% if current_sort == 'price' %}selected{% endif %}>Prix</option>
+            <option value="distance_enac_km" {% if current_sort == 'distance_enac_km' %}selected{% endif %}>Distance ENAC</option>
+            <option value="created_at"       {% if current_sort == 'created_at' %}selected{% endif %}>Derniers ajouts</option>
+          </select>
+          <input type="hidden" id="order-input" name="order" value="{{ current_order }}">
+          <button type="button" class="btn-order" id="order-btn" onclick="toggleOrder()" title="{{ 'Croissant' if current_order == 'asc' else 'Décroissant' }}">
+            {{ '↑' if current_order == 'asc' else '↓' }}
+          </button>
+        </div>
       </div>
 
       <div class="filter-group">
@@ -449,6 +473,22 @@ TEMPLATE = """<!DOCTYPE html>
       {% endfor %}
     </main>
   </div>
+  <script>
+    function toggleOrder() {
+      var inp = document.getElementById('order-input');
+      var btn = document.getElementById('order-btn');
+      if (inp.value === 'asc') {
+        inp.value = 'desc';
+        btn.textContent = '↓';
+        btn.title = 'Décroissant';
+      } else {
+        inp.value = 'asc';
+        btn.textContent = '↑';
+        btn.title = 'Croissant';
+      }
+      btn.closest('form').submit();
+    }
+  </script>
 </body>
 </html>"""
 
