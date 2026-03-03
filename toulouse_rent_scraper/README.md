@@ -1,21 +1,24 @@
 # Toulouse Rent Scraper - ENAC
 
-🏠 **Scraper d'annonces de location à Toulouse**, avec filtrage automatique par distance de l'ENAC et par prix.
+Scraper d'annonces de location à Toulouse, avec filtrage automatique par distance de l'ENAC et par prix.
 
 ---
 
-## 🎯 Objectif
+## Objectif
 
 Rechercher automatiquement des annonces de location :
-- 📍 **Proches de l'ENAC** (Rangueil/Ramonville)
-- 💰 **Loyer ≤ 450€**
-- 🔗 **Avec lien direct vers l'annonce**
+
+- Proches de l'ENAC (Rangueil/Ramonville)
+- Loyer ≤ 500€
+- Distance ≤ 10 km de l'ENAC
+- Avec lien direct vers l'annonce
 
 ---
 
-## ⚙️ Installation
+## Installation
 
 ### Prérequis
+
 - Python 3.8+
 - Linux (testé sur Ubuntu/Debian)
 
@@ -46,7 +49,7 @@ playwright install chromium
 
 ---
 
-## 🚀 Utilisation
+## Utilisation
 
 ### Lancer le scraper
 
@@ -55,27 +58,48 @@ python main.py
 ```
 
 Le script va :
-1. **Scraper** SeLoger et LeBonCoin avec les critères définis
-2. **Filtrer** les annonces par prix et distance ENAC
-3. **Stocker** les nouvelles annonces dans `data/annonces.sqlite`
-4. **Générer** des rapports Markdown dans `reports/`
-5. **Générer** des logs dans `logs/`
 
-### Options
+1. Scraper SeLoger et LeBonCoin avec les critères définis
+2. Filtrer les annonces par prix et distance ENAC
+3. Stocker les nouvelles annonces dans `data/annonces.sqlite`
+4. Générer des rapports Markdown dans `reports/`
+5. Générer des logs dans `logs/`
+
+### Options CLI
 
 ```bash
-python main.py --seloger     # SeLoger uniquement
-python main.py --leboncoin   # LeBonCoin uniquement
-python main.py --all         # Tous les sites (défaut)
+python main.py --seloger          # SeLoger uniquement
+python main.py --leboncoin        # LeBonCoin uniquement
+python main.py --all              # Tous les sites (défaut)
+python main.py --export csv       # Exporter en CSV après le scrape
+python main.py --export json      # Exporter en JSON après le scrape
+python main.py --purge            # Vérifier les annonces expirées (HEAD requests)
+python main.py --ui               # Lancer l'interface web Flask (port 5000)
+python main.py --port 8080        # Lancer l'interface sur un port personnalisé
+python main.py --check-links      # Vérifier les liens via Playwright
+python main.py --limit 20         # Limiter le nombre de liens vérifiés
 ```
+
+### Interface Web
+
+```bash
+python main.py --ui
+```
+
+Ouvre `http://localhost:5000` — interface responsive pour :
+
+- Consulter toutes les annonces avec filtres (site, statut, prix)
+- Trier par prix, distance ou date
+- Supprimer les annonces manuellement
 
 ### Consulter les résultats
 
-Après chaque exécution, deux rapports sont générés automatiquement dans `reports/` :
-- **`nouvelles_annonces.md`** — Les annonces ajoutées lors de cette exécution
-- **`toutes_les_annonces.md`** — Tableau complet de toutes les annonces en base
+Après chaque exécution, deux rapports sont générés dans `reports/` :
 
-Vous pouvez aussi interroger la base directement :
+- `nouvelles_annonces.md` — Les annonces ajoutées lors de cette exécution
+- `toutes_les_annonces.md` — Tableau complet de toutes les annonces en base
+
+Requête directe sur la base :
 
 ```bash
 sqlite3 data/annonces.sqlite "SELECT title, price, distance_enac_km, url FROM annonces ORDER BY distance_enac_km;"
@@ -83,7 +107,7 @@ sqlite3 data/annonces.sqlite "SELECT title, price, distance_enac_km, url FROM an
 
 ---
 
-## 🧪 Tests
+## Tests
 
 Lancer les tests unitaires :
 
@@ -99,15 +123,17 @@ pytest tests/ --cov=. --cov-report=html
 
 ---
 
-## 📁 Structure du projet
+## Structure du projet
 
-```
+```text
 toulouse_rent_scraper/
 ├── config.py              # Configuration globale
 ├── main.py                # Point d'entrée du pipeline
+├── ui.py                  # Interface web Flask
 ├── requirements.txt       # Dépendances Python
 │
 ├── scrapers/              # Scrapers par site
+│   ├── base.py            # Classe abstraite (Playwright + anti-bot)
 │   ├── seloger.py
 │   └── leboncoin.py
 │
@@ -115,32 +141,42 @@ toulouse_rent_scraper/
 │   └── price_and_distance.py
 │
 ├── storage/               # Stockage SQLite
-│   └── sqlite.py
+│   ├── sqlite.py
+│   └── cleaner.py         # Vérification des liens expirés
 │
 ├── reporting/             # Génération de rapports
-│   └── generator.py
+│   ├── generator.py       # Rapports Markdown
+│   └── exporter.py        # Export CSV/JSON
 │
 ├── geo/                   # Géolocalisation
-│   └── distance.py
+│   └── distance.py        # Geocoding Nominatim + distance ENAC
 │
 ├── utils/                 # Utilitaires
-│   ├── logger.py          # Système de logging
+│   ├── logger.py          # Logging rotatif
 │   ├── validation.py      # Validation des données
-│   └── retry.py           # Retry avec backoff
+│   └── retry.py           # Retry avec backoff exponentiel
 │
-├── tests/                 # Tests unitaires
+├── tests/                 # Tests unitaires (~85% de couverture)
 │   ├── conftest.py
 │   ├── test_filters.py
-│   ├── test_leboncoin.py
+│   ├── test_validation.py
 │   ├── test_storage.py
-│   └── test_validation.py
+│   ├── test_cleaner.py
+│   ├── test_exporter.py
+│   └── test_leboncoin.py
+│
+├── docs/                  # Documentation des sprints
+│   ├── ROADMAP.md
+│   ├── SPRINT_1.md
+│   └── ...
 │
 ├── reports/               # Rapports générés (gitignored)
 │   ├── nouvelles_annonces.md
 │   └── toutes_les_annonces.md
 │
-├── data/                  # Données générées
-│   └── annonces.sqlite
+├── data/                  # Données générées (gitignored)
+│   ├── annonces.sqlite
+│   └── browser_profile/   # Profil Chrome persistant (anti-bot)
 │
 └── logs/                  # Logs d'exécution
     └── main.log
@@ -148,17 +184,18 @@ toulouse_rent_scraper/
 
 ---
 
-## ⚙️ Configuration
+## Configuration
 
 Modifiez `config.py` pour ajuster :
-- **MAX_RENT_EUR** : Prix maximum (défaut : 450€)
-- **MAX_DISTANCE_KM** : Distance maximale de l'ENAC (défaut : 5km)
-- **HEADLESS_BROWSER** : Navigateur en mode headless (défaut : True)
-- **MAX_PAGES_PER_SITE** : Nombre de pages à scraper (défaut : 10)
+
+- `MAX_RENT_EUR` : Prix maximum (défaut : 500€)
+- `MAX_DISTANCE_KM` : Distance maximale de l'ENAC (défaut : 10 km)
+- `HEADLESS_BROWSER` : Navigateur en mode headless (défaut : False)
+- `MAX_PAGES_PER_SITE` : Nombre de pages à scraper (défaut : 10)
 
 ---
 
-## 🔄 Automatisation
+## Automatisation
 
 ### Avec cron (toutes les 8 heures)
 
@@ -174,23 +211,35 @@ Ajouter :
 
 ---
 
-## 🐛 Dépannage
+## Dépannage
 
 ### Problème : Playwright timeout
 
-**Solution** : Augmenter `PAGE_LOAD_TIMEOUT` dans `config.py` ou désactiver le mode headless :
+Augmenter `PAGE_LOAD_TIMEOUT` dans `config.py` ou désactiver le mode headless :
 
 ```python
 HEADLESS_BROWSER = False
 ```
 
+### Problème : Challenge anti-bot DataDome (LeBonCoin)
+
+LeBonCoin utilise DataDome. En cas de challenge détecté, le script attend 180 secondes pour une résolution manuelle. Si l'IP est bloquée :
+
+- Attendre plusieurs heures avant de relancer
+- Vérifier que le profil Chrome persistant (`data/browser_profile/`) est bien utilisé
+- Ne pas lancer trop de scrapes en succession rapide
+
+### Problème : `--purge` ne fonctionne pas pour SeLoger/LeBonCoin
+
+Ces sites sont des SPAs — les requêtes HEAD ne permettent pas de détecter les annonces expirées. Utiliser `--check-links` à la place (vérification via Playwright).
+
 ### Problème : Aucune coordonnée trouvée pour une adresse
 
-**Solution** : Le géocodeur Nominatim a parfois du mal avec certaines adresses. Vérifiez les logs dans `logs/geo.log` pour plus de détails.
+Le géocodeur Nominatim est parfois limité en débit ou ne reconnaît pas certains formats d'adresses. Vérifiez les logs dans `logs/geo.log`.
 
 ### Problème : Import errors
 
-**Solution** : Assurez-vous d'être dans le bon répertoire et d'avoir activé l'environnement virtuel :
+Assurez-vous d'être dans le bon répertoire et d'avoir activé l'environnement virtuel :
 
 ```bash
 cd toulouse_rent_scraper
@@ -201,40 +250,43 @@ python main.py
 
 ---
 
-## 📝 Logs
+## Logs
 
-Les logs sont créés dans le répertoire `logs/` :
+Les logs sont créés dans `logs/` :
+
 - `main.log` : Pipeline principal
 - `seloger.log` : Scraper SeLoger
 - `geo.log` : Géolocalisation
 
 ---
 
-## 🤝 Contribution
+## Contribuer (ajouter un nouveau scraper)
 
-Pour ajouter un nouveau scraper (LeBonCoin, PAP, etc.) :
-
-1. Créer `scrapers/nom_du_site.py`
-2. Implémenter `scrape_nom_du_site()` qui retourne `List[Dict]`
-3. Ajouter l'appel dans `main.py`
+1. Créer `scrapers/nom_du_site.py` héritant de `BaseScraper`
+2. Implémenter les méthodes abstraites (`card_selector`, `extract_annonce`, etc.)
+3. Ajouter l'option CLI dans `main.py`
 
 ---
 
-## 📜 Licence
-
-Usage personnel - ENAC Toulouse
-
----
-
-## 🔧 Améliorations futures
+## Améliorations
 
 - [x] Scraper multi-sites (SeLoger, LeBonCoin)
 - [x] Rapports Markdown automatiques
-- [ ] Notifications par email/Telegram
-- [ ] Dashboard de visualisation (Streamlit)
-- [ ] API REST
-- [ ] Export CSV/JSON
+- [x] Export CSV/JSON (`--export`)
+- [x] Interface Web Flask (`--ui`)
+- [x] Vérification liens Playwright (`--check-links`)
+- [ ] Enrichissement des données (surface, DPE, description) — Sprint 3
+- [ ] Scraper PAP.fr — Sprint 4
+- [ ] Système de scoring 0-100 — Sprint 5
+- [ ] Notifications email/Telegram
+- [ ] Dashboard Streamlit / API REST
 
 ---
 
-**Dernière mise à jour :** 2026-02-09
+## Licence
+
+Usage personnel — ENAC Toulouse
+
+---
+
+**Dernière mise à jour :** 2026-03-03
