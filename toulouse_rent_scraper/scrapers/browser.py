@@ -5,6 +5,7 @@
 # =========================
 
 import json
+import os
 import shutil
 import socket
 import subprocess
@@ -82,9 +83,42 @@ def wait_for_cdp(port: int, timeout: float = CHROME_STARTUP_TIMEOUT, proc=None) 
     raise BrowserError(f"Port CDP {port} injoignable après {timeout}s")
 
 
+_SINGLETON_FILES = ("SingletonLock", "SingletonSocket", "SingletonCookie")
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:  # processus existant appartenant à un autre utilisateur
+        return True
+    except OSError:
+        return False
+    return True
+
+
 def _profile_locked(profile_dir: Path) -> bool:
-    # Chrome crée un lien SingletonLock tant qu'une instance utilise le profil
-    return (profile_dir / "SingletonLock").is_symlink()
+    """
+    Chrome crée un lien SingletonLock (cible « <hôte>-<pid> ») tant qu'une instance
+    utilise le profil. Après un plantage ou un kill, le lien reste : s'il désigne un
+    processus mort de cette machine, on le considère orphelin et on le supprime.
+    """
+    lock = profile_dir / "SingletonLock"
+    if not lock.is_symlink():
+        return False
+    host, _, pid_str = os.readlink(lock).rpartition("-")
+    if host != socket.gethostname() or not pid_str.isdigit():
+        return True  # autre machine ou format inconnu : prudence
+    if _pid_alive(int(pid_str)):
+        return True
+    logger.warning(f"Verrou Chrome orphelin (pid {pid_str} terminé) supprimé : {lock}")
+    for name in _SINGLETON_FILES:
+        try:
+            (profile_dir / name).unlink()
+        except FileNotFoundError:
+            pass
+    return False
 
 
 @contextmanager

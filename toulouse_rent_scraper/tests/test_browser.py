@@ -72,6 +72,26 @@ class TestBrowser:
             with chrome_session(profile_dir=tmp_path, port=0):
                 pass
 
+    def test_lock_held_by_live_process(self, tmp_path):
+        import os, socket
+        from scrapers.browser import _profile_locked
+        (tmp_path / "SingletonLock").symlink_to(f"{socket.gethostname()}-{os.getpid()}")
+        assert _profile_locked(tmp_path)
+        assert (tmp_path / "SingletonLock").is_symlink()
+
+    def test_stale_lock_removed(self, tmp_path):
+        import socket
+        from scrapers.browser import _profile_locked
+        (tmp_path / "SingletonLock").symlink_to(f"{socket.gethostname()}-999999999")
+        (tmp_path / "SingletonSocket").symlink_to("/tmp/nope/SingletonSocket")
+        assert not _profile_locked(tmp_path)
+        assert not (tmp_path / "SingletonLock").is_symlink()
+        assert not (tmp_path / "SingletonSocket").is_symlink()
+
+    def test_no_lock(self, tmp_path):
+        from scrapers.browser import _profile_locked
+        assert not _profile_locked(tmp_path)
+
 
 def _page(url="https://www.leboncoin.fr/recherche", text="Résultats", title="Locations"):
     page = MagicMock()
