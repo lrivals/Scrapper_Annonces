@@ -24,7 +24,7 @@ En ouvrant chaque lien individuellement, on peut extraire beaucoup plus :
 
 ## Tâches
 
-### 3.1 Nouveau schéma DB enrichi (Priorité: Haute | Effort: S)
+### ✅ 3.1 Nouveau schéma DB enrichi (Priorité: Haute | Effort: S)
 
 **Actions** :
 - Ajouter les colonnes à la table `annonces` via migration automatique :
@@ -51,7 +51,7 @@ En ouvrant chaque lien individuellement, on peut extraire beaucoup plus :
 
 ---
 
-### 3.2 Extracteur détaillé SeLoger (Priorité: Haute | Effort: M)
+### ✅ 3.2 Extracteur détaillé SeLoger (Priorité: Haute | Effort: M)
 
 **Actions** :
 - Créer `scrapers/detail_extractors/seloger_detail.py` :
@@ -71,7 +71,7 @@ En ouvrant chaque lien individuellement, on peut extraire beaucoup plus :
 
 ---
 
-### 3.3 Extracteur détaillé LeBonCoin (Priorité: Haute | Effort: M)
+### ✅ 3.3 Extracteur détaillé LeBonCoin (Priorité: Haute | Effort: M)
 
 **Actions** :
 - Créer `scrapers/detail_extractors/leboncoin_detail.py` :
@@ -91,7 +91,7 @@ En ouvrant chaque lien individuellement, on peut extraire beaucoup plus :
 
 ---
 
-### 3.4 Pipeline d'enrichissement (Priorité: Haute | Effort: M)
+### ✅ 3.4 Pipeline d'enrichissement (Priorité: Haute | Effort: M)
 
 **Actions** :
 - Créer `scrapers/enricher.py` :
@@ -114,7 +114,7 @@ En ouvrant chaque lien individuellement, on peut extraire beaucoup plus :
 
 ---
 
-### 3.5 Mise à jour des rapports enrichis (Priorité: Moyenne | Effort: S)
+### ✅ 3.5 Mise à jour des rapports enrichis (Priorité: Moyenne | Effort: S)
 
 **Actions** :
 - Mettre à jour `reporting/generator.py` pour inclure les nouvelles données :
@@ -127,7 +127,7 @@ En ouvrant chaque lien individuellement, on peut extraire beaucoup plus :
 
 ---
 
-### 3.6 Tests enrichissement (Priorité: Moyenne | Effort: S)
+### ✅ 3.6 Tests enrichissement (Priorité: Moyenne | Effort: S)
 
 **Actions** :
 - Tests unitaires pour les extracteurs détaillés (mock HTML)
@@ -141,14 +141,14 @@ En ouvrant chaque lien individuellement, on peut extraire beaucoup plus :
 
 ## Résumé
 
-| # | Tâche | Priorité | Effort | Dépendance |
-|---|-------|----------|--------|------------|
-| 3.1 | Schéma DB enrichi | Haute | S | — |
-| 3.2 | Extracteur détaillé SeLoger | Haute | M | 3.1 |
-| 3.3 | Extracteur détaillé LeBonCoin | Haute | M | 3.1 |
-| 3.4 | Pipeline d'enrichissement | Haute | M | 3.2, 3.3 |
-| 3.5 | Rapports enrichis | Moyenne | S | 3.4 |
-| 3.6 | Tests enrichissement | Moyenne | S | 3.2, 3.3, 3.4 |
+| # | Tâche | Priorité | Effort | Dépendance | Statut |
+|---|-------|----------|--------|------------|--------|
+| 3.1 | Schéma DB enrichi | Haute | S | — | ✅ |
+| 3.2 | Extracteur détaillé SeLoger | Haute | M | 3.1 | ✅ |
+| 3.3 | Extracteur détaillé LeBonCoin | Haute | M | 3.1 | ✅ |
+| 3.4 | Pipeline d'enrichissement | Haute | M | 3.2, 3.3 | ✅ |
+| 3.5 | Rapports enrichis | Moyenne | S | 3.4 | ✅ |
+| 3.6 | Tests enrichissement | Moyenne | S | 3.2, 3.3, 3.4 | ✅ |
 
 **Légende effort** : S = ~1-2h | M = ~3-5h | L = ~1-2j
 

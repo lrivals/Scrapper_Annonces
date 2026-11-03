@@ -3,6 +3,7 @@
 # Scraper SeLoger avec Playwright
 # =========================
 
+import json
 import re
 from typing import List, Dict, Optional
 
@@ -86,12 +87,26 @@ class SeLogerScraper(BaseScraper):
         if not title and not price:
             return None
 
+        # Thumbnail — première image de la carte
+        thumbnail = None
+        try:
+            img_el = card.query_selector(
+                'img[data-testid*="photo"], img[data-testid*="image"], img[src]'
+            )
+            if img_el:
+                src = img_el.get_attribute("src") or img_el.get_attribute("data-src") or ""
+                if src and src.startswith("http"):
+                    thumbnail = src
+        except Exception:
+            pass
+
         return {
             "site": "SeLoger",
             "title": title,
             "price": price,
             "location_raw": location_raw,
             "url": full_link,
+            "photos": json.dumps([thumbnail]) if thumbnail else None,
         }
 
 
