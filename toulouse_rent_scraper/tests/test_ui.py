@@ -7,7 +7,7 @@ import sqlite3
 
 import pytest
 
-from storage.sqlite import init_db, insert_annonce
+from storage.sqlite import init_db, insert_annonce, upsert_annonce_profile
 
 
 @pytest.fixture
@@ -19,11 +19,12 @@ def client(temp_db, monkeypatch):
     return ui.app.test_client()
 
 
-def _add(url, price=420, site="SeLoger", location="Rangueil"):
+def _add(url, price=420, site="SeLoger", location="Rangueil", profile="enac", distance=1.0):
     insert_annonce({
         "site": site, "title": f"Studio {price}", "price": price,
         "location_raw": location, "distance_enac_km": 1.0, "url": url,
     })
+    upsert_annonce_profile(url, profile, distance)
 
 
 def _status(db, url):
@@ -79,3 +80,44 @@ def test_map_data_excludes_hidden(client):
     client.post("/delete", data={"id": "1"})
     listings = client.get("/api/map-data").get_json()["listings"]
     assert [l["id"] for l in listings] == [2]
+
+
+def test_profile_tabs_split_listings(client):
+    _add("https://ex.com/enac", price=450)
+    _add("https://ex.com/blagnac", price=700, profile="blagnac", distance=3.2)
+
+    page = client.get("/").get_data(as_text=True)
+    assert "Studio 450" in page and "Studio 700" not in page
+
+    page = client.get("/?profile=blagnac").get_data(as_text=True)
+    assert "Studio 700" in page and "Studio 450" not in page
+    assert "3.2 km" in page
+
+
+def test_unknown_profile_falls_back_to_default(client):
+    _add("https://ex.com/enac", price=450)
+    assert "Studio 450" in client.get("/?profile=inconnu").get_data(as_text=True)
+
+
+def test_sort_by_profile_distance(client):
+    _add("https://ex.com/far", price=600, profile="blagnac", distance=7.5)
+    _add("https://ex.com/near", price=700, profile="blagnac", distance=1.2)
+    page = client.get("/?profile=blagnac&sort=distance&order=asc").get_data(as_text=True)
+    assert page.index("Studio 700") < page.index("Studio 600")
+
+
+def test_map_data_targets_profile(client):
+    _add("https://ex.com/blagnac", price=700, profile="blagnac", distance=3.2)
+    data = client.get("/api/map-data?profile=blagnac").get_json()
+    assert data["target"]["key"] == "blagnac"
+    assert data["target"]["radius_km"] == 8
+    assert [l["distance_km"] for l in data["listings"]] == [3.2]
+
+
+def test_export_document_uses_profile(client):
+    _add("https://ex.com/blagnac", price=700, profile="blagnac", distance=3.2)
+    resp = client.post("/export-document", data={"ids": "[1]", "profile": "blagnac"})
+    text = resp.get_data(as_text=True)
+    assert "Blagnac" in text.splitlines()[0]
+    assert "3.2 km" in text
+    assert "candidatures_blagnac_" in resp.headers["Content-Disposition"]

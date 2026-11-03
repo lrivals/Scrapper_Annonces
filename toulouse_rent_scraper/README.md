@@ -1,17 +1,17 @@
-# Toulouse Rent Scraper - ENAC
+# Toulouse Rent Scraper
 
-Scraper d'annonces de location à Toulouse, avec filtrage automatique par distance de l'ENAC et par prix.
+Scraper d'annonces de location à Toulouse, avec filtrage automatique par prix et par distance à une cible, pour plusieurs **profils de recherche**.
 
 ---
 
 ## Objectif
 
-Rechercher automatiquement des annonces de location :
+Rechercher automatiquement des annonces de location, avec lien direct vers l'annonce, pour chaque profil défini dans `config.SEARCH_PROFILES` :
 
-- Proches de l'ENAC (Rangueil/Ramonville)
-- Loyer ≤ 500€
-- Distance ≤ 10 km de l'ENAC
-- Avec lien direct vers l'annonce
+| Profil | Cible | Budget | Rayon | Pièces |
+|--------|-------|--------|-------|--------|
+| `enac` | ENAC — 7 av. Édouard Belin, Toulouse | 50 – 500 € | 10 km | toutes |
+| `blagnac` | 14 Pl. Marcel Dassault, Blagnac | 550 – 750 € | 8 km | T1 – T3 |
 
 ---
 
@@ -71,6 +71,7 @@ Le script va :
 python main.py --seloger          # SeLoger uniquement
 python main.py --leboncoin        # LeBonCoin uniquement
 python main.py --all              # Tous les sites (défaut)
+python main.py --profile blagnac  # Uniquement les recherches du profil Blagnac (répétable)
 python main.py --export csv       # Exporter en CSV après le scrape
 python main.py --export json      # Exporter en JSON après le scrape
 python main.py --purge            # Vérifier les annonces expirées (HEAD requests)
@@ -94,15 +95,16 @@ Ouvre `http://localhost:5000` — interface responsive pour :
 
 ### Consulter les résultats
 
-Après chaque exécution, deux rapports sont générés dans `reports/` :
+Après chaque exécution, des rapports sont générés dans `reports/<profil>/` :
 
-- `nouvelles_annonces.md` — Les annonces ajoutées lors de cette exécution
-- `toutes_les_annonces.md` — Tableau complet de toutes les annonces en base
+- `nouvelles_annonces.md` — Les annonces ajoutées au profil lors de cette exécution
+- `toutes_les_annonces.md` — Tableau complet des annonces du profil
+- `annonces_detaillees.md` — Annonces enrichies (surface, DPE…)
 
 Requête directe sur la base :
 
 ```bash
-sqlite3 data/annonces.sqlite "SELECT title, price, distance_enac_km, url FROM annonces ORDER BY distance_enac_km;"
+sqlite3 data/annonces.sqlite "SELECT a.title, a.price, ap.distance_km, a.url FROM annonces a JOIN annonce_profiles ap ON ap.annonce_id = a.id WHERE ap.profile = 'blagnac' ORDER BY ap.distance_km;"
 ```
 
 ---
@@ -188,8 +190,9 @@ toulouse_rent_scraper/
 
 Modifiez `config.py` pour ajuster :
 
-- `MAX_RENT_EUR` : Prix maximum (défaut : 500€)
-- `MAX_DISTANCE_KM` : Distance maximale de l'ENAC (défaut : 10 km)
+- `SEARCH_PROFILES` : profils de recherche (cible, budget, rayon, pièces, URLs LeBonCoin/SeLoger).
+  Ajouter un profil = ajouter une entrée ; l'URL SeLoger (`seloger_locations`) se capture depuis le site.
+- `MAX_RENT_EUR` / `MAX_DISTANCE_KM` : budget et rayon du profil historique `enac`
 - `HEADLESS_BROWSER` : Navigateur en mode headless (défaut : False)
 - `MAX_PAGES_PER_SITE` : Nombre de pages à scraper (défaut : 10)
 

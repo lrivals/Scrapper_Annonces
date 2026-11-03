@@ -60,6 +60,11 @@ def init_db():
     if "duplicate_of" not in columns:
         cur.execute("ALTER TABLE annonces ADD COLUMN duplicate_of INTEGER")
 
+    # Sprint 14 — coordonnées (distance recalculable vers n'importe quelle cible)
+    for col in ("lat", "lon"):
+        if col not in columns:
+            cur.execute(f"ALTER TABLE annonces ADD COLUMN {col} REAL")
+
     # Sprint 3 — colonnes enrichissement
     enrichment_columns = {
         "surface_m2": "REAL",
@@ -93,6 +98,34 @@ def init_db():
             longitude REAL,
             cached_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
+    """)
+
+    # Sprint 14 — pertinence d'une annonce pour chaque profil de recherche
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS annonce_profiles (
+            annonce_id  INTEGER NOT NULL REFERENCES annonces(id) ON DELETE CASCADE,
+            profile     TEXT    NOT NULL,
+            distance_km REAL,
+            matched_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (annonce_id, profile)
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_annonce_profiles_profile ON annonce_profiles(profile)")
+
+    # Annonces antérieures aux profils : rattachées au profil historique ENAC
+    cur.execute("""
+        INSERT OR IGNORE INTO annonce_profiles (annonce_id, profile, distance_km, matched_at)
+        SELECT a.id, 'enac', a.distance_enac_km, COALESCE(a.created_at, CURRENT_TIMESTAMP)
+        FROM annonces a
+        WHERE NOT EXISTS (SELECT 1 FROM annonce_profiles ap WHERE ap.annonce_id = a.id)
+    """)
+
+    # Coordonnées manquantes : reprises du cache de géocodage
+    cur.execute("""
+        UPDATE annonces SET
+            lat = (SELECT g.latitude FROM geocoding_cache g WHERE g.address = annonces.location_raw),
+            lon = (SELECT g.longitude FROM geocoding_cache g WHERE g.address = annonces.location_raw)
+        WHERE lat IS NULL AND location_raw IS NOT NULL
     """)
 
     conn.commit()
@@ -145,6 +178,8 @@ def insert_annonce(annonce: Dict) -> str:
                 price = COALESCE(?, price),
                 location_raw = COALESCE(?, location_raw),
                 distance_enac_km = COALESCE(?, distance_enac_km),
+                lat = COALESCE(?, lat),
+                lon = COALESCE(?, lon),
                 photos = COALESCE(photos, ?)
             WHERE url = ?
             """,
@@ -153,6 +188,8 @@ def insert_annonce(annonce: Dict) -> str:
                 new_price,
                 annonce.get("location_raw"),
                 annonce.get("distance_enac_km"),
+                annonce.get("lat"),
+                annonce.get("lon"),
                 annonce.get("photos"),
                 url,
             ),
@@ -175,8 +212,10 @@ def insert_annonce(annonce: Dict) -> str:
             distance_enac_km,
             url,
             created_at,
-            photos
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            photos,
+            lat,
+            lon
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         annonce.get("site"),
         annonce.get("title"),
@@ -186,11 +225,40 @@ def insert_annonce(annonce: Dict) -> str:
         url,
         now,
         annonce.get("photos"),
+        annonce.get("lat"),
+        annonce.get("lon"),
     ))
 
     conn.commit()
     conn.close()
     return "new"
+
+
+def upsert_annonce_profile(url: str, profile: str, distance_km: Optional[float]) -> bool:
+    """
+    Rattache l'annonce `url` au profil `profile` (ou met à jour sa distance).
+    Retourne True si l'annonce est nouvelle POUR CE PROFIL.
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    row = cur.execute("SELECT id FROM annonces WHERE url = ?", (url,)).fetchone()
+    if row is None:
+        conn.close()
+        return False
+    cur.execute(
+        "INSERT OR IGNORE INTO annonce_profiles (annonce_id, profile, distance_km, matched_at) "
+        "VALUES (?, ?, ?, ?)",
+        (row[0], profile, distance_km, datetime.now().isoformat()),
+    )
+    is_new = cur.rowcount > 0
+    if not is_new and distance_km is not None:
+        cur.execute(
+            "UPDATE annonce_profiles SET distance_km = ? WHERE annonce_id = ? AND profile = ?",
+            (distance_km, row[0], profile),
+        )
+    conn.commit()
+    conn.close()
+    return is_new
 
 
 def _location_words(location: Optional[str]) -> set:
@@ -324,6 +392,7 @@ def clear_db() -> int:
     cur.execute("SELECT COUNT(*) FROM annonces")
     count = cur.fetchone()[0]
     cur.execute("DELETE FROM annonces")
+    cur.execute("DELETE FROM annonce_profiles")
     conn.commit()
     conn.close()
     return count

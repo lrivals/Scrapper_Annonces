@@ -12,17 +12,23 @@ from storage.sqlite import DB_PATH
 from utils.logger import setup_logger
 
 REPORTS_DIR = DB_PATH.parent.parent / "reports"
-EXPORT_FIELDS = ["price", "distance_enac_km", "title", "url", "created_at", "site"]
+EXPORT_FIELDS = ["profile", "price", "distance_km", "title", "url", "created_at", "site"]
 
 logger = setup_logger("exporter")
 
 
 def _fetch_all_annonces() -> list[dict]:
-    """Récupère toutes les annonces depuis la DB."""
+    """Annonces actives, une ligne par couple (annonce, profil)."""
     with sqlite3.connect(DB_PATH) as con:
         con.row_factory = sqlite3.Row
         rows = con.execute(
-            "SELECT * FROM annonces WHERE COALESCE(status, 'active') = 'active' ORDER BY price ASC"
+            """
+            SELECT a.*, ap.profile AS profile, ap.distance_km AS distance_km
+            FROM annonces a
+            JOIN annonce_profiles ap ON ap.annonce_id = a.id
+            WHERE COALESCE(a.status, 'active') = 'active'
+            ORDER BY ap.profile, a.price ASC
+            """
         ).fetchall()
     return [dict(row) for row in rows]
 

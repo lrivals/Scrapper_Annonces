@@ -19,6 +19,9 @@ from config import (
     MIN_ACTION_DELAY,
     MAX_ACTION_DELAY,
     BROWSER_PROFILE_DIR,
+    SEARCH_PROFILES,
+    DEFAULT_PROFILE,
+    SearchProfile,
 )
 from utils.logger import setup_logger
 
@@ -26,7 +29,8 @@ from utils.logger import setup_logger
 class BaseScraper(ABC):
     """Classe de base pour tous les scrapers d'annonces immobilières."""
 
-    def __init__(self):
+    def __init__(self, profile: Optional[SearchProfile] = None):
+        self.profile = profile or SEARCH_PROFILES[DEFAULT_PROFILE]
         self.logger = setup_logger(self.site_name().lower())
         self.results: List[Dict] = []
 
@@ -43,8 +47,8 @@ class BaseScraper(ABC):
         """URL de base du site."""
 
     @abstractmethod
-    def search_url(self) -> str:
-        """URL de recherche avec filtres pré-appliqués."""
+    def search_url(self) -> Optional[str]:
+        """URL de recherche avec filtres pré-appliqués (None si le profil n'est pas configuré pour ce site)."""
 
     def search_urls(self) -> List[str]:
         """Liste d'URLs à scraper (pour pagination par URLs directes).
@@ -339,7 +343,13 @@ class BaseScraper(ABC):
     def scrape(self) -> List[Dict]:
         """Lance le scraping complet et retourne la liste des annonces."""
         self.results = []
-        self.logger.info(f"Demarrage scraping {self.site_name()}")
+        if not self.search_url():
+            self.logger.warning(
+                f"Profil '{self.profile.key}' non configuré pour {self.site_name()} "
+                f"(URL de recherche manquante), site ignoré"
+            )
+            return self.results
+        self.logger.info(f"Demarrage scraping {self.site_name()} — profil {self.profile.label}")
 
         BROWSER_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
 

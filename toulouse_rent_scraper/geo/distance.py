@@ -194,6 +194,11 @@ def geocode_address(address: str) -> Optional[tuple]:
     return None
 
 
+def distance_km(coords: tuple, target: tuple) -> float:
+    """Distance à vol d'oiseau (km, 2 décimales) entre deux points (lat, lon)."""
+    return round(geodesic(target, coords).km, 2)
+
+
 def distance_from_enac_km(address_or_district: str) -> Optional[float]:
     """
     Calcule la distance en kilomètres entre l'ENAC

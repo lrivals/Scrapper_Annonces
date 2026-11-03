@@ -1,7 +1,7 @@
 # Sprint 14 — Profils de recherche multiples (cas d'usage Blagnac)
 
-> **Date** : —
-> **Statut** : 🔲 À faire
+> **Date** : 2026-11-03
+> **Statut** : ✅ Terminé — SeLoger Blagnac en attente de l'URL capturée (cf. bilan)
 > **Prérequis** : [Sprint 11](SPRINT_11.md) (parse_price ≥ 1000 €, URLs dérivées de la config, géocodage hors Toulouse)
 > **Recommandé avant** : [Sprint 12](SPRINT_12.md) / [Sprint 13](SPRINT_13.md) — les notifications et le score deviennent « par profil »
 
@@ -23,14 +23,14 @@ Ajouter un **second cas d'usage** et rendre le pipeline générique :
 
 | # | Tâche | Statut | Notes |
 |---|-------|--------|-------|
-| 14.1 | `SEARCH_PROFILES` dans la config | 🔲 | Remplace les constantes ENAC/MAX_RENT globales |
-| 14.2 | URLs de recherche par profil | 🔲 | LBC + SeLoger pour Blagnac |
-| 14.3 | Modèle de données multi-profils | 🔲 | Table `annonce_profiles` |
-| 14.4 | Filtre et pipeline par profil | 🔲 | Une annonce peut matcher plusieurs profils |
-| 14.5 | CLI `--profile` | 🔲 | Défaut : tous les profils actifs |
-| 14.6 | UI : sélecteur de profil | 🔲 | Liste, carte, export Markdown |
-| 14.7 | Rapports & exports par profil | 🔲 | `reporting/` |
-| 14.8 | Tests | 🔲 | Profils, migration, filtre |
+| 14.1 | `SEARCH_PROFILES` dans la config | ✅ | Remplace les constantes ENAC/MAX_RENT globales |
+| 14.2 | URLs de recherche par profil | ✅ | LBC + SeLoger pour Blagnac |
+| 14.3 | Modèle de données multi-profils | ✅ | Table `annonce_profiles` |
+| 14.4 | Filtre et pipeline par profil | ✅ | Une annonce peut matcher plusieurs profils |
+| 14.5 | CLI `--profile` | ✅ | Défaut : tous les profils actifs |
+| 14.6 | UI : sélecteur de profil | ✅ | Liste, carte, export Markdown |
+| 14.7 | Rapports & exports par profil | ✅ | `reporting/` |
+| 14.8 | Tests | ✅ | Profils, migration, filtre |
 
 ---
 
@@ -182,8 +182,40 @@ python main.py --enrich --profile blagnac --limit 20
 
 ## Critères d'acceptation
 
-- [ ] `python main.py --leboncoin --profile blagnac` ramène des annonces 550–750 € autour de Blagnac, stockées avec leur distance à la Pl. Marcel Dassault.
-- [ ] Les données ENAC existantes sont intactes après migration (même nombre d'annonces et mêmes distances dans le profil `enac`).
-- [ ] L'UI bascule ENAC ↔ Blagnac : liste, filtres, carte (centre + rayon) et export suivent le profil.
-- [ ] Ajouter un 3ᵉ profil = ajouter une entrée dans `SEARCH_PROFILES` (+ URL SeLoger capturée), sans autre changement de code.
-- [ ] `pytest` vert.
+- [ ] `python main.py --leboncoin --profile blagnac` ramène des annonces 550–750 € autour de Blagnac — **à valider au premier run réel** (format `locations` LBC).
+- [x] Les données ENAC existantes sont intactes après migration : 82 annonces rattachées à `enac`, 82 avec coordonnées (sauvegarde `data/annonces.bak-*-pre-sprint14.sqlite`).
+- [x] L'UI bascule ENAC ↔ Blagnac : liste, filtres, tri distance, carte (centre + cercle du rayon) et export suivent le profil.
+- [x] Ajouter un 3ᵉ profil = ajouter une entrée dans `SEARCH_PROFILES` (+ URL SeLoger capturée), sans autre changement de code.
+- [x] `pytest` vert : 136 passés, 1 ignoré.
+
+## Bilan d'implémentation (2026-11-03)
+
+### Écarts par rapport au plan
+
+| Plan | Réalisé | Raison |
+|---|---|---|
+| `estate_types` par profil | `rooms: (min, max)` | Les cartes n'exposent pas le type ; le nombre de pièces se déduit du titre (`guess_rooms` : « Studio », « T2 », « 3 pièces ») ou de l'enrichissement. Pièces inconnues ⇒ annonce gardée. |
+| Statut `hidden` par profil | Masquage global (Sprint 11) | Les budgets ENAC (≤ 500 €) et Blagnac (≥ 550 €) sont disjoints : une annonce ne peut pas matcher les deux. À revoir si les budgets se chevauchent un jour. |
+| Colonne `score` dans `annonce_profiles` | Reportée au Sprint 13.3 | Pas de score avant le Sprint 13. |
+| Wrapper `distance_from_enac_km` | Conservé + `distance_km(coords, target)` | `apply_price_and_distance_filter` (ENAC seul) reste pour compatibilité ; le pipeline utilise `match_profiles`. |
+| `localStorage` pour le profil courant | Paramètre `?profile=` + onglets dans le header | Plus simple, lien partageable ; formulaires et actions conservent le profil. |
+
+### Fichiers
+
+| Fichier | Changement |
+|---|---|
+| `config.py` | `SearchProfile`, `SEARCH_PROFILES` (`enac`, `blagnac`), `enabled_profiles()`, builders d'URL LBC/SeLoger, `PROFILE_SWITCH_MIN/MAX_DELAY` (pause 60–120 s entre deux recherches d'un même run) |
+| `scrapers/base.py`, `seloger.py`, `leboncoin.py` | Constructeur `Scraper(profile)` ; site ignoré si le profil n'a pas d'URL pour ce site |
+| `filters/price_and_distance.py` | `match_profiles`, `guess_rooms` ; géocodage seulement si un profil accepte prix + pièces |
+| `geo/distance.py` | `distance_km(coords, target)` |
+| `storage/sqlite.py` | Table `annonce_profiles`, colonnes `lat`/`lon`, migration des annonces existantes → `enac`, `upsert_annonce_profile` |
+| `main.py` | Boucle profils × sites, `--profile` (répétable), compteur « Nouvelles pour <profil> » |
+| `ui.py` | Onglets profils, liste/tri/carte/export par profil, `/start-scraping?profile=` |
+| `reporting/generator.py`, `exporter.py` | Rapports dans `reports/<profil>/`, export avec colonnes `profile` + `distance_km` |
+| `tests/test_profiles.py` (nouveau), `tests/test_ui.py` | 29 nouveaux tests |
+
+### À faire manuellement
+
+1. **URL SeLoger Blagnac** : sur seloger.com, chercher « Blagnac », rayon 8 km, T1–T3, loyer max 750 €, copier la valeur du paramètre `locations=` de l'URL dans `SEARCH_PROFILES["blagnac"].seloger_locations` (et `seloger_sub_types` si T1–T3 ont des codes dédiés). Tant que ce n'est pas fait, SeLoger est ignoré pour Blagnac (avertissement dans les logs).
+2. **Premier run LBC Blagnac** : `python main.py --leboncoin --profile blagnac`. Vérifier dans Chrome que la recherche affiche bien Blagnac, rayon 8 km, 550–750 €, 1–3 pièces. Sinon, refaire la recherche à la main et reporter le paramètre `locations=` dans `lbc_location`.
+3. Les anciens rapports à la racine de `reports/` ne sont plus mis à jour (remplacés par `reports/enac/` et `reports/blagnac/`) et peuvent être supprimés.

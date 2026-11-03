@@ -7,6 +7,7 @@ import argparse
 import sys
 from datetime import datetime
 
+from config import SEARCH_PROFILES, enabled_profiles
 from utils.logger import setup_logger
 
 # Configuration du logger
@@ -14,7 +15,7 @@ logger = setup_logger('main')
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Scraper d'annonces immobilieres Toulouse / ENAC")
+    parser = argparse.ArgumentParser(description="Scraper d'annonces immobilieres Toulouse (profils ENAC, Blagnac…)")
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--seloger", action="store_true", help="Scanner uniquement SeLoger")
     group.add_argument("--leboncoin", action="store_true", help="Scanner uniquement LeBonCoin")
@@ -29,7 +30,16 @@ def parse_args():
                         help="Enrichir les annonces avec les données de détail (surface, DPE, etc.)")
     parser.add_argument("--limit", type=int, default=None,
                         help="Nombre max d'annonces à traiter (--check-links ou --enrich)")
+    parser.add_argument("--profile", action="append", choices=sorted(SEARCH_PROFILES),
+                        help="Profil de recherche (répétable). Défaut : tous les profils actifs")
     return parser.parse_args()
+
+
+def selected_profiles(keys):
+    """Profils demandés via --profile, ou tous les profils actifs."""
+    if keys:
+        return [SEARCH_PROFILES[k] for k in dict.fromkeys(keys)]
+    return enabled_profiles()
 
 
 def main():
@@ -64,11 +74,18 @@ def main():
         )
         return
 
+    import random
+    import time
+
+    from config import SEARCH_PROFILES, PROFILE_SWITCH_MIN_DELAY, PROFILE_SWITCH_MAX_DELAY
     from scrapers import SCRAPERS
     from scrapers.seloger import SeLogerScraper
     from scrapers.leboncoin import LeBonCoinScraper
-    from filters.price_and_distance import apply_price_and_distance_filter
-    from storage.sqlite import init_db, insert_annonce, find_potential_duplicates, set_duplicate_of
+    from filters.price_and_distance import match_profiles
+    from storage.sqlite import (
+        init_db, insert_annonce, find_potential_duplicates, set_duplicate_of,
+        upsert_annonce_profile,
+    )
     from reporting.generator import generate_summary_reports
     from reporting.exporter import run_export
     from storage.cleaner import check_expired_annonces
@@ -86,8 +103,13 @@ def main():
     else:
         scrapers_to_run = SCRAPERS
 
+    # Profils dont on lance les recherches ; les annonces trouvées sont
+    # testées contre TOUS les profils actifs (recoupements gratuits)
+    profiles_to_search = selected_profiles(args.profile)
+
     sites_label = ", ".join(s().site_name() for s in scrapers_to_run)
-    logger.info(f"Demarrage du scraper Toulouse / ENAC — sites: {sites_label}")
+    profiles_label = ", ".join(p.label for p in profiles_to_search)
+    logger.info(f"Demarrage du scraper — profils: {profiles_label} — sites: {sites_label}")
 
     run_start_time = datetime.now()
 
@@ -105,13 +127,26 @@ def main():
         total_reactivated = 0
         total_validation_errors = 0
         total_duplicates = 0
+        new_by_profile = {key: 0 for key in SEARCH_PROFILES}
 
-        # Boucle sur les scrapers sélectionnés
-        for ScraperClass in scrapers_to_run:
-            scraper = ScraperClass()
+        runs = [(profile, ScraperClass) for profile in profiles_to_search for ScraperClass in scrapers_to_run]
+
+        # Boucle sur les couples (profil, site)
+        for run_idx, (profile, ScraperClass) in enumerate(runs):
+            scraper = ScraperClass(profile)
             site_name = scraper.site_name()
 
-            logger.info(f"--- Scraping {site_name} ---")
+            if not scraper.search_url():
+                logger.warning(f"--- {site_name} / {profile.label} : recherche non configurée, ignoré ---")
+                continue
+
+            # Changement de recherche : pause longue pour limiter la détection anti-bot
+            if run_idx > 0:
+                pause = random.uniform(PROFILE_SWITCH_MIN_DELAY, PROFILE_SWITCH_MAX_DELAY)
+                logger.info(f"Pause de {pause:.0f}s avant la recherche suivante")
+                time.sleep(pause)
+
+            logger.info(f"--- Scraping {site_name} — profil {profile.label} ---")
             raw_annonces = scraper.scrape()
             logger.info(f"🔍 {len(raw_annonces)} annonces brutes récupérées de {site_name}")
 
@@ -133,8 +168,8 @@ def main():
                     rejected += 1
                     continue
 
-                # Filtrage par prix et distance
-                filtered = apply_price_and_distance_filter(annonce)
+                # Filtrage par profil : budget, pièces, rayon autour de chaque cible
+                filtered, matches = match_profiles(annonce)
 
                 if not filtered:
                     rejected += 1
@@ -144,6 +179,12 @@ def main():
 
                 # Insertion ou mise à jour en base
                 result = insert_annonce(filtered)
+
+                matched_labels = []
+                for matched_profile, dist in matches:
+                    matched_labels.append(f"{matched_profile.label} {dist}km")
+                    if upsert_annonce_profile(filtered["url"], matched_profile.key, dist):
+                        new_by_profile[matched_profile.key] += 1
 
                 # Détection de doublons (même bien publié sur un autre site)
                 potential_dups = find_potential_duplicates(filtered)
@@ -160,7 +201,7 @@ def main():
                     inserted += 1
                     logger.info(
                         f"✨ Nouvelle annonce ({site_name}) : {filtered['title']} - "
-                        f"{filtered['price']}€ - {filtered['distance_enac_km']}km"
+                        f"{filtered['price']}€ - {', '.join(matched_labels)}"
                     )
                 elif result == "reactivated":
                     reactivated += 1
@@ -178,7 +219,7 @@ def main():
                     unchanged += 1
 
             # Résumé par site
-            logger.info(f"📊 Résumé {site_name} :")
+            logger.info(f"📊 Résumé {site_name} — {profile.label} :")
             logger.info(f"  - Annonces brutes : {len(raw_annonces)}")
             logger.info(f"  - Erreurs de validation : {validation_errors}")
             logger.info(f"  - Annonces filtrées conservées : {kept}")
@@ -203,7 +244,7 @@ def main():
         # Résumé global
         logger.info("=" * 50)
         logger.info("✅ Résumé global")
-        logger.info(f"  - Sites scrapes : {len(scrapers_to_run)}")
+        logger.info(f"  - Recherches lancées : {len(runs)} ({profiles_label} × {sites_label})")
         logger.info(f"  - Annonces brutes totales : {total_raw}")
         logger.info(f"  - Erreurs de validation : {total_validation_errors}")
         logger.info(f"  - Annonces conservées : {total_kept}")
@@ -212,6 +253,8 @@ def main():
             f"  - Nouvelles : {total_inserted} | Réactivées : {total_reactivated} | "
             f"Mises à jour : {total_updated} | Inchangées : {total_unchanged}"
         )
+        for key, count in new_by_profile.items():
+            logger.info(f"  - Nouvelles pour {SEARCH_PROFILES[key].label} : {count}")
         if total_duplicates:
             logger.warning(f"  - Doublons détectés : {total_duplicates} (vérifier les logs)")
         logger.info("🎯 Terminé.")

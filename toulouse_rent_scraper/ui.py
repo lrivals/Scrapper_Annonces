@@ -14,7 +14,7 @@ import webbrowser
 from datetime import datetime
 from flask import Flask, request, render_template_string, redirect, make_response, jsonify
 
-from config import DB_PATH
+from config import DB_PATH, SEARCH_PROFILES, DEFAULT_PROFILE
 from storage.sqlite import init_db, clear_db, set_annonce_status
 
 logging.basicConfig(
@@ -35,7 +35,7 @@ TEMPLATE = """<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Annonces Toulouse / ENAC</title>
+  <title>Annonces Toulouse — {{ profile.label }}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -557,6 +557,8 @@ TEMPLATE = """<!DOCTYPE html>
     .btn-view.active { background: var(--text-main); color: white; border-color: var(--text-main); }
 
     /* ---- Map container ---- */
+    .profile-tabs { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+    .profile-tabs a { text-decoration: none; }
     #map-view { margin-top: 32px; }
     #map { height: 600px; border-radius: 12px; border: 1px solid var(--border); }
     #map-ungeolocated { margin-top: 12px; font-size: 0.875rem; color: var(--text-muted); }
@@ -566,6 +568,12 @@ TEMPLATE = """<!DOCTYPE html>
   <div class="wrapper">
     <header>
       <h1>Annonces Toulouse</h1>
+      <nav class="profile-tabs">
+        {% for p in profiles %}
+        <a href="/?profile={{ p.key }}" class="btn-view {% if p.key == profile.key %}active{% endif %}"
+           title="{{ p.target_address }} — {{ p.min_rent_eur }}–{{ p.max_rent_eur }} € — {{ p.max_distance_km }} km">{{ p.label }}</a>
+        {% endfor %}
+      </nav>
       <div class="count" id="annonce-count">{{ total }} annonce{{ 's' if total != 1 else '' }}</div>
       <div class="action-bar">
         <button class="btn-scrape" id="btn-scrape" onclick="startScraping()">Lancer le scraping</button>
@@ -582,6 +590,7 @@ TEMPLATE = """<!DOCTYPE html>
       </div>
       <form id="doc-form" method="POST" action="/export-document" style="display:none">
         <input type="hidden" name="ids" id="doc-ids-input">
+        <input type="hidden" name="profile" value="{{ profile.key }}">
       </form>
       <div class="view-toggle">
         <button class="btn-view active" id="btn-view-list" onclick="setView('list')">&#9776; Liste</button>
@@ -594,6 +603,7 @@ TEMPLATE = """<!DOCTYPE html>
     {% endif %}
 
     <form method="get" class="filter-bar">
+      <input type="hidden" name="profile" value="{{ profile.key }}">
       <div class="filter-group">
         <label>Plateforme</label>
         <select name="site">
@@ -625,8 +635,8 @@ TEMPLATE = """<!DOCTYPE html>
       <div class="filter-group">
         <label>Prix (€)</label>
         <div class="prix-range">
-          <input type="number" name="prix_min" value="{{ current_prix_min }}" placeholder="Min" min="0">
-          <input type="number" name="prix_max" value="{{ current_prix_max }}" placeholder="Max" min="0">
+          <input type="number" name="prix_min" value="{{ current_prix_min }}" placeholder="{{ profile.min_rent_eur }}" min="0">
+          <input type="number" name="prix_max" value="{{ current_prix_max }}" placeholder="{{ profile.max_rent_eur }}" min="0">
         </div>
       </div>
 
@@ -635,7 +645,7 @@ TEMPLATE = """<!DOCTYPE html>
         <div style="display:flex;gap:8px;align-items:center">
           <select name="sort">
             <option value="price"            {% if current_sort == 'price' %}selected{% endif %}>Prix</option>
-            <option value="distance_enac_km" {% if current_sort == 'distance_enac_km' %}selected{% endif %}>Distance ENAC</option>
+            <option value="distance"         {% if current_sort in ('distance', 'distance_enac_km') %}selected{% endif %}>Distance {{ profile.label }}</option>
             <option value="created_at"       {% if current_sort == 'created_at' %}selected{% endif %}>Derniers ajouts</option>
           </select>
           <input type="hidden" id="order-input" name="order" value="{{ current_order }}">
@@ -649,7 +659,7 @@ TEMPLATE = """<!DOCTYPE html>
         <button type="submit" class="btn-filter">Filtrer</button>
       </div>
       <div class="filter-group">
-        <a href="/" class="btn-reset">Reset</a>
+        <a href="/?profile={{ profile.key }}" class="btn-reset">Reset</a>
       </div>
       <input type="hidden" name="view" id="view-input" value="list">
     </form>
@@ -676,10 +686,10 @@ TEMPLATE = """<!DOCTYPE html>
           </a>
 
           <div class="card-meta">
-            <div class="meta-item" title="Distance de l&rsquo;ENAC">
+            <div class="meta-item" title="Distance de {{ profile.target_address }}">
               <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
-              {% if a.distance_enac_km is not none %}
-                {{ "%.1f"|format(a.distance_enac_km | float) }} km
+              {% if a.distance_km is not none %}
+                {{ "%.1f"|format(a.distance_km | float) }} km
               {% else %}
                 Distance N/A
               {% endif %}
@@ -851,7 +861,7 @@ TEMPLATE = """<!DOCTYPE html>
       btn.disabled = true;
       btn.innerHTML = '<span class="spinner"></span>Scraping en cours…';
 
-      fetch('/start-scraping', { method: 'POST' })
+      fetch('/start-scraping?profile={{ profile.key }}', { method: 'POST' })
         .then(function(r) { return r.json(); })
         .then(function(data) {
           if (data.status === 'already_running') {
@@ -972,19 +982,23 @@ TEMPLATE = """<!DOCTYPE html>
       fetch('/api/map-data?' + params)
         .then(function(r) { return r.json(); })
         .then(function(data) {
-          _leafletMap = L.map('map', {preferCanvas: true}).setView([data.enac.lat, data.enac.lon], 13);
+          var t = data.target;
+          _leafletMap = L.map('map', {preferCanvas: true}).setView([t.lat, t.lon], 12);
           L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           }).addTo(_leafletMap);
 
-          L.marker([data.enac.lat, data.enac.lon], {icon: enacIcon})
+          L.marker([t.lat, t.lon], {icon: enacIcon})
             .addTo(_leafletMap)
-            .bindPopup('<b>ENAC</b><br>7 Av. &Eacute;douard Belin, Toulouse');
+            .bindPopup('<b>' + t.label + '</b><br>' + t.address);
+          L.circle([t.lat, t.lon], {
+            radius: t.radius_km * 1000, color: '#111827', weight: 1, fillOpacity: 0.04
+          }).addTo(_leafletMap);
 
           var ungeolocated = 0;
           data.listings.forEach(function(l) {
             if (l.lat === null || l.lon === null) { ungeolocated++; return; }
-            var dist = l.distance_km !== null ? '<br>' + l.distance_km + " km de l'ENAC" : '';
+            var dist = l.distance_km !== null ? '<br>' + l.distance_km + ' km de ' + t.label : '';
             var popup = '<b>' + (l.title || 'Annonce') + '</b>'
               + '<br>' + (l.price ? l.price + ' \u20ac/mois' : '&mdash;')
               + (l.location_raw ? '<br>' + l.location_raw : '')
@@ -1017,7 +1031,18 @@ TEMPLATE = """<!DOCTYPE html>
 </html>"""
 
 
-ALLOWED_SORTS = {"price", "distance_enac_km", "created_at", "site"}
+# Tri autorisé → colonne SQL (liste blanche : la valeur est injectée dans ORDER BY)
+SORT_COLUMNS = {
+    "price": "a.price",
+    "distance": "ap.distance_km",
+    "distance_enac_km": "ap.distance_km",  # ancien nom (URLs mémorisées)
+    "created_at": "a.created_at",
+    "site": "a.site",
+}
+
+
+def _current_profile(value: str):
+    return SEARCH_PROFILES.get(value or "", SEARCH_PROFILES[DEFAULT_PROFILE])
 
 
 def _int_or_none(value: str):
@@ -1067,8 +1092,9 @@ def index():
     prix_max  = request.args.get("prix_max", "")
     sort      = request.args.get("sort", "price")
     order     = request.args.get("order", "asc")
+    profile   = _current_profile(request.args.get("profile"))
 
-    if sort not in ALLOWED_SORTS:
+    if sort not in SORT_COLUMNS:
         sort = "price"
     if order not in ("asc", "desc"):
         order = "asc"
@@ -1076,16 +1102,17 @@ def index():
     dups = request.args.get("dups", "")
     where_sql, params, prix_min, prix_max = _build_filters(site, status, prix_min, prix_max, dups)
     query = f"""
-        SELECT a.*, d.site AS dup_site, d.url AS dup_url
+        SELECT a.*, ap.distance_km AS distance_km, d.site AS dup_site, d.url AS dup_url
         FROM annonces a
+        JOIN annonce_profiles ap ON ap.annonce_id = a.id AND ap.profile = ?
         LEFT JOIN annonces d ON d.id = a.duplicate_of
         {where_sql}
-        ORDER BY a.{sort} {order.upper()}
+        ORDER BY {SORT_COLUMNS[sort]} {order.upper()}
     """
 
     with sqlite3.connect(DB_PATH) as con:
         con.row_factory = sqlite3.Row
-        rows = con.execute(query, params).fetchall()
+        rows = con.execute(query, [profile.key] + params).fetchall()
         annonces = [dict(r) for r in rows]
         sites = [r[0] for r in con.execute(
             "SELECT DISTINCT site FROM annonces WHERE site IS NOT NULL ORDER BY site"
@@ -1113,8 +1140,8 @@ def index():
         flash = {"type": flash_type, "msg": flash_msg}
 
     log.info(
-        "GET / — site=%s status=%s prix=%s-%s sort=%s %s → %d annonces",
-        site or "*", status or "*", prix_min or "0", prix_max or "∞", sort, order, len(annonces),
+        "GET / — profil=%s site=%s status=%s prix=%s-%s sort=%s %s → %d annonces",
+        profile.key, site or "*", status or "*", prix_min or "0", prix_max or "∞", sort, order, len(annonces),
     )
     return render_template_string(
         TEMPLATE,
@@ -1123,6 +1150,8 @@ def index():
         current_site=site,
         current_status=status,
         current_dups=dups,
+        profile=profile,
+        profiles=list(SEARCH_PROFILES.values()),
         current_prix_min=prix_min,
         current_prix_max=prix_max,
         current_sort=sort,
@@ -1179,10 +1208,11 @@ def start_scraping():
     if _scraping_process is not None and _scraping_process.poll() is None:
         log.info("POST /start-scraping — déjà en cours (pid=%s)", _scraping_process.pid)
         return jsonify({"status": "already_running"})
-    _scraping_process = subprocess.Popen(
-        [sys.executable, "main.py", "--all"],
-        cwd=str(DB_PATH.parent.parent),
-    )
+    profile = request.args.get("profile", "")
+    cmd = [sys.executable, "main.py", "--all"]
+    if profile in SEARCH_PROFILES:
+        cmd += ["--profile", profile]
+    _scraping_process = subprocess.Popen(cmd, cwd=str(DB_PATH.parent.parent))
     log.info("POST /start-scraping — démarré (pid=%s)", _scraping_process.pid)
     return jsonify({"status": "started"})
 
@@ -1209,19 +1239,25 @@ def export_document():
     if not ids:
         return make_response("Aucune annonce sélectionnée.", 400)
 
+    profile = _current_profile(request.form.get("profile"))
     placeholders = ",".join("?" * len(ids))
     with sqlite3.connect(DB_PATH) as con:
         con.row_factory = sqlite3.Row
         rows = con.execute(
-            f"SELECT * FROM annonces WHERE id IN ({placeholders}) ORDER BY price ASC",
-            ids,
+            f"""
+            SELECT a.*, ap.distance_km AS distance_km
+            FROM annonces a
+            LEFT JOIN annonce_profiles ap ON ap.annonce_id = a.id AND ap.profile = ?
+            WHERE a.id IN ({placeholders}) ORDER BY a.price ASC
+            """,
+            [profile.key] + ids,
         ).fetchall()
         annonces = [dict(r) for r in rows]
 
     today = datetime.now().strftime("%d/%m/%Y")
     fname_date = datetime.now().strftime("%Y%m%d")
     lines = [
-        f"# Dossier de candidature — {today}",
+        f"# Dossier de candidature — {profile.label} — {today}",
         "",
         f"_{len(annonces)} annonce{'s' if len(annonces) > 1 else ''} sélectionnée{'s' if len(annonces) > 1 else ''}_",
         "",
@@ -1236,7 +1272,7 @@ def export_document():
         surface = f"{a['surface_m2']} m²" if a.get("surface_m2") else "—"
         rooms = str(a["nb_rooms"]) if a.get("nb_rooms") else "—"
         location = a.get("location_raw") or "Toulouse"
-        dist = f"{a['distance_enac_km']:.1f} km" if a.get("distance_enac_km") is not None else "—"
+        dist = f"{a['distance_km']:.1f} km" if a.get("distance_km") is not None else "—"
         site = a.get("site") or "—"
         status = {"active": "En ligne", "expired": "Expiré", "hidden": "Masquée"}.get(a.get("status") or "active", "—")
         created = (a.get("created_at") or "")[:10] or "—"
@@ -1252,7 +1288,7 @@ def export_document():
             f"**Surface :** {surface}  ",
             f"**Pièces :** {rooms}  ",
             f"**Localisation :** {location}  ",
-            f"**Distance ENAC :** {dist}  ",
+            f"**Distance {profile.label} :** {dist}  ",
             f"**Meublé :** {furnished}  ",
             f"**Charges :** {charges}  ",
             f"**Dépôt de garantie :** {deposit}  ",
@@ -1266,7 +1302,7 @@ def export_document():
             "### Critères",
             "",
             "- [ ] Loyer dans le budget",
-            "- [ ] Distance ENAC acceptable",
+            f"- [ ] Distance {profile.label} acceptable",
             "- [ ] Meublé / équipements OK",
             "- [ ] Disponibilité confirmée",
             "",
@@ -1288,14 +1324,13 @@ def export_document():
     log.info("POST /export-document — %d annonces exportées (ids=%s)", len(annonces), ids)
     resp = make_response(content)
     resp.headers["Content-Type"] = "text/markdown; charset=utf-8"
-    resp.headers["Content-Disposition"] = f'attachment; filename="candidatures_{fname_date}.md"'
+    resp.headers["Content-Disposition"] = f'attachment; filename="candidatures_{profile.key}_{fname_date}.md"'
     return resp
 
 
 @app.route("/api/map-data")
 def map_data():
-    from config import ENAC_LATITUDE, ENAC_LONGITUDE
-
+    profile  = _current_profile(request.args.get("profile"))
     site     = request.args.get("site", "")
     status   = request.args.get("status", "")
     prix_min = request.args.get("prix_min", "")
@@ -1304,9 +1339,11 @@ def map_data():
     dups     = request.args.get("dups", "")
     where_sql, params, _, _ = _build_filters(site, status, prix_min, prix_max, dups)
     query = f"""
-        SELECT a.id, a.title, a.price, a.location_raw, a.distance_enac_km, a.url,
-               g.latitude, g.longitude
+        SELECT a.id, a.title, a.price, a.location_raw, ap.distance_km, a.url,
+               COALESCE(a.lat, g.latitude) AS latitude,
+               COALESCE(a.lon, g.longitude) AS longitude
         FROM annonces a
+        JOIN annonce_profiles ap ON ap.annonce_id = a.id AND ap.profile = ?
         LEFT JOIN geocoding_cache g ON a.location_raw = g.address
         {where_sql}
         ORDER BY a.price ASC
@@ -1314,7 +1351,7 @@ def map_data():
 
     with sqlite3.connect(DB_PATH) as con:
         con.row_factory = sqlite3.Row
-        rows = con.execute(query, params).fetchall()
+        rows = con.execute(query, [profile.key] + params).fetchall()
 
     listings = [
         {
@@ -1322,7 +1359,7 @@ def map_data():
             "title": r["title"] or f"Annonce #{r['id']}",
             "price": r["price"],
             "location_raw": r["location_raw"],
-            "distance_km": r["distance_enac_km"],
+            "distance_km": r["distance_km"],
             "url": r["url"],
             "lat": r["latitude"],
             "lon": r["longitude"],
@@ -1332,11 +1369,18 @@ def map_data():
 
     geocoded = sum(1 for l in listings if l["lat"] is not None)
     log.info(
-        "GET /api/map-data — site=%s status=%s → %d listings (%d géocodées, %d sans coords)",
-        site or "*", status or "*", len(listings), geocoded, len(listings) - geocoded,
+        "GET /api/map-data — profil=%s site=%s status=%s → %d listings (%d géocodées, %d sans coords)",
+        profile.key, site or "*", status or "*", len(listings), geocoded, len(listings) - geocoded,
     )
     return jsonify({
-        "enac": {"lat": ENAC_LATITUDE, "lon": ENAC_LONGITUDE},
+        "target": {
+            "key": profile.key,
+            "label": profile.label,
+            "address": profile.target_address,
+            "lat": profile.target_lat,
+            "lon": profile.target_lon,
+            "radius_km": profile.max_distance_km,
+        },
         "listings": listings,
     })
 

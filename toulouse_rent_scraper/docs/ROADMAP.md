@@ -29,7 +29,7 @@ Sprint 10 (Vue Carte OpenStreetMap)        ✅
     ↓
 Sprint 11 (Fiabilité des données)          ✅
     ↓
-Sprint 14 (Profils multiples : ENAC + Blagnac)
+Sprint 14 (Profils multiples : ENAC + Blagnac) ✅
     ↓
 Sprint 12 (Refactor & sécurité)
     ↓
@@ -58,7 +58,7 @@ Sprint 2-bis (API REST & Dashboard)
 | 9 | Photos & Thumbnails | ✅ Terminé | 5/5 | 2026-03-25 | 2026-03-25 |
 | 10 | Vue Carte OpenStreetMap | ✅ Terminé | 6/6 | 2026-03-25 | 2026-03-25 |
 | 11 | Fiabilité des données (bugs audit) | ✅ Terminé | 7/7 (2 validations manuelles SeLoger) | 2026-11-03 | 2026-11-03 |
-| 14 | Profils de recherche (ENAC + Blagnac) | 🔲 À faire | 0/8 | — | — |
+| 14 | Profils de recherche (ENAC + Blagnac) | ✅ Terminé | 8/8 (URL SeLoger Blagnac à capturer) | 2026-11-03 | 2026-11-03 |
 | 12 | Refactor & sécurité | 🔲 À faire | 0/8 | — | — |
 | 13 | Alerte & priorisation | 🔲 À faire | 0/5 | — | — |
 | 4 | Scraper PAP.fr | 🔲 À faire | 0/6 | — | — |
@@ -93,14 +93,14 @@ Nouveau cas d'usage : appartement ≈ 700 € (550–750 €, T1–T3) à ≤ 8 
 
 | # | Tâche | Statut | Notes |
 |---|-------|--------|-------|
-| 14.1 | `SEARCH_PROFILES` dans la config | 🔲 | `enac` + `blagnac` |
-| 14.2 | URLs de recherche par profil | 🔲 | URL SeLoger à capturer manuellement |
-| 14.3 | Table `annonce_profiles` | 🔲 | Migration des annonces existantes → `enac` |
-| 14.4 | Filtre et pipeline par profil | 🔲 | `match_profiles()`, une annonce ↔ N profils |
-| 14.5 | CLI `--profile` | 🔲 | |
-| 14.6 | UI : sélecteur de profil | 🔲 | Liste, carte centrée + rayon, export |
-| 14.7 | Rapports & exports par profil | 🔲 | |
-| 14.8 | Tests | 🔲 | |
+| 14.1 | `SEARCH_PROFILES` dans la config | ✅ | `enac` + `blagnac` |
+| 14.2 | URLs de recherche par profil | ✅ | URL SeLoger à capturer manuellement |
+| 14.3 | Table `annonce_profiles` | ✅ | Migration des annonces existantes → `enac` |
+| 14.4 | Filtre et pipeline par profil | ✅ | `match_profiles()`, une annonce ↔ N profils |
+| 14.5 | CLI `--profile` | ✅ | |
+| 14.6 | UI : sélecteur de profil | ✅ | Liste, carte centrée + rayon, export |
+| 14.7 | Rapports & exports par profil | ✅ | |
+| 14.8 | Tests | ✅ | |
 
 ---
 
@@ -348,6 +348,7 @@ Tâches originellement prévues en Sprint 2, reportées.
 | 2026-03-25 | `COALESCE(photos, ?)` dans `insert_annonce` | Empêche d'écraser les photos complètes (enrichissement Sprint 3) lors d'un re-scraping de la liste |
 | 2026-03-25 | Leaflet.js via CDN pour la carte | Aucune clé API, tuiles OSM gratuites, aucune dépendance Python supplémentaire — `L.divIcon` pour les marqueurs personnalisés |
 | 2026-03-25 | LEFT JOIN `geocoding_cache` pour les coords carte | Réutilise le cache existant sans nouvelle colonne en base — les annonces sans entrée cache sont comptabilisées mais non affichées |
+| 2026-11-03 | Masquage global plutôt que par profil | Budgets ENAC (≤ 500 €) et Blagnac (≥ 550 €) disjoints — une annonce ne matche jamais les deux |
 | 2026-11-03 | Profils de recherche (Sprint 14) juste après le Sprint 11 | Nouveau besoin Blagnac ≈ 700 € ; table `annonce_profiles` plutôt qu'une colonne `profile` car une annonce peut matcher plusieurs cibles |
 | 2026-11-03 | Sprints 11→13 avant PAP.fr | Audit : bugs de données (prix, statuts, géocodage) et code Chrome dupliqué à corriger avant d'ajouter une 3ᵉ source — voir [AUDIT_2026-11.md](AUDIT_2026-11.md) |
 

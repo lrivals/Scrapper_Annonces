@@ -8,13 +8,7 @@ import re
 from typing import List, Dict, Optional
 
 from scrapers.base import BaseScraper
-from config import (
-    LEBONCOIN_SEARCH_URL,
-    LEBONCOIN_BASE_URL,
-    LEBONCOIN_STEP_IMMOBILIER,
-    LEBONCOIN_STEP_LOCATION,
-    LEBONCOIN_STEP_TOULOUSE,
-)
+from config import LEBONCOIN_BASE_URL
 
 
 class LeBonCoinScraper(BaseScraper):
@@ -26,14 +20,14 @@ class LeBonCoinScraper(BaseScraper):
     def base_url(self) -> str:
         return LEBONCOIN_BASE_URL
 
-    def search_url(self) -> str:
-        return LEBONCOIN_SEARCH_URL
+    def search_url(self) -> Optional[str]:
+        return self.profile.leboncoin_search_url()
 
     def navigation_steps(self) -> List[Dict]:
         """Navigation progressive : accueil puis recherche directe."""
         return [
             {"url": LEBONCOIN_BASE_URL, "label": "page d'accueil LeBonCoin"},
-            {"url": LEBONCOIN_SEARCH_URL, "label": "recherche avec filtres"},
+            {"url": self.search_url(), "label": f"recherche avec filtres ({self.profile.label})"},
         ]
 
     def card_selector(self) -> str:
