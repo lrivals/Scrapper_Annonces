@@ -3,6 +3,7 @@
 # Configuration globale du projet
 # =========================
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional, Tuple
@@ -136,6 +137,7 @@ class SearchProfile:
     min_rent_eur: int
     max_rent_eur: int
     rooms: Optional[Tuple[int, int]] = None     # (min, max) pièces ; None = pas de contrainte
+    target_rent_eur: Optional[int] = None       # loyer CC « idéal » : note loyer maximale en dessous
     lbc_location: Optional[str] = None          # paramètre `locations` LeBonCoin
     seloger_locations: Optional[str] = None     # paramètre `locations` SeLoger (base64, à capturer)
     seloger_sub_types: str = "Studio"
@@ -171,6 +173,7 @@ SEARCH_PROFILES: Dict[str, SearchProfile] = {
         max_distance_km=MAX_DISTANCE_KM,
         min_rent_eur=MIN_RENT_EUR,
         max_rent_eur=MAX_RENT_EUR,
+        target_rent_eur=350,
         lbc_location=_LEBONCOIN_LOCATION_TOULOUSE,
         seloger_locations=_SELOGER_LOCATIONS,
     ),
@@ -185,6 +188,7 @@ SEARCH_PROFILES: Dict[str, SearchProfile] = {
         min_rent_eur=550,
         max_rent_eur=750,
         rooms=(1, 3),
+        target_rent_eur=600,
         # Format LBC : Ville_CP__lat_lon_rayonDefaut_rayon(m) — à vérifier au premier run
         lbc_location="Blagnac_31700__43.6417_1.3693_5000_8000",
         # ⚠️ À capturer sur seloger.com (Blagnac, rayon 8 km, T1–T3, 750 € max) :
@@ -270,8 +274,18 @@ DUPLICATE_PRICE_TOLERANCE = 5
 # 🕒 PLANIFICATION
 # =========================
 
-# Utilisé par la planification systemd (Sprint 13)
-SCRAPE_FREQUENCY_HOURS = 8
+# Horaires : voir deploy/scraper.timer (systemd), pas de réglage ici.
+
+# Verrou : un seul scraping / enrichissement à la fois (timer + bouton de l'UI)
+SCRAPE_LOCK_FILE = DATA_DIR / ".scrape.lock"
+
+# Challenge anti-bot : attente de résolution manuelle (secondes)
+CHALLENGE_TIMEOUT_SECONDS = 180
+UNATTENDED_CHALLENGE_TIMEOUT_SECONDS = 600   # mode planifié : le temps de voir la notification
+
+# Après un blocage non résolu, un run planifié saute ce site pendant ce délai (anti-ban IP)
+BLOCK_COOLDOWN_HOURS = 6
+BLOCK_STATE_FILE = DATA_DIR / ".last_block.json"
 
 
 # =========================
@@ -281,3 +295,58 @@ SCRAPE_FREQUENCY_HOURS = 8
 ENRICHMENT_MIN_DELAY = 5.0
 ENRICHMENT_MAX_DELAY = 10.0
 ENRICHMENT_DEFAULT_LIMIT = 50
+# Échec d'enrichissement : nouvel essai après ce délai, au plus N tentatives (puis « failed »)
+ENRICHMENT_MAX_ATTEMPTS = 3
+ENRICHMENT_RETRY_DELAY_HOURS = 24
+
+
+# =========================
+# ⭐ SCORE D'INTÉRÊT (Sprint 13)
+# =========================
+
+# Poids relatifs des critères (le score final est ramené sur 100)
+SCORE_WEIGHTS = {
+    "loyer": 35,       # loyer charges comprises vs budget du profil
+    "distance": 30,    # distance à la cible du profil
+    "prix_m2": 15,     # €/m² vs médiane des annonces du profil
+    "meuble": 10,
+    "dpe": 10,
+}
+
+# Valeur (0–1) de chaque étiquette DPE ; inconnu = 0.5 (neutre)
+DPE_SCORES = {"A": 1.0, "B": 1.0, "C": 1.0, "D": 0.6, "E": 0.3, "F": 0.0, "G": 0.0}
+
+
+# =========================
+# 🔔 NOTIFICATIONS (Sprint 13)
+# =========================
+
+def _load_env_file(path: Path):
+    """Charge un fichier .env (CLE=valeur) sans écraser l'environnement existant."""
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+# Secrets dans toulouse_rent_scraper/.env (ignoré par git) — voir .env.example
+_load_env_file(BASE_DIR / ".env")
+
+NOTIFY_BACKEND = os.environ.get("NOTIFY_BACKEND") or None    # "ntfy" | "telegram" | None
+NTFY_SERVER = os.environ.get("NTFY_SERVER", "https://ntfy.sh")
+NTFY_TOPIC = os.environ.get("NTFY_TOPIC")                    # long et aléatoire : il fait office de secret
+NTFY_TOKEN = os.environ.get("NTFY_TOKEN")                    # optionnel (serveur ntfy protégé)
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+
+NOTIFY_MIN_SCORE = 55          # en dessous, pas d'alerte (l'annonce reste visible dans l'UI)
+NOTIFY_PRICE_DROP_EUR = 20     # alerte si le loyer baisse d'au moins ce montant
+NOTIFY_GROUP_THRESHOLD = 3     # au-delà, un seul message récapitulatif par profil
+NOTIFY_GROUP_MAX_ITEMS = 8     # nombre d'annonces listées dans un récapitulatif
+

@@ -1,0 +1,14 @@
+# Timer systemd utilisateur — 3 runs par jour, heure décalée aléatoirement
+# (comportement moins « robot » qu'un intervalle fixe).
+
+[Unit]
+Description=Scrapper Annonces — 8h, 13h et 19h (± 20 min)
+
+[Timer]
+OnCalendar=*-*-* 08,13,19:00
+RandomizedDelaySec=20min
+# Rattrape un run manqué (PC éteint) au démarrage suivant
+Persistent=true
+
+[Install]
+WantedBy=timers.target

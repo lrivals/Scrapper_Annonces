@@ -238,11 +238,16 @@ function initMap() {
     html: '<div style="width:16px;height:16px;background:#111827;border-radius:50%;border:3px solid white;box-shadow:0 1px 5px rgba(0,0,0,0.6)"></div>',
     iconSize: [16, 16], iconAnchor: [8, 8]
   });
-  var apptIcon = L.divIcon({
-    className: '',
-    html: '<div style="width:12px;height:12px;background:#059669;border-radius:50%;border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,0.4)"></div>',
-    iconSize: [12, 12], iconAnchor: [6, 6]
-  });
+  // Couleur des marqueurs selon le score (mêmes seuils que les pastilles de la liste)
+  function apptIcon(score) {
+    var color = score === null || score === undefined ? '#9ca3af'
+      : score >= 70 ? '#059669' : score >= 45 ? '#d97706' : '#9ca3af';
+    return L.divIcon({
+      className: '',
+      html: '<div style="width:12px;height:12px;background:' + color + ';border-radius:50%;border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,0.4)"></div>',
+      iconSize: [12, 12], iconAnchor: [6, 6]
+    });
+  }
 
   var params = new URLSearchParams(window.location.search);
   fetch('/api/map-data?' + params)
@@ -269,8 +274,9 @@ function initMap() {
           + '<br>' + (l.price ? l.price + ' €/mois' : '&mdash;')
           + (l.location_raw ? '<br>' + l.location_raw : '')
           + dist
+          + (l.score !== null && l.score !== undefined ? '<br>★ ' + Math.round(l.score) + '/100' : '')
           + "<br><a href='" + l.url + "' target='_blank'>Voir l'annonce →</a>";
-        L.marker([l.lat, l.lon], {icon: apptIcon})
+        L.marker([l.lat, l.lon], {icon: apptIcon(l.score)})
           .addTo(_leafletMap)
           .bindPopup(popup);
       });

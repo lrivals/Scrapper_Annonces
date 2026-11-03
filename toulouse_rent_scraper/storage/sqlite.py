@@ -6,11 +6,13 @@
 import json
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from config import DB_PATH, DUPLICATE_PRICE_TOLERANCE
+from config import (
+    DB_PATH, DUPLICATE_PRICE_TOLERANCE, ENRICHMENT_MAX_ATTEMPTS, ENRICHMENT_RETRY_DELAY_HOURS,
+)
 
 # Statuts possibles d'une annonce :
 #   active  — en ligne
@@ -202,6 +204,55 @@ def upsert_annonce_profile(url: str, profile: str, distance_km: Optional[float])
     return is_new
 
 
+def annonces_for_scoring(profile: str) -> List[Dict]:
+    """Annonces d'un profil avec les champs utiles au score."""
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT a.id, a.price, a.charges, a.surface_m2, a.furnished, a.dpe_rating,
+                   COALESCE(a.status, 'active') AS status, ap.distance_km
+            FROM annonces a
+            JOIN annonce_profiles ap ON ap.annonce_id = a.id AND ap.profile = ?
+            """,
+            (profile,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_price(url: str) -> Optional[int]:
+    """Prix actuellement en base pour cette URL (None si inconnue)."""
+    with connect() as conn:
+        row = conn.execute("SELECT price FROM annonces WHERE url = ?", (url,)).fetchone()
+    return row[0] if row else None
+
+
+def annonces_for_notification(profile: str, urls: List[str]) -> Dict[str, Dict]:
+    """Titre, prix, distance et score des annonces d'un profil, indexés par URL (actives seulement)."""
+    if not urls:
+        return {}
+    placeholders = ",".join("?" * len(urls))
+    with connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT a.url, a.title, a.price, a.location_raw, ap.distance_km, ap.score
+            FROM annonces a
+            JOIN annonce_profiles ap ON ap.annonce_id = a.id AND ap.profile = ?
+            WHERE a.url IN ({placeholders}) AND COALESCE(a.status, 'active') = 'active'
+            """,
+            [profile] + list(urls),
+        ).fetchall()
+    return {r["url"]: dict(r) for r in rows}
+
+
+def save_scores(profile: str, updates) -> None:
+    """updates : itérable de (annonce_id, score, detail_json)."""
+    with connect() as conn:
+        conn.executemany(
+            "UPDATE annonce_profiles SET score = ?, score_detail = ? WHERE annonce_id = ? AND profile = ?",
+            [(score, detail, annonce_id, profile) for annonce_id, score, detail in updates],
+        )
+
+
 def _location_words(location: Optional[str]) -> set:
     return {w.lower().strip(",.()") for w in (location or "").split() if len(w) > 3}
 
@@ -300,20 +351,33 @@ def set_annonce_status(annonce_id: int, status: str) -> Optional[str]:
 
 def get_pending_annonces(site_filter: Optional[str] = None, limit: int = 50) -> List[Dict]:
     """
-    Récupère les annonces en attente d'enrichissement.
+    Annonces actives à enrichir : jamais tentées (`pending`), ou en `error` avec
+    moins de ENRICHMENT_MAX_ATTEMPTS tentatives et un dernier essai assez ancien.
+    Les `pending` passent en premier.
     """
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
-    query = "SELECT * FROM annonces WHERE enrichment_status = 'pending' AND COALESCE(status, 'active') = 'active'"
-    params = []
+    # enriched_at est stocké en ISO (« 2026-11-02T10:00:00 ») : seuil calculé au même format
+    retry_before = (datetime.now() - timedelta(hours=ENRICHMENT_RETRY_DELAY_HOURS)).isoformat()
+    query = """
+        SELECT * FROM annonces
+        WHERE COALESCE(status, 'active') = 'active'
+          AND (
+                enrichment_status = 'pending'
+             OR (enrichment_status = 'error'
+                 AND COALESCE(enrichment_attempts, 0) < ?
+                 AND (enriched_at IS NULL OR enriched_at < ?))
+          )
+    """
+    params = [ENRICHMENT_MAX_ATTEMPTS, retry_before]
 
     if site_filter:
         query += " AND site = ?"
         params.append(site_filter)
 
-    query += " ORDER BY created_at DESC LIMIT ?"
+    query += " ORDER BY (enrichment_status = 'pending') DESC, created_at DESC LIMIT ?"
     params.append(limit)
 
     rows = cur.execute(query, params).fetchall()
@@ -357,7 +421,7 @@ def update_annonce_enrichment(url: str, data: Dict) -> bool:
         "surface_m2", "nb_rooms", "nb_bedrooms", "floor",
         "description", "charges", "deposit", "furnished",
         "dpe_rating", "photos", "publisher_type", "published_at",
-        "enriched_at", "enrichment_status",
+        "enriched_at", "enrichment_status", "enrichment_attempts", "error_detail",
     }
 
     fields_to_update = {k: v for k, v in data.items() if k in allowed_fields}

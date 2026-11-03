@@ -83,6 +83,9 @@ python main.py enrich [--site seloger] [--limit 20]  # enrichir les annonces en 
 python main.py check-links [--limit 50]            # vérifier les liens (Chromium headless)
 python main.py purge                               # vérification HEAD (peu fiable sur SeLoger/LBC)
 python main.py export csv|json                     # export des annonces actives
+python main.py rescore                             # recalculer les scores (après un changement de poids)
+python main.py notify-test                         # vérifier la configuration des notifications
+python main.py scrape --unattended                 # mode planifié (captcha notifié, sites bloqués sautés)
 python main.py ui [--port 8080] [--no-browser]     # interface web
 ```
 
@@ -97,10 +100,36 @@ python main.py ui        # ou : python -m ui
 Ouvre `http://localhost:5000` — interface responsive pour :
 
 - Basculer entre les profils (onglets ENAC / Blagnac)
-- Filtrer (site, statut, prix, doublons) et trier par prix, distance au profil ou date
+- Trier par **score d'intérêt** (défaut), prix, distance au profil ou date ; filtrer (site, statut, prix, doublons)
 - Voir l'évolution du prix (↓ 30 € depuis la première détection)
 - Masquer / restaurer une annonce, vue carte, export d'un dossier de candidature
-- Lancer un scraping (sortie dans `logs/ui_scraping.log`, dernière ligne affichée)
+- Lancer un scraping (sortie dans `logs/ui_scraping.log`, dernière ligne affichée) — refusé si un run
+  du timer est déjà en cours (verrou partagé)
+
+### Score d'intérêt
+
+Chaque annonce reçoit, pour chaque profil, un score sur 100 (pastille ★ dans l'interface, détail au survol) :
+
+| Critère | Poids | Calcul |
+|---|---|---|
+| Loyer charges comprises | 35 | 1 au loyer cible du profil (`target_rent_eur`), 0 au budget max |
+| Distance | 30 | 1 sur la cible, 0 en limite de rayon |
+| €/m² | 15 | comparé à la médiane des annonces du profil |
+| Meublé | 10 | oui = 1, non = 0 |
+| DPE | 10 | A–C = 1, D = 0.6, E = 0.3, F–G = 0 |
+
+Un critère inconnu (annonce pas encore enrichie) vaut 0.5 : il ne pénalise pas. Poids réglables via
+`SCORE_WEIGHTS` dans `config.py`, puis `python main.py rescore`.
+
+### Notifications
+
+Nouvelles annonces et baisses de loyer (≥ 20 €) au-dessus du score minimal (`NOTIFY_MIN_SCORE`, 55)
+envoyées sur le téléphone ; récapitulatif unique au-delà de 3 annonces par profil. Un captcha à
+résoudre est aussi signalé.
+
+1. Installer l'appli **ntfy** (Android / iOS) et s'abonner à un topic long et aléatoire.
+2. `cp .env.example .env` puis renseigner `NOTIFY_BACKEND=ntfy` et `NTFY_TOPIC=…` (ou Telegram).
+3. `python main.py notify-test`
 
 Les actions (masquer, vider la base, lancer le scraping) sont protégées par un jeton CSRF ;
 « Vider la BD » demande de taper `VIDER`.
@@ -143,7 +172,8 @@ pytest tests/ --cov=. --cov-report=html
 toulouse_rent_scraper/
 ├── config.py              # Configuration globale (profils de recherche, Chrome, délais)
 ├── main.py                # CLI (sous-commandes)
-├── pipeline.py            # Recherches profil × site → filtre → stockage → rapports
+├── pipeline.py            # Recherches profil × site → filtre → stockage → score → notifications → rapports
+├── scoring.py             # Score d'intérêt 0–100 par profil
 ├── requirements.txt       # Dépendances d'exécution (+ requirements-dev.txt)
 │
 ├── ui/                    # Interface web Flask
@@ -173,6 +203,10 @@ toulouse_rent_scraper/
 │   ├── queries.py         # Lectures de l'interface web
 │   └── cleaner.py         # Vérification des liens expirés
 │
+├── notify/                # Notifications (ntfy.sh, Telegram) + construction des messages
+│
+├── deploy/                # Unités systemd (service + timer)
+│
 ├── reporting/             # Génération de rapports
 │   ├── generator.py       # Rapports Markdown
 │   └── exporter.py        # Export CSV/JSON
@@ -183,6 +217,7 @@ toulouse_rent_scraper/
 ├── utils/                 # Utilitaires
 │   ├── logger.py          # Logging rotatif
 │   ├── validation.py      # Validation des données
+│   ├── lock.py            # Verrou inter-processus (un seul run à la fois)
 │   └── retry.py           # Retry avec backoff exponentiel
 │
 ├── scripts/
@@ -226,17 +261,27 @@ Modifiez `config.py` pour ajuster :
 
 ## Automatisation
 
-### Avec cron (toutes les 8 heures)
+### Avec systemd (recommandé) — 8h, 13h et 19h, ± 20 min
+
+Les unités sont dans `deploy/` (chemins prévus pour `~/Documents/Perso/Scrapper_Annonces`, à adapter sinon).
+Le service lance `main.py scrape --enrich --limit 20 --unattended` :
+
+- un captcha est **notifié** et attendu 10 min, puis le site est abandonné sans réessayer ;
+- un site bloqué dans les 6 dernières heures est sauté (anti-ban) ;
+- un verrou empêche deux runs simultanés (timer + bouton de l'UI).
 
 ```bash
-crontab -e
+systemctl --user link "$PWD/deploy/scraper.service" "$PWD/deploy/scraper.timer"
+systemctl --user enable --now scraper.timer
+systemctl --user list-timers scraper.timer      # prochain déclenchement
+journalctl --user -u scraper.service -f         # suivre un run
 ```
 
-Ajouter :
+Chrome n'étant pas headless (DataDome), le service a besoin de la session graphique. Vérifier que
+`systemctl --user show-environment | grep DISPLAY` renvoie une valeur ; sinon, une fois par session :
+`systemctl --user import-environment DISPLAY XAUTHORITY WAYLAND_DISPLAY`.
 
-```cron
-0 */8 * * * cd /home/user/Scrapper_Annonces/toulouse_rent_scraper && DISPLAY=:0 ../venv/bin/python main.py scrape
-```
+Lancer un run tout de suite : `systemctl --user start scraper.service`.
 
 ---
 
@@ -244,15 +289,11 @@ Ajouter :
 
 ### Problème : Playwright timeout
 
-Augmenter `PAGE_LOAD_TIMEOUT` dans `config.py` ou désactiver le mode headless :
-
-```python
-HEADLESS_BROWSER = False
-```
+Augmenter `PAGE_LOAD_TIMEOUT` dans `config.py`.
 
 ### Problème : Challenge anti-bot DataDome (LeBonCoin)
 
-LeBonCoin utilise DataDome. En cas de challenge détecté, le script attend 180 secondes pour une résolution manuelle. Si l'IP est bloquée :
+LeBonCoin utilise DataDome. En cas de challenge détecté, le script attend 3 min (10 min en mode planifié, avec notification) pour une résolution manuelle. Si l'IP est bloquée :
 
 - Attendre plusieurs heures avant de relancer
 - Vérifier que le profil Chrome persistant (`data/browser_profile/`) est bien utilisé

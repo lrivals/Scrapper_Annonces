@@ -17,6 +17,8 @@ from config import (
     MIN_ACTION_DELAY,
     MAX_ACTION_DELAY,
     LOG_DIR,
+    CHALLENGE_TIMEOUT_SECONDS,
+    UNATTENDED_CHALLENGE_TIMEOUT_SECONDS,
     SEARCH_PROFILES,
     DEFAULT_PROFILE,
     SearchProfile,
@@ -29,8 +31,13 @@ from utils.logger import setup_logger
 class BaseScraper(ABC):
     """Classe de base pour tous les scrapers d'annonces immobilières."""
 
-    def __init__(self, profile: Optional[SearchProfile] = None):
+    def __init__(self, profile: Optional[SearchProfile] = None, unattended: bool = False):
         self.profile = profile or SEARCH_PROFILES[DEFAULT_PROFILE]
+        # Mode planifié : attente de captcha plus longue (le temps de voir la notification)
+        self.unattended = unattended
+        self.challenge_timeout = (
+            UNATTENDED_CHALLENGE_TIMEOUT_SECONDS if unattended else CHALLENGE_TIMEOUT_SECONDS
+        )
         self.logger = setup_logger(self.site_name().lower())
         self.results: List[Dict] = []
 
@@ -148,9 +155,23 @@ class BaseScraper(ABC):
             markers=self.challenge_markers(),
         )
 
-    def wait_for_challenge(self, page, timeout_seconds=180) -> bool:
-        """Attend la résolution manuelle d'un challenge. Retourne True si résolu."""
-        return antibot.wait_for_challenge(page, timeout_seconds, is_blocked=self.is_page_blocked)
+    def wait_for_challenge(self, page, timeout_seconds: Optional[int] = None) -> bool:
+        """
+        Attend la résolution manuelle d'un challenge (notification envoyée au début).
+        Un blocage non résolu est mémorisé : les runs planifiés sauteront ce site un moment.
+        """
+        from notify import notify_captcha
+
+        timeout = max(timeout_seconds or 0, self.challenge_timeout)
+        resolved = antibot.wait_for_challenge(
+            page,
+            timeout,
+            is_blocked=self.is_page_blocked,
+            on_challenge=lambda: notify_captcha(self.site_name(), timeout),
+        )
+        if not resolved:
+            antibot.record_block(self.site_name())
+        return resolved
 
     # =========================
     # Gestion cookies

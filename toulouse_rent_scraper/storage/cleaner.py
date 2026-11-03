@@ -50,6 +50,12 @@ _EXPIRED_PATTERNS = [
 ]
 
 
+def is_expired_content(html_or_text: str) -> bool:
+    """True si la page indique que l'annonce a été retirée (SeLoger, LeBonCoin)."""
+    lowered = (html_or_text or "").lower()
+    return any(pat in lowered for pat in _EXPIRED_PATTERNS)
+
+
 def _check_url_alive(url: str) -> bool:
     """
     Vérifie si une URL répond (HEAD/GET sans navigateur).

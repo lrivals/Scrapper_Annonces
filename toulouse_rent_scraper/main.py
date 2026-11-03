@@ -7,6 +7,8 @@
 #   python main.py check-links [--limit 50]
 #   python main.py purge
 #   python main.py export csv|json
+#   python main.py rescore
+#   python main.py notify-test
 #   python main.py ui [--port 5000]
 #
 # Les anciennes options (--seloger, --ui, --check-links…) restent acceptées.
@@ -15,6 +17,7 @@
 
 import argparse
 import sys
+from contextlib import contextmanager
 from typing import List, Optional
 
 from config import SEARCH_PROFILES, ENRICHMENT_DEFAULT_LIMIT, enabled_profiles
@@ -23,7 +26,10 @@ from utils.logger import setup_logger
 
 logger = setup_logger("main")
 
-COMMANDS = ("scrape", "enrich", "check-links", "purge", "export", "ui")
+COMMANDS = ("scrape", "enrich", "check-links", "purge", "export", "rescore", "notify-test", "ui")
+
+# Code de sortie quand un autre run tient le verrou (EX_TEMPFAIL)
+EXIT_ALREADY_RUNNING = 75
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -44,15 +50,21 @@ def build_parser() -> argparse.ArgumentParser:
     scrape.add_argument("--export", choices=["csv", "json"], help="Exporter après le scraping")
     scrape.add_argument("--purge", action="store_true",
                         help="Vérifier les annonces expirées après le scraping (requêtes HEAD)")
+    scrape.add_argument("--unattended", action="store_true",
+                        help="Run planifié : captcha notifié et attendu 10 min, sites bloqués récemment sautés")
 
     enrich = sub.add_parser("enrich", help="Enrichir les annonces en attente (surface, DPE…)")
     enrich.add_argument("--site", **site_opt)
     enrich.add_argument("--limit", type=int, help=f"Nombre max d'annonces (défaut {ENRICHMENT_DEFAULT_LIMIT})")
+    enrich.add_argument("--unattended", action="store_true", help="Run planifié (captcha notifié)")
 
     check = sub.add_parser("check-links", help="Vérifier les liens via navigateur headless")
     check.add_argument("--limit", type=int, help="Nombre max d'annonces à vérifier")
 
     sub.add_parser("purge", help="Marquer les annonces expirées (requêtes HEAD, peu fiable sur les SPA)")
+
+    sub.add_parser("rescore", help="Recalculer les scores d'intérêt (après un changement de poids)")
+    sub.add_parser("notify-test", help="Envoyer une notification de test (vérifier .env)")
 
     export = sub.add_parser("export", help="Exporter les annonces actives")
     export.add_argument("format", choices=["csv", "json"])
@@ -127,16 +139,17 @@ def _site_filter(site_keys: Optional[List[str]]) -> Optional[str]:
     return None
 
 
-def cmd_enrich(site_keys, limit) -> dict:
+def cmd_enrich(site_keys, limit, unattended: bool = False) -> dict:
     from scrapers.enricher import enrich_annonces
 
     summary = enrich_annonces(
         site_filter=_site_filter(site_keys),
         limit=limit if limit is not None else ENRICHMENT_DEFAULT_LIMIT,
+        unattended=unattended,
     )
     logger.info(
         f"Enrichissement terminé : {summary['enriched']}/{summary['total']} enrichis, "
-        f"{summary['errors']} erreurs"
+        f"{summary['errors']} erreurs, {summary.get('expired', 0)} annonces retirées"
     )
     return summary
 
@@ -171,6 +184,32 @@ def cmd_export(fmt: str):
     logger.info(f"📦 Export {fmt.upper()} généré : {path}")
 
 
+def cmd_rescore():
+    from scoring import rescore
+    from storage.sqlite import init_db
+
+    init_db()
+    logger.info(f"Scores recalculés : {rescore()} annonce(s)")
+
+
+def cmd_notify_test() -> bool:
+    import config
+    import notify
+
+    if not notify.is_enabled():
+        logger.error("Notifications désactivées : définir NOTIFY_BACKEND (et ses secrets) dans .env — voir .env.example")
+        return False
+    ok = notify.send(
+        "Test — Scrapper Annonces",
+        "Les notifications fonctionnent. Profils : "
+        + ", ".join(p.label for p in enabled_profiles()),
+        tags=["white_check_mark"],
+    )
+    if ok:
+        logger.info(f"Notification de test envoyée via {config.NOTIFY_BACKEND}")
+    return ok
+
+
 def cmd_scrape(args):
     from pipeline import run_scraping
 
@@ -183,9 +222,9 @@ def cmd_scrape(args):
     )
 
     try:
-        run_scraping(profiles, site_keys)
+        run_scraping(profiles, site_keys, unattended=args.unattended)
         if args.enrich:
-            cmd_enrich(args.sites, args.limit)
+            cmd_enrich(args.sites, args.limit, unattended=args.unattended)
         if args.purge:
             cmd_purge()
         if args.export:
@@ -203,15 +242,34 @@ def main(argv: Optional[List[str]] = None):
         from ui import run_ui
         run_ui(port=args.port, open_browser=not args.no_browser)
     elif args.command == "enrich":
-        cmd_enrich(args.sites, args.limit)
+        with _exclusive():
+            cmd_enrich(args.sites, args.limit, unattended=args.unattended)
     elif args.command == "check-links":
         cmd_check_links(args.limit)
     elif args.command == "purge":
         cmd_purge()
     elif args.command == "export":
         cmd_export(args.format)
+    elif args.command == "rescore":
+        cmd_rescore()
+    elif args.command == "notify-test":
+        sys.exit(0 if cmd_notify_test() else 1)
     else:
-        cmd_scrape(args)
+        with _exclusive():
+            cmd_scrape(args)
+
+
+@contextmanager
+def _exclusive():
+    """Un seul scraping / enrichissement à la fois (ils partagent le profil Chrome)."""
+    from utils.lock import AlreadyRunning, run_lock
+
+    try:
+        with run_lock():
+            yield
+    except AlreadyRunning as e:
+        logger.error(f"⏸ {e} — abandon")
+        sys.exit(EXIT_ALREADY_RUNNING)
 
 
 if __name__ == "__main__":

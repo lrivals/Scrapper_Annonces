@@ -96,6 +96,7 @@
         <label>Trier par</label>
         <div style="display:flex;gap:8px;align-items:center">
           <select name="sort">
+            <option value="score"            {% if current_sort == 'score' %}selected{% endif %}>Score</option>
             <option value="price"            {% if current_sort == 'price' %}selected{% endif %}>Prix</option>
             <option value="distance"         {% if current_sort in ('distance', 'distance_enac_km') %}selected{% endif %}>Distance {{ profile.label }}</option>
             <option value="created_at"       {% if current_sort == 'created_at' %}selected{% endif %}>Derniers ajouts</option>
@@ -130,6 +131,10 @@
         <div class="card-content">
           <div class="card-header">
             <span class="site-tag">{{ a.site or 'Source' }}</span>
+            {% if a.score is not none %}
+            <span class="score-pill {{ 'score-high' if a.score >= 70 else ('score-mid' if a.score >= 45 else 'score-low') }}"
+                  title="Score {{ a.score|round|int }}/100 — {{ a.score_text }}">★ {{ a.score|round|int }}</span>
+            {% endif %}
             <div class="price-tag">{{ a.price or '—' }} €
               {% if a.first_price and a.price and a.first_price != a.price %}
               <span class="price-drop {{ 'up' if a.price > a.first_price else '' }}"
@@ -176,6 +181,9 @@
             {% set s = a.status or 'active' %}
             <span class="dot dot-{{ s }}"></span>
             {{ {'active': 'En ligne', 'expired': 'Expiré', 'hidden': 'Masquée'}.get(s, s) }}
+            {% if a.enrichment_status == 'failed' %}
+            · <span title="{{ a.error_detail or '' }}">détails indisponibles</span>
+            {% endif %}
             {% if a.dup_url %}
             · <a href="{{ a.dup_url }}" target="_blank" class="dup-tag" title="Même bien publié sur {{ a.dup_site }}">aussi sur {{ a.dup_site }}</a>
             {% endif %}

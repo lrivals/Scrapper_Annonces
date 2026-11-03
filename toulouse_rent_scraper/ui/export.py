@@ -47,6 +47,7 @@ def build_candidature_markdown(
             f"**Pièces :** {rooms}  ",
             f"**Localisation :** {location}  ",
             f"**Distance {profile.label} :** {dist}  ",
+            f"**Score :** {round(a['score'])}/100  " if a.get("score") is not None else "**Score :** —  ",
             f"**Meublé :** {furnished}  ",
             f"**Charges :** {charges}  ",
             f"**Dépôt de garantie :** {deposit}  ",

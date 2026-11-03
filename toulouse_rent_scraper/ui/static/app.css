@@ -532,6 +532,19 @@ body.doc-mode-active .btn-add-doc { display: inline-block; }
 #map { height: 600px; border-radius: 12px; border: 1px solid var(--border); }
 #map-ungeolocated { margin-top: 12px; font-size: 0.875rem; color: var(--text-muted); }
 
+/* ---- Sprint 13 : score d'intérêt ---- */
+.score-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  cursor: help;
+}
+.score-high { background: #d1fae5; color: #065f46; }
+.score-mid  { background: #fef3c7; color: #92400e; }
+.score-low  { background: #f3f4f6; color: #6b7280; }
+
 /* ---- Sprint 12 : historique de prix, log de scraping ---- */
 .price-drop {
   font-size: 0.7rem;

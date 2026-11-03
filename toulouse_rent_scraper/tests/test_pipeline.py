@@ -65,7 +65,7 @@ def test_runstats_addition():
 
 def _fake_scraper_class(results_by_profile):
     class Fake:
-        def __init__(self, profile):
+        def __init__(self, profile, unattended=False):
             self.profile = profile
 
         def site_name(self):
@@ -100,3 +100,27 @@ def test_run_scraping_skips_unconfigured_site_without_pause(db):
         total = run_scraping([unconfigured, ENAC], ["leboncoin"], sleep=sleep)
     assert total.inserted == 1
     sleep.assert_not_called()
+
+
+def test_events_new_and_price_drop(db, monkeypatch):
+    import pipeline
+    monkeypatch.setattr(pipeline, "NOTIFY_PRICE_DROP_EUR", 20)
+    first = process_annonces([_raw(1, price=480), _raw(2, price=450)], "LeBonCoin")
+    assert [e["kind"] for e in first.events] == ["new", "new"]
+
+    again = process_annonces([_raw(1, price=455), _raw(2, price=440)], "LeBonCoin")
+    assert again.events == [{"kind": "price_drop", "profile": "enac",
+                             "url": "https://lbc.fr/LeBonCoin/1", "old_price": 480}]
+
+
+def test_run_scraping_rescores_and_notifies(db):
+    Fake = _fake_scraper_class({"enac": [_raw(1)]})
+    with patch("scrapers.get_scraper_class", return_value=Fake), \
+         patch("reporting.generator.generate_summary_reports"), \
+         patch("notify.notify_events", return_value=1) as notify_events:
+        run_scraping([ENAC], ["leboncoin"], sleep=MagicMock())
+    events = notify_events.call_args.args[0]
+    assert events == [{"kind": "new", "profile": "enac", "url": "https://lbc.fr/LeBonCoin/1"}]
+    import sqlite3
+    with sqlite3.connect(db) as con:
+        assert con.execute("SELECT score FROM annonce_profiles").fetchone()[0] is not None

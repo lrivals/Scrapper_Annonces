@@ -147,9 +147,31 @@ def _m2_indexes_and_price_history(cur: sqlite3.Cursor):
     """)
 
 
+def _m3_scores_and_enrichment_retry(cur: sqlite3.Cursor):
+    """Sprint 13 — score par profil, suivi des tentatives d'enrichissement."""
+    ap_cols = {r[1] for r in cur.execute("PRAGMA table_info(annonce_profiles)")}
+    if "score" not in ap_cols:
+        cur.execute("ALTER TABLE annonce_profiles ADD COLUMN score REAL")
+    if "score_detail" not in ap_cols:
+        cur.execute("ALTER TABLE annonce_profiles ADD COLUMN score_detail TEXT")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_annonce_profiles_score ON annonce_profiles(profile, score)")
+
+    a_cols = {r[1] for r in cur.execute("PRAGMA table_info(annonces)")}
+    if "enrichment_attempts" not in a_cols:
+        cur.execute("ALTER TABLE annonces ADD COLUMN enrichment_attempts INTEGER DEFAULT 0")
+    if "error_detail" not in a_cols:
+        cur.execute("ALTER TABLE annonces ADD COLUMN error_detail TEXT")
+    # Les erreurs passées comptent comme une tentative
+    cur.execute("""
+        UPDATE annonces SET enrichment_attempts = 1
+        WHERE enrichment_status = 'error' AND COALESCE(enrichment_attempts, 0) = 0
+    """)
+
+
 MIGRATIONS = [
     _m1_base_schema,
     _m2_indexes_and_price_history,
+    _m3_scores_and_enrichment_retry,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)

@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Sequence
 
 from config import (
+    NOTIFY_PRICE_DROP_EUR,
     SEARCH_PROFILES,
     PROFILE_SWITCH_MIN_DELAY,
     PROFILE_SWITCH_MAX_DELAY,
@@ -36,11 +37,15 @@ class RunStats:
     unchanged: int = 0
     duplicates: int = 0
     new_by_profile: Counter = field(default_factory=Counter)
+    # Événements à notifier : {"kind": "new" | "price_drop", "profile", "url", "old_price"?}
+    events: List[Dict] = field(default_factory=list)
 
     def __iadd__(self, other: "RunStats") -> "RunStats":
         for name in self.__dataclass_fields__:
             if name == "new_by_profile":
                 self.new_by_profile.update(other.new_by_profile)
+            elif name == "events":
+                self.events.extend(other.events)
             else:
                 setattr(self, name, getattr(self, name) + getattr(other, name))
         return self
@@ -69,7 +74,7 @@ def process_annonces(raw_annonces: Sequence[Dict], site_name: str) -> RunStats:
     """
     from filters.price_and_distance import match_profiles
     from storage.sqlite import (
-        insert_annonce, find_potential_duplicates, set_duplicate_of, upsert_annonce_profile,
+        insert_annonce, find_potential_duplicates, get_price, set_duplicate_of, upsert_annonce_profile,
     )
     from utils.validation import validate_annonce
 
@@ -89,13 +94,23 @@ def process_annonces(raw_annonces: Sequence[Dict], site_name: str) -> RunStats:
             continue
         stats.kept += 1
 
+        url = filtered["url"]
+        old_price = get_price(url)
         result = insert_annonce(filtered)
+        price_drop = (
+            result == "updated" and old_price is not None
+            and old_price - filtered["price"] >= NOTIFY_PRICE_DROP_EUR
+        )
 
         matched_labels = []
         for profile, dist in matches:
             matched_labels.append(f"{profile.label} {dist}km")
-            if upsert_annonce_profile(filtered["url"], profile.key, dist):
+            if upsert_annonce_profile(url, profile.key, dist):
                 stats.new_by_profile[profile.key] += 1
+                stats.events.append({"kind": "new", "profile": profile.key, "url": url})
+            elif price_drop:
+                stats.events.append({"kind": "price_drop", "profile": profile.key, "url": url,
+                                     "old_price": old_price})
 
         # Même bien publié sur un autre site
         potential_dups = find_potential_duplicates(filtered)
@@ -129,11 +144,16 @@ def run_scraping(
     profiles: List[SearchProfile],
     site_keys: List[str],
     sleep=time.sleep,
+    unattended: bool = False,
 ) -> RunStats:
     """
-    Lance une recherche par couple (profil, site), traite les résultats et génère
-    les rapports. Les annonces trouvées sont testées contre TOUS les profils actifs.
+    Lance une recherche par couple (profil, site), traite les résultats, recalcule les
+    scores, notifie et génère les rapports. Les annonces trouvées sont testées contre
+    TOUS les profils actifs.
+    `unattended` (run planifié) : captcha notifié et attendu plus longtemps, et un site
+    bloqué récemment est sauté (anti-ban).
     """
+    from scrapers.antibot import recently_blocked
     from reporting.generator import generate_summary_reports
     from scrapers import get_scraper_class
     from storage.sqlite import init_db
@@ -146,12 +166,22 @@ def run_scraping(
     launched = 0
 
     for profile, site_key in runs:
-        scraper = get_scraper_class(site_key)(profile)
+        scraper = get_scraper_class(site_key)(profile, unattended=unattended)
         site_name = scraper.site_name()
 
         if not scraper.search_url():
             logger.warning(f"--- {site_name} / {profile.label} : recherche non configurée, ignoré ---")
             continue
+
+        blocked_at = recently_blocked(site_name)
+        if blocked_at:
+            if unattended:
+                logger.warning(
+                    f"--- {site_name} / {profile.label} : bloqué le {blocked_at:%d/%m %H:%M}, "
+                    f"site sauté (anti-ban) ---"
+                )
+                continue
+            logger.warning(f"{site_name} a été bloqué le {blocked_at:%d/%m %H:%M} : risque de nouveau blocage")
 
         # Changement de recherche : pause longue pour limiter la détection anti-bot
         if launched:
@@ -167,6 +197,13 @@ def run_scraping(
         stats = process_annonces(raw_annonces, site_name)
         stats.log_summary(f"Résumé {site_name} — {profile.label}")
         total += stats
+
+    from scoring import rescore
+    from notify import notify_events
+    rescore()
+    sent = notify_events(total.events)
+    if total.events:
+        logger.info(f"🔔 {sent} notification(s) pour {len(total.events)} événement(s)")
 
     logger.info("=" * 50)
     logger.info(f"Recherches lancées : {launched}/{len(runs)}")
