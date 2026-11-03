@@ -8,6 +8,17 @@ import tempfile
 from pathlib import Path
 
 
+@pytest.fixture(autouse=True)
+def isolated_state(tmp_path, monkeypatch):
+    """Verrou, mémoire des blocages et notifications : jamais les vrais fichiers / services."""
+    import scrapers.antibot
+    import utils.lock
+    import config
+    monkeypatch.setattr(utils.lock, "SCRAPE_LOCK_FILE", tmp_path / ".scrape.lock")
+    monkeypatch.setattr(scrapers.antibot, "BLOCK_STATE_FILE", tmp_path / ".last_block.json")
+    monkeypatch.setattr(config, "NOTIFY_BACKEND", None)
+
+
 @pytest.fixture
 def temp_db(monkeypatch):
     """

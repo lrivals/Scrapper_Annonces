@@ -4,9 +4,13 @@
 # de résolution manuelle dans la fenêtre Chrome.
 # =========================
 
+import json
 import time
+from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Callable, Iterable, Optional
 
+from config import BLOCK_COOLDOWN_HOURS, BLOCK_STATE_FILE
 from utils.logger import setup_logger
 
 logger = setup_logger("antibot")
@@ -109,3 +113,43 @@ def wait_for_challenge(
 
     logger.error("Timeout : challenge non resolu")
     return False
+
+
+# =========================
+# Mémoire des blocages (anti-ban pour les runs planifiés)
+# =========================
+
+def _read_blocks(path: Optional[Path]) -> dict:
+    path = path or BLOCK_STATE_FILE
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def record_block(site_name: str, path: Optional[Path] = None, now: Optional[datetime] = None):
+    """Mémorise un blocage non résolu pour `site_name`."""
+    path = path or BLOCK_STATE_FILE
+    blocks = _read_blocks(path)
+    blocks[site_name] = (now or datetime.now()).isoformat(timespec="seconds")
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    Path(path).write_text(json.dumps(blocks, indent=2), encoding="utf-8")
+    logger.warning(f"Blocage mémorisé pour {site_name} (pause de {BLOCK_COOLDOWN_HOURS} h en mode planifié)")
+
+
+def recently_blocked(
+    site_name: str,
+    hours: float = BLOCK_COOLDOWN_HOURS,
+    path: Optional[Path] = None,
+    now: Optional[datetime] = None,
+) -> Optional[datetime]:
+    """Date du dernier blocage de `site_name` s'il date de moins de `hours`, sinon None."""
+    stamp = _read_blocks(path).get(site_name)
+    if not stamp:
+        return None
+    try:
+        when = datetime.fromisoformat(stamp)
+    except ValueError:
+        return None
+    return when if (now or datetime.now()) - when < timedelta(hours=hours) else None
+

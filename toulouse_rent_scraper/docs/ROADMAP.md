@@ -33,7 +33,7 @@ Sprint 14 (Profils multiples : ENAC + Blagnac) ✅
     ↓
 Sprint 12 (Refactor & sécurité)            ✅
     ↓
-Sprint 13 (Alerte & priorisation)
+Sprint 13 (Alerte & priorisation)          ✅
     ↓
 Sprint 4 (PAP.fr)  — profite du refactor 12
     ↓
@@ -60,7 +60,7 @@ Sprint 2-bis (API REST & Dashboard)
 | 11 | Fiabilité des données (bugs audit) | ✅ Terminé | 7/7 (2 validations manuelles SeLoger) | 2026-11-03 | 2026-11-03 |
 | 14 | Profils de recherche (ENAC + Blagnac) | ✅ Terminé | 8/8 (URL SeLoger Blagnac à capturer) | 2026-11-03 | 2026-11-03 |
 | 12 | Refactor & sécurité | ✅ Terminé | 8/8 (compteurs à revalider au prochain scraping réel) | 2026-11-03 | 2026-11-03 |
-| 13 | Alerte & priorisation | 🔲 À faire | 0/5 | — | — |
+| 13 | Alerte & priorisation | ✅ Terminé | 4/5 (13.5 reporté) | 2026-11-03 | 2026-11-03 |
 | 4 | Scraper PAP.fr | 🔲 À faire | 0/6 | — | — |
 | 5 | Rapports Markdown avancés | 🔲 À faire | 0/6 | — | — |
 | 2-bis | API REST & Dashboard | 🔲 À faire | 0/6 | — | — |
@@ -127,11 +127,11 @@ Nouveau cas d'usage : appartement ≈ 700 € (550–750 €, T1–T3) à ≤ 8 
 
 | # | Tâche | Statut | Notes |
 |---|-------|--------|-------|
-| 13.1 | Notifications nouvelles annonces | 🔲 | ntfy.sh / Telegram — remplace 1.3/1.4 |
-| 13.2 | Planification systemd | 🔲 | Timer user + verrou + alerte captcha |
-| 13.3 | Score d'intérêt | 🔲 | Prix CC, distance, €/m², meublé, DPE |
-| 13.4 | Retry enrichissement | 🔲 | Max 3 tentatives |
-| 13.5 | Temps de trajet (stretch) | 🔲 | OSRM vélo / Tisséo |
+| 13.1 | Notifications nouvelles annonces | ✅ | ntfy.sh / Telegram — remplace 1.3/1.4 |
+| 13.2 | Planification systemd | ✅ | Timer user + verrou + alerte captcha |
+| 13.3 | Score d'intérêt | ✅ | Prix CC, distance, €/m², meublé, DPE |
+| 13.4 | Retry enrichissement | ✅ | Max 3 tentatives |
+| 13.5 | Temps de trajet (stretch) | ⏸️ | OSRM vélo / Tisséo |
 
 ---
 
@@ -143,10 +143,10 @@ Nouveau cas d'usage : appartement ≈ 700 € (550–750 €, T1–T3) à ≤ 8 
 |---|-------|--------|-------|
 | 1.1 | Fix parsing prix SeLoger | ✅ | MIN_RENT_EUR=50, 24 annonces purgées |
 | 1.2 | Export CSV/JSON | ✅ | `--export csv/json`, 10 tests |
-| 1.3 | Notifications Telegram | ⏸️ | Reporté → Sprint 13.1 |
+| 1.3 | Notifications Telegram | ✅ | Livré au Sprint 13.1 (ntfy + Telegram) |
 | 1.4 | Notification email SMTP | ⏸️ | Reporté → remplacé par ntfy (13.1) |
 | 1.5 | Purge annonces expirées | ✅ | `--purge`, colonne status, 6 tests |
-| 1.6 | Tests notifications | ⏸️ | Dépend de 1.3/1.4 |
+| 1.6 | Tests notifications | ✅ | Livré au Sprint 13.1 (`tests/test_notify.py`) |
 
 ---
 
@@ -348,6 +348,9 @@ Tâches originellement prévues en Sprint 2, reportées.
 | 2026-03-25 | `COALESCE(photos, ?)` dans `insert_annonce` | Empêche d'écraser les photos complètes (enrichissement Sprint 3) lors d'un re-scraping de la liste |
 | 2026-03-25 | Leaflet.js via CDN pour la carte | Aucune clé API, tuiles OSM gratuites, aucune dépendance Python supplémentaire — `L.divIcon` pour les marqueurs personnalisés |
 | 2026-03-25 | LEFT JOIN `geocoding_cache` pour les coords carte | Réutilise le cache existant sans nouvelle colonne en base — les annonces sans entrée cache sont comptabilisées mais non affichées |
+| 2026-11-03 | Score stocké par profil, avec un loyer cible par profil | Loyer et distance dépendent du profil ; le minimum de budget (50 €) n'est pas un loyer idéal |
+| 2026-11-03 | ntfy.sh en publication JSON, `.env` lu sans dépendance | Titres avec « — » et « € » impossibles en en-têtes HTTP (latin-1) |
+| 2026-11-03 | Timer systemd 3×/jour ± 20 min, verrou fcntl, pause de 6 h après un blocage | Comportement moins « robot » ; pas de double run timer + UI ; limite le risque de ban IP |
 | 2026-11-03 | Package `ui/` (templates Jinja + statiques) | `ui.py` dépassait 1400 lignes ; le SQL passe dans `storage/queries.py` |
 | 2026-11-03 | Migrations versionnées (`PRAGMA user_version`) + WAL | Schéma rejoué une seule fois ; l'UI peut lire pendant un scraping |
 | 2026-11-03 | Jeton CSRF de session sur l'UI | Une page web quelconque pouvait vider la base via `localhost:5000/clear-db` |

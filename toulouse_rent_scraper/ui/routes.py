@@ -17,7 +17,9 @@ from storage.queries import (
 )
 from storage.sqlite import clear_db, set_annonce_status
 from ui.export import build_candidature_markdown, candidature_filename
+from scoring import describe as describe_score
 from ui.security import safe_back
+from utils.lock import is_locked
 from utils.logger import setup_logger
 
 bp = Blueprint("ui", __name__)
@@ -61,16 +63,18 @@ def _back() -> str:
 def index():
     profile = _current_profile(request.args.get("profile"))
     filters = ListingFilters.from_args(request.args)
-    sort = request.args.get("sort", "price")
-    order = request.args.get("order", "asc")
+    sort = request.args.get("sort", "score")
     if sort not in SORT_COLUMNS:
-        sort = "price"
+        sort = "score"
+    # Score : meilleur d'abord ; autres tris : croissant par défaut
+    order = request.args.get("order") or ("desc" if sort == "score" else "asc")
     if order not in ("asc", "desc"):
         order = "asc"
 
     annonces = list_annonces(profile.key, filters, sort, order)
     for a in annonces:
         a["thumbnail"] = _thumbnail(a.get("photos"))
+        a["score_text"] = describe_score(a.get("score_detail"))
 
     shown = filters.cleaned()
     flash = None
@@ -148,6 +152,10 @@ def start_scraping():
     if _scraping_process is not None and _scraping_process.poll() is None:
         log.info("POST /start-scraping — déjà en cours (pid=%s)", _scraping_process.pid)
         return jsonify({"status": "already_running"})
+    if is_locked():
+        # Lancé ailleurs (timer systemd, terminal) : on suit simplement son avancement
+        log.info("POST /start-scraping — un autre run tient le verrou")
+        return jsonify({"status": "already_running"})
 
     cmd = [sys.executable, "main.py", "scrape"]
     profile = request.args.get("profile", "")
@@ -174,10 +182,16 @@ def _last_log_line() -> str:
 
 @bp.route("/scraping-status")
 def scraping_status():
-    if _scraping_process is None:
-        return jsonify({"running": False, "returncode": None, "last_line": ""})
-    rc = _scraping_process.poll()
-    return jsonify({"running": rc is None, "returncode": rc, "last_line": _last_log_line()})
+    if _scraping_process is None or _scraping_process.poll() is not None:
+        # Pas de run lancé par l'UI en cours : peut-être un run du timer
+        external = is_locked()
+        rc = None if _scraping_process is None else _scraping_process.returncode
+        return jsonify({
+            "running": external,
+            "returncode": rc,
+            "last_line": "Scraping en cours (lancé hors de l'interface)…" if external else _last_log_line(),
+        })
+    return jsonify({"running": True, "returncode": None, "last_line": _last_log_line()})
 
 
 @bp.route("/export-document", methods=["POST"])
@@ -221,7 +235,7 @@ def map_data():
             "radius_km": profile.max_distance_km,
         },
         "listings": [
-            {k: l[k] for k in ("id", "title", "price", "location_raw", "distance_km", "url", "lat", "lon")}
+            {k: l[k] for k in ("id", "title", "price", "location_raw", "distance_km", "score", "url", "lat", "lon")}
             for l in listings
         ],
     })

@@ -11,6 +11,7 @@ from storage.sqlite import connect
 
 # Tri autorisé → colonne SQL (liste blanche : la valeur est injectée dans ORDER BY)
 SORT_COLUMNS = {
+    "score": "ap.score",
     "price": "a.price",
     "distance": "ap.distance_km",
     "distance_enac_km": "ap.distance_km",  # ancien nom (URLs mémorisées)
@@ -75,7 +76,7 @@ class ListingFilters:
         return "WHERE " + " AND ".join(clauses), params
 
 
-def list_annonces(profile: str, filters: ListingFilters, sort: str = "price", order: str = "asc") -> List[Dict]:
+def list_annonces(profile: str, filters: ListingFilters, sort: str = "score", order: str = "desc") -> List[Dict]:
     """Annonces d'un profil, avec distance au profil, doublon éventuel et premier prix connu."""
     sort_sql = SORT_COLUMNS.get(sort, SORT_COLUMNS["price"])
     order_sql = "DESC" if order == "desc" else "ASC"
@@ -83,6 +84,7 @@ def list_annonces(profile: str, filters: ListingFilters, sort: str = "price", or
     query = f"""
         SELECT a.*,
                ap.distance_km AS distance_km,
+               ap.score AS score, ap.score_detail AS score_detail,
                d.site AS dup_site, d.url AS dup_url,
                (SELECT ph.price FROM price_history ph WHERE ph.annonce_id = a.id
                 ORDER BY ph.seen_at, ph.id LIMIT 1) AS first_price,
@@ -110,7 +112,7 @@ def map_listings(profile: str, filters: ListingFilters) -> List[Dict]:
     """Points de la carte : coordonnées stockées, sinon reprises du cache de géocodage."""
     where_sql, params = filters.where()
     query = f"""
-        SELECT a.id, a.title, a.price, a.location_raw, ap.distance_km, a.url,
+        SELECT a.id, a.title, a.price, a.location_raw, ap.distance_km, ap.score, a.url,
                COALESCE(a.lat, g.latitude) AS lat,
                COALESCE(a.lon, g.longitude) AS lon
         FROM annonces a
@@ -129,7 +131,7 @@ def annonces_by_ids(ids: List[int], profile: str) -> List[Dict]:
         return []
     placeholders = ",".join("?" * len(ids))
     query = f"""
-        SELECT a.*, ap.distance_km AS distance_km
+        SELECT a.*, ap.distance_km AS distance_km, ap.score AS score
         FROM annonces a
         LEFT JOIN annonce_profiles ap ON ap.annonce_id = a.id AND ap.profile = ?
         WHERE a.id IN ({placeholders})

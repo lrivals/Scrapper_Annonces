@@ -221,3 +221,23 @@ def test_restore_button_visible_outside_document_mode(client):
     css = client.get("/static/app.css").get_data(as_text=True)
     restore_rule = css[css.index(".btn-restore {"):].split("}")[0]
     assert "display: none" not in restore_rule
+
+
+# ---- Score (Sprint 13.3) ----
+
+def test_default_sort_is_score_desc(client):
+    from scoring import rescore
+    _add("https://ex.com/far", price=490, distance=9.0)
+    _add("https://ex.com/near", price=360, distance=0.5)
+    rescore(["enac"])
+    page = client.get("/").get_data(as_text=True)
+    assert page.index("Studio 360") < page.index("Studio 490")
+    assert 'class="score-pill score-high"' in page
+    assert "Loyer CC" in page  # détail au survol
+
+
+def test_map_data_includes_score(client):
+    from scoring import rescore
+    _add("https://ex.com/1")
+    rescore(["enac"])
+    assert client.get("/api/map-data").get_json()["listings"][0]["score"] is not None
