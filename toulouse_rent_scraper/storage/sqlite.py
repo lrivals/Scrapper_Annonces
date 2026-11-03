@@ -9,7 +9,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from config import DB_PATH, DEDUP_KEYS
+from config import DB_PATH, DUPLICATE_PRICE_TOLERANCE
+
+# Statuts possibles d'une annonce :
+#   active  — en ligne
+#   expired — détectée comme retirée (--check-links / --purge), réactivée si revue
+#   hidden  — masquée manuellement depuis l'UI, ne revient jamais
+ANNONCE_STATUSES = {"active", "expired", "hidden"}
 
 
 def get_connection():
@@ -47,6 +53,13 @@ def init_db():
         cur.execute("ALTER TABLE annonces ADD COLUMN status TEXT DEFAULT 'active'")
         cur.execute("UPDATE annonces SET status = 'active' WHERE status IS NULL")
 
+    if "checked_at" not in columns:
+        cur.execute("ALTER TABLE annonces ADD COLUMN checked_at TIMESTAMP")
+
+    # Sprint 11 — lien vers l'annonce d'origine (même bien publié sur un autre site)
+    if "duplicate_of" not in columns:
+        cur.execute("ALTER TABLE annonces ADD COLUMN duplicate_of INTEGER")
+
     # Sprint 3 — colonnes enrichissement
     enrichment_columns = {
         "surface_m2": "REAL",
@@ -72,6 +85,16 @@ def init_db():
     # Mettre enrichment_status à 'pending' pour les annonces existantes sans statut
     cur.execute("UPDATE annonces SET enrichment_status = 'pending' WHERE enrichment_status IS NULL")
 
+    # Cache géocodage persistant
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS geocoding_cache (
+            address TEXT PRIMARY KEY,
+            latitude REAL,
+            longitude REAL,
+            cached_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -87,16 +110,61 @@ def annonce_exists(url: str) -> bool:
     return exists
 
 
-def insert_annonce(annonce: Dict) -> bool:
+def insert_annonce(annonce: Dict) -> str:
     """
-    Insère une annonce si elle n'existe pas déjà.
-    Retourne True si insérée, False sinon.
+    Insère une annonce ou met à jour une annonce existante (même URL).
+    Retourne :
+      "new"         — nouvelle annonce insérée
+      "reactivated" — annonce marquée expirée qui réapparaît (repassée en active)
+      "updated"     — annonce existante dont le prix a changé
+      "unchanged"   — annonce existante, prix identique (ou masquée)
+    Une annonce masquée (status 'hidden') reste masquée.
     """
-    if annonce_exists(annonce["url"]):
-        return False
+    url = annonce["url"]
+    now = datetime.now().isoformat()
 
     conn = get_connection()
     cur = conn.cursor()
+
+    cur.execute("SELECT price, COALESCE(status, 'active') FROM annonces WHERE url = ?", (url,))
+    row = cur.fetchone()
+
+    if row is not None:
+        existing_price, existing_status = row
+        new_price = annonce.get("price")
+        price_changed = new_price is not None and new_price != existing_price
+
+        # Dans un UPDATE SQLite, les CASE lisent les valeurs d'avant la mise à jour.
+        # Photos : COALESCE(photos, ?) pour ne pas écraser les photos complètes de l'enrichissement.
+        cur.execute(
+            """
+            UPDATE annonces SET
+                scraped_at = ?,
+                checked_at = CASE WHEN status = 'expired' THEN NULL ELSE checked_at END,
+                status = CASE WHEN status = 'expired' THEN 'active' ELSE status END,
+                price = COALESCE(?, price),
+                location_raw = COALESCE(?, location_raw),
+                distance_enac_km = COALESCE(?, distance_enac_km),
+                photos = COALESCE(photos, ?)
+            WHERE url = ?
+            """,
+            (
+                now,
+                new_price,
+                annonce.get("location_raw"),
+                annonce.get("distance_enac_km"),
+                annonce.get("photos"),
+                url,
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+        if existing_status == "expired":
+            return "reactivated"
+        if price_changed:
+            return "updated"
+        return "unchanged"
 
     cur.execute("""
         INSERT INTO annonces (
@@ -106,21 +174,119 @@ def insert_annonce(annonce: Dict) -> bool:
             location_raw,
             distance_enac_km,
             url,
-            created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            created_at,
+            photos
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         annonce.get("site"),
         annonce.get("title"),
         annonce.get("price"),
         annonce.get("location_raw"),
         annonce.get("distance_enac_km"),
-        annonce.get("url"),
-        datetime.now().isoformat(),
+        url,
+        now,
+        annonce.get("photos"),
     ))
 
     conn.commit()
     conn.close()
-    return True
+    return "new"
+
+
+def _location_words(location: Optional[str]) -> set:
+    return {w.lower().strip(",.()") for w in (location or "").split() if len(w) > 3}
+
+
+def find_potential_duplicates(annonce: Dict) -> List[Dict]:
+    """
+    Recherche le même bien publié sur un AUTRE site :
+      - site différent, URL différente
+      - prix à ±DUPLICATE_PRICE_TOLERANCE €
+      - surface à ±2 m² si connue des deux côtés
+      - au moins 2 mots (> 3 caractères) communs dans location_raw
+    Seules les annonces « racines » (duplicate_of IS NULL) sont candidates,
+    triées de la plus ancienne à la plus récente.
+    """
+    url = annonce.get("url", "")
+    price = annonce.get("price")
+    site = annonce.get("site", "")
+
+    if price is None:
+        return []
+
+    words_ref = _location_words(annonce.get("location_raw"))
+    if len(words_ref) < 2:
+        return []
+
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        SELECT id, url, title, price, location_raw, site, surface_m2
+        FROM annonces
+        WHERE site != ?
+          AND price BETWEEN ? AND ?
+          AND url != ?
+          AND duplicate_of IS NULL
+        ORDER BY id ASC
+        """,
+        (site, price - DUPLICATE_PRICE_TOLERANCE, price + DUPLICATE_PRICE_TOLERANCE, url),
+    )
+    candidates = [dict(row) for row in cur.fetchall()]
+    conn.close()
+
+    surface = annonce.get("surface_m2")
+    matches = []
+    for candidate in candidates:
+        cand_surface = candidate.get("surface_m2")
+        if surface is not None and cand_surface is not None and abs(surface - cand_surface) > 2:
+            continue
+        if len(words_ref & _location_words(candidate.get("location_raw"))) >= 2:
+            matches.append(candidate)
+
+    return matches
+
+
+def set_duplicate_of(url: str, original_id: int) -> bool:
+    """
+    Rattache l'annonce `url` à l'annonce d'origine `original_id`.
+    Ne fait rien si l'annonce est déjà rattachée ou si l'origine est plus récente.
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        UPDATE annonces SET duplicate_of = ?
+        WHERE url = ? AND duplicate_of IS NULL AND id > ?
+        """,
+        (original_id, url, original_id),
+    )
+    updated = cur.rowcount > 0
+    conn.commit()
+    conn.close()
+    return updated
+
+
+def set_annonce_status(annonce_id: int, status: str) -> Optional[str]:
+    """
+    Change le statut d'une annonce. Retourne son titre, ou None si introuvable.
+    """
+    if status not in ANNONCE_STATUSES:
+        raise ValueError(f"Statut inconnu : {status}")
+
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT title FROM annonces WHERE id = ?", (annonce_id,))
+    row = cur.fetchone()
+    if row is None:
+        conn.close()
+        return None
+    cur.execute("UPDATE annonces SET status = ? WHERE id = ?", (status, annonce_id))
+    conn.commit()
+    conn.close()
+    return row[0] or f"#{annonce_id}"
 
 
 def get_pending_annonces(site_filter: Optional[str] = None, limit: int = 50) -> List[Dict]:
@@ -146,6 +312,21 @@ def get_pending_annonces(site_filter: Optional[str] = None, limit: int = 50) -> 
 
     conn.close()
     return result
+
+
+def clear_db() -> int:
+    """
+    Supprime toutes les annonces de la base de données.
+    Retourne le nombre d'annonces supprimées.
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM annonces")
+    count = cur.fetchone()[0]
+    cur.execute("DELETE FROM annonces")
+    conn.commit()
+    conn.close()
+    return count
 
 
 def update_annonce_enrichment(url: str, data: Dict) -> bool:

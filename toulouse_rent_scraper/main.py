@@ -4,6 +4,7 @@
 # =========================
 
 import argparse
+import sys
 from datetime import datetime
 
 from utils.logger import setup_logger
@@ -24,8 +25,10 @@ def parse_args():
     parser.add_argument("--port", type=int, default=5000, help="Port pour l'interface web (defaut: 5000)")
     parser.add_argument("--check-links", action="store_true", dest="check_links",
                         help="Vérifier les liens via navigateur et marquer les annonces expirées")
+    parser.add_argument("--enrich", action="store_true",
+                        help="Enrichir les annonces avec les données de détail (surface, DPE, etc.)")
     parser.add_argument("--limit", type=int, default=None,
-                        help="Nombre max d'annonces à vérifier avec --check-links")
+                        help="Nombre max d'annonces à traiter (--check-links ou --enrich)")
     return parser.parse_args()
 
 
@@ -37,12 +40,27 @@ def main():
         run_ui(port=args.port)
         return
 
+    explicit_scraping = args.seloger or args.leboncoin or "--all" in sys.argv
+    if args.enrich and not explicit_scraping:
+        from scrapers.enricher import enrich_annonces
+        from config import ENRICHMENT_DEFAULT_LIMIT
+
+        limit = args.limit if args.limit is not None else ENRICHMENT_DEFAULT_LIMIT
+        summary = enrich_annonces(site_filter=None, limit=limit)
+        print(
+            f"Enrichissement terminé : {summary['enriched']}/{summary['total']} enrichis, "
+            f"{summary['errors']} erreurs"
+        )
+        return
+
     if args.check_links:
         from storage.cleaner import check_links_playwright
         summary = check_links_playwright(limit=args.limit)
         print(
             f"Vérification terminée : {summary['checked']} vérifiées, "
-            f"{summary['expired']} expirées, {summary['errors']} erreurs"
+            f"{summary['expired']} expirées, "
+            f"{summary['network_errors']} erreurs réseau (non vérifiées), "
+            f"{summary['page_errors']} erreurs de page"
         )
         return
 
@@ -50,7 +68,7 @@ def main():
     from scrapers.seloger import SeLogerScraper
     from scrapers.leboncoin import LeBonCoinScraper
     from filters.price_and_distance import apply_price_and_distance_filter
-    from storage.sqlite import init_db, insert_annonce
+    from storage.sqlite import init_db, insert_annonce, find_potential_duplicates, set_duplicate_of
     from reporting.generator import generate_summary_reports
     from reporting.exporter import run_export
     from storage.cleaner import check_expired_annonces
@@ -82,7 +100,11 @@ def main():
         total_kept = 0
         total_rejected = 0
         total_inserted = 0
+        total_updated = 0
+        total_unchanged = 0
+        total_reactivated = 0
         total_validation_errors = 0
+        total_duplicates = 0
 
         # Boucle sur les scrapers sélectionnés
         for ScraperClass in scrapers_to_run:
@@ -96,7 +118,11 @@ def main():
             kept = 0
             rejected = 0
             inserted = 0
+            updated = 0
+            unchanged = 0
+            reactivated = 0
             validation_errors = 0
+            duplicates = 0
 
             for annonce in raw_annonces:
                 # Validation des données brutes
@@ -116,13 +142,40 @@ def main():
 
                 kept += 1
 
-                # Insertion en base
-                if insert_annonce(filtered):
+                # Insertion ou mise à jour en base
+                result = insert_annonce(filtered)
+
+                # Détection de doublons (même bien publié sur un autre site)
+                potential_dups = find_potential_duplicates(filtered)
+                if potential_dups:
+                    original = potential_dups[0]
+                    if set_duplicate_of(filtered["url"], original["id"]):
+                        duplicates += 1
+                        logger.warning(
+                            f"⚠ Doublon détecté ({site_name}) : "
+                            f"\"{filtered['title']} {filtered['price']}€\" "
+                            f"↔ \"{original['title']} {original['price']}€\" ({original['url']})"
+                        )
+                if result == "new":
                     inserted += 1
                     logger.info(
                         f"✨ Nouvelle annonce ({site_name}) : {filtered['title']} - "
                         f"{filtered['price']}€ - {filtered['distance_enac_km']}km"
                     )
+                elif result == "reactivated":
+                    reactivated += 1
+                    logger.info(
+                        f"♻ Annonce réactivée ({site_name}) : {filtered['title']} - "
+                        f"{filtered['price']}€"
+                    )
+                elif result == "updated":
+                    updated += 1
+                    logger.info(
+                        f"🔄 Prix mis à jour ({site_name}) : {filtered['title']} - "
+                        f"{filtered['price']}€"
+                    )
+                else:
+                    unchanged += 1
 
             # Résumé par site
             logger.info(f"📊 Résumé {site_name} :")
@@ -130,13 +183,22 @@ def main():
             logger.info(f"  - Erreurs de validation : {validation_errors}")
             logger.info(f"  - Annonces filtrées conservées : {kept}")
             logger.info(f"  - Annonces rejetées : {rejected}")
-            logger.info(f"  - Nouvelles annonces insérées : {inserted}")
+            logger.info(
+                f"  - Nouvelles : {inserted} | Réactivées : {reactivated} | "
+                f"Mises à jour : {updated} | Inchangées : {unchanged}"
+            )
+            if duplicates:
+                logger.warning(f"  - Doublons détectés : {duplicates}")
 
             total_raw += len(raw_annonces)
             total_kept += kept
             total_rejected += rejected
             total_inserted += inserted
+            total_updated += updated
+            total_unchanged += unchanged
+            total_reactivated += reactivated
             total_validation_errors += validation_errors
+            total_duplicates += duplicates
 
         # Résumé global
         logger.info("=" * 50)
@@ -146,12 +208,35 @@ def main():
         logger.info(f"  - Erreurs de validation : {total_validation_errors}")
         logger.info(f"  - Annonces conservées : {total_kept}")
         logger.info(f"  - Annonces rejetées : {total_rejected}")
-        logger.info(f"  - Nouvelles annonces insérées : {total_inserted}")
+        logger.info(
+            f"  - Nouvelles : {total_inserted} | Réactivées : {total_reactivated} | "
+            f"Mises à jour : {total_updated} | Inchangées : {total_unchanged}"
+        )
+        if total_duplicates:
+            logger.warning(f"  - Doublons détectés : {total_duplicates} (vérifier les logs)")
         logger.info("🎯 Terminé.")
 
         # Génération des rapports Markdown
         generate_summary_reports(run_start_time)
         logger.info("📄 Rapports générés dans le dossier reports/")
+
+        # Enrichissement post-scraping si --enrich
+        if args.enrich:
+            from scrapers.enricher import enrich_annonces
+            from config import ENRICHMENT_DEFAULT_LIMIT
+
+            site_filter = None
+            if args.seloger:
+                site_filter = "SeLoger"
+            elif args.leboncoin:
+                site_filter = "LeBonCoin"
+
+            limit = args.limit if args.limit is not None else ENRICHMENT_DEFAULT_LIMIT
+            summary = enrich_annonces(site_filter=site_filter, limit=limit)
+            logger.info(
+                f"Enrichissement : {summary['enriched']}/{summary['total']} enrichis, "
+                f"{summary['errors']} erreurs"
+            )
 
         # Purge des annonces expirées si demandé
         if args.purge:

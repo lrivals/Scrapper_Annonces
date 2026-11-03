@@ -45,12 +45,35 @@ TARGET_DISTRICTS = [
 
 
 # =========================
+# 🗺️ GÉOCODAGE
+# =========================
+
+# Communes de l'agglomération : si l'une apparaît dans l'adresse, on n'ajoute
+# pas « Toulouse » à la requête Nominatim (sinon « Ramonville …, Toulouse » échoue)
+KNOWN_COMMUNES = [
+    "Toulouse", "Ramonville", "Labège", "Labege", "Castanet", "Balma", "L'Union",
+    "Blagnac", "Beauzelle", "Cornebarrieu", "Aussonne", "Colomiers", "Tournefeuille",
+    "Cugnaux", "Portet", "Muret", "Saint-Orens", "Quint-Fonsegrives", "Auzeville",
+    "Escalquens", "Pechbonnieu", "Launaguet", "Seilh", "Mondonville", "Plaisance-du-Touch",
+]
+
+# Zone de recherche Nominatim (évite les homonymes ailleurs en France) :
+# ((lat_sud, lon_ouest), (lat_nord, lon_est)) — agglomération toulousaine élargie
+GEOCODE_VIEWBOX = ((43.35, 1.10), (43.85, 1.75))
+
+# Une adresse non trouvée n'est pas re-demandée à Nominatim pendant ce délai
+GEOCODE_NEGATIVE_TTL_DAYS = 30
+
+
+# =========================
 # 🌐 SELOGER
 # =========================
 
 SELOGER_BASE_URL = "https://www.seloger.com"
 
-# URL de recherche avec filtres pré-appliqués (pages 1 à 3)
+# URL de recherche avec filtres pré-appliqués (pages 1 à 3).
+# Budget injecté depuis MAX_RENT_EUR ; particuliers ET professionnels.
+# ⚠️ `estateSubTypes` : valeurs T1/T2 à capturer depuis le site avant de les ajouter.
 _SELOGER_LOCATIONS = (
     "eyJwbGFjZUlkIjoiQUQwOEZSMTI1MzUiLCJyYWRpdXMiOjEwLCJwb2x5bGluZSI6In1obGlH"
     "cV9fSHhJanZDfl5wcEN8ckBgZUN6ZEFsdEJkdEFoX0JiYEJuZkFqaEJ6akBwbEJ0TW5sQmNO"
@@ -62,11 +85,11 @@ _SELOGER_LOCATIONS = (
 
 SELOGER_SEARCH_URL = (
     "https://www.seloger.com/classified-search"
-    "?classifiedBusiness=Professional"
-    "&distributionTypes=Rent"
+    "?distributionTypes=Rent"
     "&estateSubTypes=Studio"
     "&estateTypes=Apartment"
     f"&locations={_SELOGER_LOCATIONS}"
+    f"&priceMax={MAX_RENT_EUR}"
     "&order=PriceAsc"
 )
 
@@ -93,14 +116,15 @@ LEBONCOIN_STEP_TOULOUSE = (
     "&real_estate_type=2"
 )
 
-# URL finale avec tous les filtres
+# URL finale avec tous les filtres — budget dérivé de MIN/MAX_RENT_EUR,
+# plus récentes d'abord (les nouveautés passent avant la limite de pages)
 LEBONCOIN_SEARCH_URL = (
     "https://www.leboncoin.fr/recherche"
     "?category=10"
     "&locations=Toulouse__43.599373754597394_1.435619856703149_9864_10000"
-    "&price=450-max"
+    f"&price={MIN_RENT_EUR}-{MAX_RENT_EUR}"
     "&real_estate_type=2"
-    "&sort=price&order=asc"
+    "&sort=time&order=desc"
 )
 
 # Timeout Playwright (ms)
@@ -161,12 +185,8 @@ LOG_LEVEL = "INFO"
 # 🔁 DÉDUPLICATION
 # =========================
 
-# Champs utilisés pour identifier une annonce unique
-DEDUP_KEYS = [
-    "price",
-    "surface",
-    "district"
-]
+# Même bien publié sur deux sites : écart de prix toléré (en euros)
+DUPLICATE_PRICE_TOLERANCE = 5
 
 
 # =========================

@@ -10,23 +10,35 @@ from config import MAX_RENT_EUR, MIN_RENT_EUR, MAX_DISTANCE_KM
 from geo.distance import distance_from_enac_km
 
 
-def parse_price(price_raw: Optional[str]) -> Optional[int]:
+# Séparateur de milliers : espace (normale, insécable, fine) ou point,
+# entre un chiffre et un groupe d'exactement 3 chiffres ("1 200", "1.050")
+_THOUSANDS_SEP = re.compile(r"(?<=\d)[   .](?=\d{3}(?!\d))")
+
+
+def parse_price(price_raw) -> Optional[int]:
     """
     Nettoie un prix brut et retourne un entier en euros.
     Exemples :
         "430€" -> 430
         "430 € cc" -> 430
+        "1 200 €" -> 1200
+        "450,50 €" -> 450
+        480 -> 480
         None -> None
     """
+    if price_raw is None or isinstance(price_raw, bool):
+        return None
+    if isinstance(price_raw, (int, float)):
+        return int(price_raw)
     if not price_raw:
         return None
 
-    # Supprimer espaces insécables et texte
-    cleaned = price_raw.replace("\u202f", " ").lower()
+    cleaned = _THOUSANDS_SEP.sub("", price_raw)
 
-    match = re.search(r"(\d{2,4})", cleaned)
+    # Premier nombre entier (les décimales après la virgule sont ignorées)
+    match = re.search(r"\d+", cleaned)
     if match:
-        return int(match.group(1))
+        return int(match.group())
 
     return None
 
