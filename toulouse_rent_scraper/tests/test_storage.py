@@ -4,7 +4,12 @@
 # =========================
 
 import pytest
-from storage.sqlite import init_db, insert_annonce, annonce_exists
+import sqlite3
+
+from storage.sqlite import (
+    init_db, insert_annonce, annonce_exists, set_annonce_status,
+    find_potential_duplicates, set_duplicate_of,
+)
 
 
 class TestSQLiteStorage:
@@ -20,7 +25,7 @@ class TestSQLiteStorage:
         init_db()
         
         result = insert_annonce(sample_annonce_filtered)
-        assert result is True, "L'insertion devrait réussir pour une nouvelle annonce"
+        assert result == "new", "L'insertion devrait réussir pour une nouvelle annonce"
         
         # Vérifier que l'annonce existe
         assert annonce_exists(sample_annonce_filtered["url"])
@@ -34,7 +39,7 @@ class TestSQLiteStorage:
         
         # Tentative de ré-insertion
         result = insert_annonce(sample_annonce_filtered)
-        assert result is False, "La ré-insertion d'une annonce existante devrait échouer"
+        assert result == "unchanged", "La ré-insertion ne doit pas créer de doublon"
     
     def test_annonce_exists_false(self, temp_db):
         """Test vérification d'existence pour une annonce inexistante."""
@@ -61,7 +66,7 @@ class TestDatabaseIntegrity:
         
         # Première insertion
         result1 = insert_annonce(sample_annonce_filtered)
-        assert result1 is True
+        assert result1 == "new"
         
         # Modifier légèrement l'annonce mais garder la même URL
         annonce_modified = sample_annonce_filtered.copy()
@@ -70,4 +75,138 @@ class TestDatabaseIntegrity:
         
         # Tentative d'insertion avec même URL
         result2 = insert_annonce(annonce_modified)
-        assert result2 is False, "Deux annonces avec la même URL ne devraient pas être insérées"
+        assert result2 == "updated", "Même URL : mise à jour, pas de nouvelle ligne"
+        with sqlite3.connect(temp_db) as con:
+            assert con.execute("SELECT COUNT(*) FROM annonces").fetchone()[0] == 1
+
+
+def _row(db, url):
+    with sqlite3.connect(db) as con:
+        con.row_factory = sqlite3.Row
+        return dict(con.execute("SELECT * FROM annonces WHERE url = ?", (url,)).fetchone())
+
+
+class TestStatusLifecycle:
+    """Sprint 11 — réactivation des expirées, masquage durable."""
+
+    def _expire(self, db, url):
+        with sqlite3.connect(db) as con:
+            con.execute(
+                "UPDATE annonces SET status = 'expired', checked_at = '2026-01-01' WHERE url = ?",
+                (url,),
+            )
+
+    def test_expired_annonce_is_reactivated(self, temp_db, sample_annonce_filtered):
+        init_db()
+        insert_annonce(sample_annonce_filtered)
+        self._expire(temp_db, sample_annonce_filtered["url"])
+
+        assert insert_annonce(sample_annonce_filtered) == "reactivated"
+        row = _row(temp_db, sample_annonce_filtered["url"])
+        assert row["status"] == "active"
+        assert row["checked_at"] is None
+
+    def test_reactivation_also_updates_price(self, temp_db, sample_annonce_filtered):
+        init_db()
+        insert_annonce(sample_annonce_filtered)
+        self._expire(temp_db, sample_annonce_filtered["url"])
+
+        insert_annonce({**sample_annonce_filtered, "price": 399})
+        assert _row(temp_db, sample_annonce_filtered["url"])["price"] == 399
+
+    def test_hidden_annonce_stays_hidden(self, temp_db, sample_annonce_filtered):
+        init_db()
+        insert_annonce(sample_annonce_filtered)
+        annonce_id = _row(temp_db, sample_annonce_filtered["url"])["id"]
+        assert set_annonce_status(annonce_id, "hidden") == sample_annonce_filtered["title"]
+
+        assert insert_annonce(sample_annonce_filtered) == "unchanged"
+        assert _row(temp_db, sample_annonce_filtered["url"])["status"] == "hidden"
+
+    def test_location_and_distance_updated(self, temp_db, sample_annonce_filtered):
+        init_db()
+        insert_annonce(sample_annonce_filtered)
+        insert_annonce({**sample_annonce_filtered, "location_raw": "Saouzelong", "distance_enac_km": 2.1})
+        row = _row(temp_db, sample_annonce_filtered["url"])
+        assert row["location_raw"] == "Saouzelong"
+        assert row["distance_enac_km"] == 2.1
+
+    def test_missing_fields_do_not_erase_existing(self, temp_db, sample_annonce_filtered):
+        init_db()
+        insert_annonce(sample_annonce_filtered)
+        insert_annonce({**sample_annonce_filtered, "location_raw": None, "distance_enac_km": None})
+        row = _row(temp_db, sample_annonce_filtered["url"])
+        assert row["location_raw"] == sample_annonce_filtered["location_raw"]
+        assert row["distance_enac_km"] == sample_annonce_filtered["distance_enac_km"]
+
+    def test_set_status_unknown_id(self, temp_db):
+        init_db()
+        assert set_annonce_status(9999, "hidden") is None
+
+    def test_set_status_invalid(self, temp_db):
+        init_db()
+        with pytest.raises(ValueError):
+            set_annonce_status(1, "deleted")
+
+
+class TestDuplicates:
+    """Sprint 11 — même bien sur deux sites."""
+
+    LBC = {
+        "site": "LeBonCoin",
+        "title": "Studio Rangueil",
+        "price": 422,
+        "location_raw": "Toulouse 31400 Rangueil",
+        "distance_enac_km": 1.4,
+        "url": "https://www.leboncoin.fr/locations/1.htm",
+    }
+    SELOGER = {
+        "site": "SeLoger",
+        "title": "Studio meublé",
+        "price": 420,
+        "location_raw": "Rangueil, Toulouse 31400",
+        "distance_enac_km": 1.4,
+        "url": "https://www.seloger.com/annonces/2.htm",
+    }
+
+    def test_cross_site_duplicate_found_and_linked(self, temp_db):
+        init_db()
+        insert_annonce(self.LBC)
+        insert_annonce(self.SELOGER)
+
+        dups = find_potential_duplicates(self.SELOGER)
+        assert [d["url"] for d in dups] == [self.LBC["url"]]
+
+        assert set_duplicate_of(self.SELOGER["url"], dups[0]["id"]) is True
+        assert _row(temp_db, self.SELOGER["url"])["duplicate_of"] == dups[0]["id"]
+        # Déjà rattachée : pas de second rattachement
+        assert set_duplicate_of(self.SELOGER["url"], dups[0]["id"]) is False
+
+    def test_same_site_is_not_duplicate(self, temp_db):
+        init_db()
+        insert_annonce(self.LBC)
+        other = {**self.LBC, "url": "https://www.leboncoin.fr/locations/3.htm"}
+        insert_annonce(other)
+        assert find_potential_duplicates(other) == []
+
+    def test_price_outside_tolerance(self, temp_db):
+        init_db()
+        insert_annonce(self.LBC)
+        far = {**self.SELOGER, "price": 470}
+        insert_annonce(far)
+        assert find_potential_duplicates(far) == []
+
+    def test_surface_mismatch(self, temp_db):
+        init_db()
+        insert_annonce(self.LBC)
+        with sqlite3.connect(temp_db) as con:
+            con.execute("UPDATE annonces SET surface_m2 = 18 WHERE url = ?", (self.LBC["url"],))
+        assert find_potential_duplicates({**self.SELOGER, "surface_m2": 30}) == []
+        assert len(find_potential_duplicates({**self.SELOGER, "surface_m2": 19})) == 1
+
+    def test_newer_annonce_cannot_be_original(self, temp_db):
+        init_db()
+        insert_annonce(self.LBC)
+        insert_annonce(self.SELOGER)
+        newer_id = _row(temp_db, self.SELOGER["url"])["id"]
+        assert set_duplicate_of(self.LBC["url"], newer_id) is False

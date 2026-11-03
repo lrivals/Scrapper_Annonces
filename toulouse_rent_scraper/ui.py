@@ -4,13 +4,29 @@
 # Usage: python main.py --ui  (ou python ui.py directement)
 # =========================
 
+import json
+import logging
 import sqlite3
+import subprocess
+import sys
 import threading
 import webbrowser
-from flask import Flask, request, render_template_string, redirect
+from datetime import datetime
+from flask import Flask, request, render_template_string, redirect, make_response, jsonify
 
-from config import DB_PATH
-from storage.sqlite import init_db
+from config import DB_PATH, SEARCH_PROFILES, DEFAULT_PROFILE
+from storage.sqlite import init_db, clear_db, set_annonce_status
+
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%H:%M:%S",
+)
+# Silence les logs verbeux de Werkzeug (requêtes HTTP Flask)
+logging.getLogger("werkzeug").setLevel(logging.WARNING)
+log = logging.getLogger("ui")
+
+_scraping_process = None
 
 app = Flask(__name__)
 
@@ -19,10 +35,12 @@ TEMPLATE = """<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Annonces Toulouse / ENAC</title>
+  <title>Annonces Toulouse — {{ profile.label }}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <style>
     :root {
       --primary: #111827;
@@ -300,6 +318,14 @@ TEMPLATE = """<!DOCTYPE html>
     }
     .dot-active  { background: #111827; }
     .dot-expired { background: #d1d5db; }
+    .dot-hidden  { background: #fca5a5; }
+
+    .dup-tag {
+      font-size: 0.7rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-decoration: underline dotted;
+    }
 
     .btn-del {
       background: none;
@@ -339,18 +365,237 @@ TEMPLATE = """<!DOCTYPE html>
     .flash-ok  { background: #111827; color: white; }
     .flash-err { background: #ef4444; color: white; }
 
+    /* ---- Action bar (scrape / clear DB) ---- */
+    .action-bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: center;
+      margin-bottom: 6px;
+    }
+
+    .btn-scrape {
+      padding: 8px 20px;
+      background: #059669;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.8125rem;
+      font-weight: 700;
+      transition: opacity 0.2s;
+    }
+    .btn-scrape:hover { opacity: 0.85; }
+    .btn-scrape:disabled { opacity: 0.6; cursor: not-allowed; }
+
+    .btn-clear-db {
+      padding: 8px 20px;
+      background: white;
+      color: #ef4444;
+      border: 1.5px solid #ef4444;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.8125rem;
+      font-weight: 700;
+      transition: all 0.2s;
+    }
+    .btn-clear-db:hover { background: #fef2f2; }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner {
+      display: inline-block;
+      width: 12px; height: 12px;
+      border: 2px solid rgba(255,255,255,0.4);
+      border-top-color: white;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+
+    /* ---- Document mode ---- */
+    .doc-bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .btn-doc-start {
+      padding: 8px 20px;
+      background: white;
+      color: var(--text-main);
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.8125rem;
+      font-weight: 700;
+      transition: all 0.2s;
+    }
+    .btn-doc-start:hover { border-color: var(--text-main); background: #f9fafb; }
+    .btn-doc-start.active { background: var(--text-main); color: white; border-color: var(--text-main); }
+
+    .doc-count-badge {
+      font-size: 0.8125rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      display: none;
+    }
+    .doc-count-badge.visible { display: inline; }
+
+    .btn-doc-export {
+      padding: 8px 20px;
+      background: #059669;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.8125rem;
+      font-weight: 700;
+      transition: opacity 0.2s;
+      display: none;
+    }
+    .btn-doc-export:hover { opacity: 0.85; }
+    .btn-doc-export.visible { display: inline-block; }
+
+    .btn-doc-clear {
+      padding: 8px 14px;
+      background: none;
+      color: var(--text-muted);
+      border: 1px solid transparent;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.8125rem;
+      font-weight: 600;
+      transition: all 0.2s;
+      display: none;
+    }
+    .btn-doc-clear:hover { background: #fef2f2; color: #ef4444; }
+    .btn-doc-clear.visible { display: inline-block; }
+
+    .btn-add-doc {
+      padding: 5px 12px;
+      background: white;
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.75rem;
+      font-weight: 700;
+      transition: all 0.2s;
+      display: none;
+    }
+    .btn-add-doc:hover { border-color: #059669; color: #059669; }
+    .btn-add-doc.in-doc { background: #059669; color: white; border-color: #059669; }
+    body.doc-mode-active .btn-add-doc { display: inline-block; }
+
+    .card.in-doc {
+      border-color: #059669;
+      box-shadow: 0 0 0 2px rgba(5, 150, 105, 0.15);
+    }
+
     @media (max-width: 640px) {
       .filter-bar { gap: 16px; padding: 20px; position: static; }
       .grid { grid-template-columns: 1fr; }
       h1 { font-size: 2rem; }
     }
+
+    /* ---- Card image ---- */
+    .card-image {
+      display: block;
+      width: 100%;
+      height: 180px;
+      overflow: hidden;
+      border-radius: 12px 12px 0 0;
+      background: #f3f4f6;
+      flex-shrink: 0;
+      text-decoration: none;
+    }
+
+    .card-image img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+      transition: transform 0.3s ease;
+    }
+
+    .card:hover .card-image img {
+      transform: scale(1.03);
+    }
+
+    .card-image-placeholder {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%);
+      color: #9ca3af;
+      font-size: 2.5rem;
+    }
+
+    /* ---- View toggle (Liste / Carte) ---- */
+    .view-toggle {
+      display: flex;
+      gap: 8px;
+    }
+    .btn-view {
+      padding: 8px 20px;
+      background: white;
+      color: var(--text-main);
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.8125rem;
+      font-weight: 700;
+      transition: all 0.2s;
+    }
+    .btn-view:hover { border-color: var(--text-main); background: #f9fafb; }
+    .btn-view.active { background: var(--text-main); color: white; border-color: var(--text-main); }
+
+    /* ---- Map container ---- */
+    .profile-tabs { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+    .profile-tabs a { text-decoration: none; }
+    #map-view { margin-top: 32px; }
+    #map { height: 600px; border-radius: 12px; border: 1px solid var(--border); }
+    #map-ungeolocated { margin-top: 12px; font-size: 0.875rem; color: var(--text-muted); }
   </style>
 </head>
 <body>
   <div class="wrapper">
     <header>
       <h1>Annonces Toulouse</h1>
-      <div class="count">{{ total }} annonce{{ 's' if total != 1 else '' }}</div>
+      <nav class="profile-tabs">
+        {% for p in profiles %}
+        <a href="/?profile={{ p.key }}" class="btn-view {% if p.key == profile.key %}active{% endif %}"
+           title="{{ p.target_address }} — {{ p.min_rent_eur }}–{{ p.max_rent_eur }} € — {{ p.max_distance_km }} km">{{ p.label }}</a>
+        {% endfor %}
+      </nav>
+      <div class="count" id="annonce-count">{{ total }} annonce{{ 's' if total != 1 else '' }}</div>
+      <div class="action-bar">
+        <button class="btn-scrape" id="btn-scrape" onclick="startScraping()">Lancer le scraping</button>
+        <form method="POST" action="/clear-db" onsubmit="return confirm('Supprimer toutes les annonces de la base ?')">
+          <input type="hidden" name="back" value="{{ request.url }}">
+          <button type="submit" class="btn-clear-db">Vider la BD</button>
+        </form>
+      </div>
+      <div class="doc-bar">
+        <button class="btn-doc-start" id="btn-doc-mode" onclick="toggleDocumentMode()">Commencer document</button>
+        <span class="doc-count-badge" id="doc-count"></span>
+        <button class="btn-doc-export" id="btn-export" onclick="exportDocument()">Exporter ↓</button>
+        <button class="btn-doc-clear" id="btn-clear" onclick="clearDocument()">Vider</button>
+      </div>
+      <form id="doc-form" method="POST" action="/export-document" style="display:none">
+        <input type="hidden" name="ids" id="doc-ids-input">
+        <input type="hidden" name="profile" value="{{ profile.key }}">
+      </form>
+      <div class="view-toggle">
+        <button class="btn-view active" id="btn-view-list" onclick="setView('list')">&#9776; Liste</button>
+        <button class="btn-view" id="btn-view-map" onclick="setView('map')">&#128506; Carte</button>
+      </div>
     </header>
 
     {% if flash %}
@@ -358,6 +603,7 @@ TEMPLATE = """<!DOCTYPE html>
     {% endif %}
 
     <form method="get" class="filter-bar">
+      <input type="hidden" name="profile" value="{{ profile.key }}">
       <div class="filter-group">
         <label>Plateforme</label>
         <select name="site">
@@ -374,14 +620,23 @@ TEMPLATE = """<!DOCTYPE html>
           <option value="" {% if current_status == '' %}selected{% endif %}>Tous</option>
           <option value="active" {% if current_status == 'active' %}selected{% endif %}>Actives</option>
           <option value="expired" {% if current_status == 'expired' %}selected{% endif %}>Expirées</option>
+          <option value="hidden" {% if current_status == 'hidden' %}selected{% endif %}>Masquées</option>
+        </select>
+      </div>
+
+      <div class="filter-group">
+        <label>Doublons</label>
+        <select name="dups">
+          <option value="" {% if current_dups == '' %}selected{% endif %}>Afficher</option>
+          <option value="hide" {% if current_dups == 'hide' %}selected{% endif %}>Masquer</option>
         </select>
       </div>
 
       <div class="filter-group">
         <label>Prix (€)</label>
         <div class="prix-range">
-          <input type="number" name="prix_min" value="{{ current_prix_min }}" placeholder="Min" min="0">
-          <input type="number" name="prix_max" value="{{ current_prix_max }}" placeholder="Max" min="0">
+          <input type="number" name="prix_min" value="{{ current_prix_min }}" placeholder="{{ profile.min_rent_eur }}" min="0">
+          <input type="number" name="prix_max" value="{{ current_prix_max }}" placeholder="{{ profile.max_rent_eur }}" min="0">
         </div>
       </div>
 
@@ -390,7 +645,7 @@ TEMPLATE = """<!DOCTYPE html>
         <div style="display:flex;gap:8px;align-items:center">
           <select name="sort">
             <option value="price"            {% if current_sort == 'price' %}selected{% endif %}>Prix</option>
-            <option value="distance_enac_km" {% if current_sort == 'distance_enac_km' %}selected{% endif %}>Distance ENAC</option>
+            <option value="distance"         {% if current_sort in ('distance', 'distance_enac_km') %}selected{% endif %}>Distance {{ profile.label }}</option>
             <option value="created_at"       {% if current_sort == 'created_at' %}selected{% endif %}>Derniers ajouts</option>
           </select>
           <input type="hidden" id="order-input" name="order" value="{{ current_order }}">
@@ -404,13 +659,22 @@ TEMPLATE = """<!DOCTYPE html>
         <button type="submit" class="btn-filter">Filtrer</button>
       </div>
       <div class="filter-group">
-        <a href="/" class="btn-reset">Reset</a>
+        <a href="/?profile={{ profile.key }}" class="btn-reset">Reset</a>
       </div>
+      <input type="hidden" name="view" id="view-input" value="list">
     </form>
 
-    <main class="grid">
+    <main class="grid" id="card-grid">
       {% for a in annonces %}
       <article class="card">
+        <a href="{{ a.url }}" target="_blank" class="card-image">
+          {% if a.thumbnail %}
+            <img src="{{ a.thumbnail }}" alt="{{ a.title }}" loading="lazy" referrerpolicy="no-referrer"
+                 onerror="this.parentElement.innerHTML='<div class=\'card-image-placeholder\'>🏠</div>'">
+          {% else %}
+            <div class="card-image-placeholder">🏠</div>
+          {% endif %}
+        </a>
         <div class="card-content">
           <div class="card-header">
             <span class="site-tag">{{ a.site or 'Source' }}</span>
@@ -422,10 +686,10 @@ TEMPLATE = """<!DOCTYPE html>
           </a>
 
           <div class="card-meta">
-            <div class="meta-item" title="Distance de l&rsquo;ENAC">
+            <div class="meta-item" title="Distance de {{ profile.target_address }}">
               <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
-              {% if a.distance_enac_km is not none %}
-                {{ "%.1f"|format(a.distance_enac_km | float) }} km
+              {% if a.distance_km is not none %}
+                {{ "%.1f"|format(a.distance_km | float) }} km
               {% else %}
                 Distance N/A
               {% endif %}
@@ -452,16 +716,30 @@ TEMPLATE = """<!DOCTYPE html>
           <div class="status-pill">
             {% set s = a.status or 'active' %}
             <span class="dot dot-{{ s }}"></span>
-            {{ 'En ligne' if s == 'active' else 'Expiré' }}
+            {{ {'active': 'En ligne', 'expired': 'Expiré', 'hidden': 'Masquée'}.get(s, s) }}
+            {% if a.dup_url %}
+            · <a href="{{ a.dup_url }}" target="_blank" class="dup-tag" title="Même bien publié sur {{ a.dup_site }}">aussi sur {{ a.dup_site }}</a>
+            {% endif %}
           </div>
 
+          <div style="display:flex;align-items:center;gap:8px">
+          <button class="btn-add-doc" id="doc-btn-{{ a.id }}" onclick="toggleAnnonce({{ a.id }}, this)">+ Doc</button>
+          {% if s == 'hidden' %}
+          <form method="post" action="/restore" style="display:inline">
+            <input type="hidden" name="id" value="{{ a.id }}">
+            <input type="hidden" name="back" value="{{ back_url }}">
+            <button type="submit" class="btn-add-doc" title="Restaurer l&rsquo;annonce">Restaurer</button>
+          </form>
+          {% else %}
           <form method="post" action="/delete" style="display:inline">
             <input type="hidden" name="id" value="{{ a.id }}">
             <input type="hidden" name="back" value="{{ back_url }}">
-            <button type="submit" class="btn-del" title="Supprimer">
+            <button type="submit" class="btn-del" title="Masquer (ne reviendra pas au prochain scraping)">
               <svg style="width:18px;height:18px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
             </button>
           </form>
+          {% endif %}
+          </div>
         </div>
       </article>
       {% else %}
@@ -472,6 +750,11 @@ TEMPLATE = """<!DOCTYPE html>
       </div>
       {% endfor %}
     </main>
+
+    <div id="map-view" style="display:none">
+      <div id="map"></div>
+      <p id="map-ungeolocated"></p>
+    </div>
   </div>
   <script>
     function toggleOrder() {
@@ -488,12 +771,317 @@ TEMPLATE = """<!DOCTYPE html>
       }
       btn.closest('form').submit();
     }
+
+    /* ---- Document mode ---- */
+    function getIds() {
+      try { return JSON.parse(localStorage.getItem('documentIds') || '[]'); }
+      catch(e) { return []; }
+    }
+    function saveIds(ids) { localStorage.setItem('documentIds', JSON.stringify(ids)); }
+    function isDocMode() { return localStorage.getItem('documentMode') === 'true'; }
+
+    function updateDocUI() {
+      var ids = getIds();
+      var active = isDocMode();
+      var btnMode = document.getElementById('btn-doc-mode');
+      var badge = document.getElementById('doc-count');
+      var btnExport = document.getElementById('btn-export');
+      var btnClear = document.getElementById('btn-clear');
+
+      if (active) {
+        document.body.classList.add('doc-mode-active');
+        btnMode.textContent = 'Terminer';
+        btnMode.classList.add('active');
+      } else {
+        document.body.classList.remove('doc-mode-active');
+        btnMode.textContent = 'Commencer document';
+        btnMode.classList.remove('active');
+      }
+
+      if (ids.length > 0) {
+        badge.textContent = ids.length + ' sélectionnée' + (ids.length > 1 ? 's' : '');
+        badge.classList.add('visible');
+        btnExport.classList.add('visible');
+        btnClear.classList.add('visible');
+      } else {
+        badge.classList.remove('visible');
+        btnExport.classList.remove('visible');
+        btnClear.classList.remove('visible');
+      }
+
+      // Mettre à jour l'état de chaque bouton de carte
+      document.querySelectorAll('[id^="doc-btn-"]').forEach(function(btn) {
+        var id = parseInt(btn.id.replace('doc-btn-', ''));
+        var card = btn.closest('article');
+        if (ids.indexOf(id) !== -1) {
+          btn.textContent = '✓ Dans le doc';
+          btn.classList.add('in-doc');
+          if (card) card.classList.add('in-doc');
+        } else {
+          btn.textContent = '+ Doc';
+          btn.classList.remove('in-doc');
+          if (card) card.classList.remove('in-doc');
+        }
+      });
+    }
+
+    function toggleDocumentMode() {
+      localStorage.setItem('documentMode', isDocMode() ? 'false' : 'true');
+      updateDocUI();
+    }
+
+    function toggleAnnonce(id) {
+      var ids = getIds();
+      var idx = ids.indexOf(id);
+      if (idx === -1) { ids.push(id); } else { ids.splice(idx, 1); }
+      saveIds(ids);
+      updateDocUI();
+    }
+
+    function clearDocument() {
+      saveIds([]);
+      updateDocUI();
+    }
+
+    function exportDocument() {
+      var ids = getIds();
+      if (ids.length === 0) { alert('Aucune annonce sélectionnée.'); return; }
+      document.getElementById('doc-ids-input').value = JSON.stringify(ids);
+      document.getElementById('doc-form').submit();
+    }
+
+    // Init au chargement
+    updateDocUI();
+
+    /* ---- Scraping background ---- */
+    var _scrapingPoll = null;
+
+    function startScraping() {
+      var btn = document.getElementById('btn-scrape');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span>Scraping en cours…';
+
+      fetch('/start-scraping?profile={{ profile.key }}', { method: 'POST' })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          if (data.status === 'already_running') {
+            pollScrapingStatus();
+          } else {
+            pollScrapingStatus();
+          }
+        })
+        .catch(function() {
+          btn.disabled = false;
+          btn.textContent = 'Lancer le scraping';
+        });
+    }
+
+    function pollScrapingStatus() {
+      if (_scrapingPoll) clearInterval(_scrapingPoll);
+      _scrapingPoll = setInterval(function() {
+        fetch('/scraping-status')
+          .then(function(r) { return r.json(); })
+          .then(function(data) {
+            if (!data.running) {
+              clearInterval(_scrapingPoll);
+              _scrapingPoll = null;
+              var btn = document.getElementById('btn-scrape');
+              btn.disabled = false;
+              btn.textContent = 'Lancer le scraping';
+              setTimeout(function() { window.location.reload(); }, 1500);
+            }
+          });
+      }, 3000);
+    }
+
+    // Reprendre le polling si un scraping est déjà en cours au chargement de la page
+    fetch('/scraping-status')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.running) {
+          var btn = document.getElementById('btn-scrape');
+          btn.disabled = true;
+          btn.innerHTML = '<span class="spinner"></span>Scraping en cours…';
+          pollScrapingStatus();
+        }
+      });
+
+    // Masquage / restauration AJAX : préserve la position de scroll
+    document.querySelectorAll('form[action="/delete"], form[action="/restore"]').forEach(function(form) {
+      form.addEventListener('submit', function(e) {
+        e.preventDefault();
+        var data = new FormData(form);
+        fetch(form.getAttribute('action'), {
+          method: 'POST',
+          headers: { 'X-Requested-With': 'XMLHttpRequest' },
+          body: data
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(res) {
+          if (res.ok) {
+            var card = form.closest('article');
+            if (card) card.remove();
+            var countEl = document.getElementById('annonce-count');
+            if (countEl) {
+              var n = parseInt(countEl.textContent) - 1;
+              countEl.textContent = n + ' annonce' + (n !== 1 ? 's' : '');
+            }
+            showToast('ok', res.msg);
+          } else {
+            showToast('err', res.msg);
+          }
+        })
+        .catch(function() { showToast('err', 'Erreur réseau.'); });
+      });
+    });
+
+    function showToast(type, msg) {
+      var existing = document.querySelector('.flash');
+      if (existing) existing.remove();
+      var div = document.createElement('div');
+      div.className = 'flash flash-' + type;
+      div.textContent = msg;
+      document.body.appendChild(div);
+      setTimeout(function() { div.remove(); }, 3000);
+    }
+
+    /* ---- Vue carte OpenStreetMap ---- */
+    var _mapInitialized = false;
+    var _leafletMap = null;
+
+    function setView(view) {
+      document.getElementById('card-grid').style.display = view === 'list' ? '' : 'none';
+      document.getElementById('map-view').style.display  = view === 'map'  ? '' : 'none';
+      document.getElementById('btn-view-list').classList.toggle('active', view === 'list');
+      document.getElementById('btn-view-map').classList.toggle('active',  view === 'map');
+      var vi = document.getElementById('view-input');
+      if (vi) vi.value = view;
+      if (view === 'map') {
+        if (!_mapInitialized) {
+          _mapInitialized = true;
+          initMap();
+        } else {
+          setTimeout(function() { _leafletMap.invalidateSize(); }, 0);
+        }
+      }
+    }
+
+    function initMap() {
+      var enacIcon = L.divIcon({
+        className: '',
+        html: '<div style="width:16px;height:16px;background:#111827;border-radius:50%;border:3px solid white;box-shadow:0 1px 5px rgba(0,0,0,0.6)"></div>',
+        iconSize: [16, 16], iconAnchor: [8, 8]
+      });
+      var apptIcon = L.divIcon({
+        className: '',
+        html: '<div style="width:12px;height:12px;background:#059669;border-radius:50%;border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,0.4)"></div>',
+        iconSize: [12, 12], iconAnchor: [6, 6]
+      });
+
+      var params = new URLSearchParams(window.location.search);
+      fetch('/api/map-data?' + params)
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          var t = data.target;
+          _leafletMap = L.map('map', {preferCanvas: true}).setView([t.lat, t.lon], 12);
+          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+          }).addTo(_leafletMap);
+
+          L.marker([t.lat, t.lon], {icon: enacIcon})
+            .addTo(_leafletMap)
+            .bindPopup('<b>' + t.label + '</b><br>' + t.address);
+          L.circle([t.lat, t.lon], {
+            radius: t.radius_km * 1000, color: '#111827', weight: 1, fillOpacity: 0.04
+          }).addTo(_leafletMap);
+
+          var ungeolocated = 0;
+          data.listings.forEach(function(l) {
+            if (l.lat === null || l.lon === null) { ungeolocated++; return; }
+            var dist = l.distance_km !== null ? '<br>' + l.distance_km + ' km de ' + t.label : '';
+            var popup = '<b>' + (l.title || 'Annonce') + '</b>'
+              + '<br>' + (l.price ? l.price + ' \u20ac/mois' : '&mdash;')
+              + (l.location_raw ? '<br>' + l.location_raw : '')
+              + dist
+              + "<br><a href='" + l.url + "' target='_blank'>Voir l'annonce \u2192</a>";
+            L.marker([l.lat, l.lon], {icon: apptIcon})
+              .addTo(_leafletMap)
+              .bindPopup(popup);
+          });
+
+          if (ungeolocated > 0) {
+            document.getElementById('map-ungeolocated').textContent =
+              '\u26a0 ' + ungeolocated + ' annonce' + (ungeolocated > 1 ? 's' : '') +
+              ' sans coordonn\u00e9es (adresse non g\u00e9ocode\u0301e)';
+          }
+        })
+        .catch(function() {
+          document.getElementById('map-ungeolocated').textContent =
+            '\u26a0 Impossible de charger les donn\u00e9es carte.';
+        });
+    }
+
+    /* Auto-restore map view if URL contains ?view=map */
+    (function() {
+      var p = new URLSearchParams(window.location.search);
+      if (p.get('view') === 'map') { setView('map'); }
+    })();
   </script>
 </body>
 </html>"""
 
 
-ALLOWED_SORTS = {"price", "distance_enac_km", "created_at", "site"}
+# Tri autorisé → colonne SQL (liste blanche : la valeur est injectée dans ORDER BY)
+SORT_COLUMNS = {
+    "price": "a.price",
+    "distance": "ap.distance_km",
+    "distance_enac_km": "ap.distance_km",  # ancien nom (URLs mémorisées)
+    "created_at": "a.created_at",
+    "site": "a.site",
+}
+
+
+def _current_profile(value: str):
+    return SEARCH_PROFILES.get(value or "", SEARCH_PROFILES[DEFAULT_PROFILE])
+
+
+def _int_or_none(value: str):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _build_filters(site: str, status: str, prix_min: str, prix_max: str, dups: str = ""):
+    """
+    Construit la clause WHERE commune à la liste et à la carte (table aliasée « a »).
+    Sans filtre de statut, les annonces masquées sont exclues.
+    Retourne (where_sql, params, prix_min, prix_max) — prix vidés s'ils sont invalides.
+    """
+    where_clauses = []
+    params = []
+
+    if status:
+        where_clauses.append("COALESCE(a.status, 'active') = ?")
+        params.append(status)
+    else:
+        where_clauses.append("COALESCE(a.status, 'active') != 'hidden'")
+    if site:
+        where_clauses.append("a.site = ?")
+        params.append(site)
+    pmin = _int_or_none(prix_min)
+    if pmin is not None:
+        where_clauses.append("a.price >= ?")
+        params.append(pmin)
+    pmax = _int_or_none(prix_max)
+    if pmax is not None:
+        where_clauses.append("a.price <= ?")
+        params.append(pmax)
+    if dups == "hide":
+        where_clauses.append("a.duplicate_of IS NULL")
+
+    where_sql = "WHERE " + " AND ".join(where_clauses)
+    return where_sql, params, (prix_min if pmin is not None else ""), (prix_max if pmax is not None else "")
 
 
 @app.route("/")
@@ -504,44 +1092,42 @@ def index():
     prix_max  = request.args.get("prix_max", "")
     sort      = request.args.get("sort", "price")
     order     = request.args.get("order", "asc")
+    profile   = _current_profile(request.args.get("profile"))
 
-    if sort not in ALLOWED_SORTS:
+    if sort not in SORT_COLUMNS:
         sort = "price"
     if order not in ("asc", "desc"):
         order = "asc"
 
-    where_clauses = []
-    params = []
-
-    if status:
-        where_clauses.append("COALESCE(status, 'active') = ?")
-        params.append(status)
-    if site:
-        where_clauses.append("site = ?")
-        params.append(site)
-    if prix_min:
-        try:
-            where_clauses.append("price >= ?")
-            params.append(int(prix_min))
-        except ValueError:
-            prix_min = ""
-    if prix_max:
-        try:
-            where_clauses.append("price <= ?")
-            params.append(int(prix_max))
-        except ValueError:
-            prix_max = ""
-
-    where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
-    query = f"SELECT * FROM annonces {where_sql} ORDER BY {sort} {order.upper()}"
+    dups = request.args.get("dups", "")
+    where_sql, params, prix_min, prix_max = _build_filters(site, status, prix_min, prix_max, dups)
+    query = f"""
+        SELECT a.*, ap.distance_km AS distance_km, d.site AS dup_site, d.url AS dup_url
+        FROM annonces a
+        JOIN annonce_profiles ap ON ap.annonce_id = a.id AND ap.profile = ?
+        LEFT JOIN annonces d ON d.id = a.duplicate_of
+        {where_sql}
+        ORDER BY {SORT_COLUMNS[sort]} {order.upper()}
+    """
 
     with sqlite3.connect(DB_PATH) as con:
         con.row_factory = sqlite3.Row
-        rows = con.execute(query, params).fetchall()
+        rows = con.execute(query, [profile.key] + params).fetchall()
         annonces = [dict(r) for r in rows]
         sites = [r[0] for r in con.execute(
             "SELECT DISTINCT site FROM annonces WHERE site IS NOT NULL ORDER BY site"
         ).fetchall()]
+
+    # Parser le JSON photos pour extraire le thumbnail (premier élément)
+    for a in annonces:
+        thumbnail = None
+        if a.get("photos"):
+            try:
+                photos_list = json.loads(a["photos"])
+                thumbnail = photos_list[0] if photos_list else None
+            except (json.JSONDecodeError, TypeError):
+                pass
+        a["thumbnail"] = thumbnail
 
     # URL courante pour le retour après suppression
     back_url = request.url
@@ -553,12 +1139,19 @@ def index():
     if flash_type and flash_msg:
         flash = {"type": flash_type, "msg": flash_msg}
 
+    log.info(
+        "GET / — profil=%s site=%s status=%s prix=%s-%s sort=%s %s → %d annonces",
+        profile.key, site or "*", status or "*", prix_min or "0", prix_max or "∞", sort, order, len(annonces),
+    )
     return render_template_string(
         TEMPLATE,
         annonces=annonces,
         sites=sites,
         current_site=site,
         current_status=status,
+        current_dups=dups,
+        profile=profile,
+        profiles=list(SEARCH_PROFILES.values()),
         current_prix_min=prix_min,
         current_prix_max=prix_max,
         current_sort=sort,
@@ -569,25 +1162,227 @@ def index():
     )
 
 
-@app.route("/delete", methods=["POST"])
-def delete():
+def _set_status_from_form(status: str, verb: str):
     annonce_id = request.form.get("id", "").strip()
     back = request.form.get("back", "/")
+    is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+
+    def reply(ok: bool, msg: str):
+        if is_ajax:
+            return jsonify({"ok": ok, "msg": msg})
+        return redirect(_add_flash(back, "ok" if ok else "err", msg))
 
     if not annonce_id or not annonce_id.isdigit():
-        return redirect(_add_flash(back, "err", "ID invalide."))
+        return reply(False, "ID invalide.")
+
+    title = set_annonce_status(int(annonce_id), status)
+    if title is None:
+        return reply(False, "Annonce introuvable.")
+
+    log.info("POST %s — id=%s titre=%s", request.path, annonce_id, title[:50])
+    return reply(True, f"Annonce « {title[:50]} » {verb}.")
+
+
+@app.route("/delete", methods=["POST"])
+def delete():
+    # Masquage (et non suppression) : l'annonce ne revient pas au prochain scraping
+    return _set_status_from_form("hidden", "masquée")
+
+
+@app.route("/restore", methods=["POST"])
+def restore():
+    return _set_status_from_form("active", "restaurée")
+
+
+@app.route("/clear-db", methods=["POST"])
+def clear_database():
+    back = request.form.get("back", "/")
+    count = clear_db()
+    log.info("POST /clear-db — %d annonces supprimées", count)
+    return redirect(_add_flash(back, "ok", f"Base de données vidée — {count} annonce{'s' if count != 1 else ''} supprimée{'s' if count != 1 else ''}."))
+
+
+@app.route("/start-scraping", methods=["POST"])
+def start_scraping():
+    global _scraping_process
+    if _scraping_process is not None and _scraping_process.poll() is None:
+        log.info("POST /start-scraping — déjà en cours (pid=%s)", _scraping_process.pid)
+        return jsonify({"status": "already_running"})
+    profile = request.args.get("profile", "")
+    cmd = [sys.executable, "main.py", "--all"]
+    if profile in SEARCH_PROFILES:
+        cmd += ["--profile", profile]
+    _scraping_process = subprocess.Popen(cmd, cwd=str(DB_PATH.parent.parent))
+    log.info("POST /start-scraping — démarré (pid=%s)", _scraping_process.pid)
+    return jsonify({"status": "started"})
+
+
+@app.route("/scraping-status")
+def scraping_status():
+    global _scraping_process
+    if _scraping_process is None:
+        log.debug("GET /scraping-status — aucun process")
+        return jsonify({"running": False, "returncode": None})
+    rc = _scraping_process.poll()
+    log.debug("GET /scraping-status — running=%s returncode=%s", rc is None, rc)
+    return jsonify({"running": rc is None, "returncode": rc})
+
+
+@app.route("/export-document", methods=["POST"])
+def export_document():
+    raw = request.form.get("ids", "[]")
+    try:
+        ids = [int(i) for i in json.loads(raw)]
+    except (ValueError, TypeError):
+        return make_response("IDs invalides.", 400)
+
+    if not ids:
+        return make_response("Aucune annonce sélectionnée.", 400)
+
+    profile = _current_profile(request.form.get("profile"))
+    placeholders = ",".join("?" * len(ids))
+    with sqlite3.connect(DB_PATH) as con:
+        con.row_factory = sqlite3.Row
+        rows = con.execute(
+            f"""
+            SELECT a.*, ap.distance_km AS distance_km
+            FROM annonces a
+            LEFT JOIN annonce_profiles ap ON ap.annonce_id = a.id AND ap.profile = ?
+            WHERE a.id IN ({placeholders}) ORDER BY a.price ASC
+            """,
+            [profile.key] + ids,
+        ).fetchall()
+        annonces = [dict(r) for r in rows]
+
+    today = datetime.now().strftime("%d/%m/%Y")
+    fname_date = datetime.now().strftime("%Y%m%d")
+    lines = [
+        f"# Dossier de candidature — {profile.label} — {today}",
+        "",
+        f"_{len(annonces)} annonce{'s' if len(annonces) > 1 else ''} sélectionnée{'s' if len(annonces) > 1 else ''}_",
+        "",
+        "---",
+        "",
+    ]
+
+    for i, a in enumerate(annonces, 1):
+        title = a.get("title") or f"Annonce #{a['id']}"
+        url = a.get("url") or ""
+        price = f"{a['price']} €/mois" if a.get("price") else "—"
+        surface = f"{a['surface_m2']} m²" if a.get("surface_m2") else "—"
+        rooms = str(a["nb_rooms"]) if a.get("nb_rooms") else "—"
+        location = a.get("location_raw") or "Toulouse"
+        dist = f"{a['distance_km']:.1f} km" if a.get("distance_km") is not None else "—"
+        site = a.get("site") or "—"
+        status = {"active": "En ligne", "expired": "Expiré", "hidden": "Masquée"}.get(a.get("status") or "active", "—")
+        created = (a.get("created_at") or "")[:10] or "—"
+        furnished = ("Oui" if a.get("furnished") else "Non") if a.get("furnished") is not None else "—"
+        charges = f"{a['charges']} €" if a.get("charges") else "—"
+        deposit = f"{a['deposit']} €" if a.get("deposit") else "—"
+
+        lines += [
+            f"## {i}. [{title}]({url})",
+            "",
+            f"**Plateforme :** {site}  ",
+            f"**Prix :** {price}  ",
+            f"**Surface :** {surface}  ",
+            f"**Pièces :** {rooms}  ",
+            f"**Localisation :** {location}  ",
+            f"**Distance {profile.label} :** {dist}  ",
+            f"**Meublé :** {furnished}  ",
+            f"**Charges :** {charges}  ",
+            f"**Dépôt de garantie :** {deposit}  ",
+            f"**Statut :** {status}  ",
+            f"**Ajoutée le :** {created}  ",
+            "",
+            "### Notes personnelles",
+            "",
+            "",
+            "",
+            "### Critères",
+            "",
+            "- [ ] Loyer dans le budget",
+            f"- [ ] Distance {profile.label} acceptable",
+            "- [ ] Meublé / équipements OK",
+            "- [ ] Disponibilité confirmée",
+            "",
+            "### Suivi candidature",
+            "",
+            "| Étape | Date | Notes |",
+            "|-------|------|-------|",
+            "| Premier contact | | |",
+            "| Visite | | |",
+            "| Dépôt dossier | | |",
+            "| Réponse | | |",
+            "| Décision | | |",
+            "",
+            "---",
+            "",
+        ]
+
+    content = "\n".join(lines)
+    log.info("POST /export-document — %d annonces exportées (ids=%s)", len(annonces), ids)
+    resp = make_response(content)
+    resp.headers["Content-Type"] = "text/markdown; charset=utf-8"
+    resp.headers["Content-Disposition"] = f'attachment; filename="candidatures_{profile.key}_{fname_date}.md"'
+    return resp
+
+
+@app.route("/api/map-data")
+def map_data():
+    profile  = _current_profile(request.args.get("profile"))
+    site     = request.args.get("site", "")
+    status   = request.args.get("status", "")
+    prix_min = request.args.get("prix_min", "")
+    prix_max = request.args.get("prix_max", "")
+
+    dups     = request.args.get("dups", "")
+    where_sql, params, _, _ = _build_filters(site, status, prix_min, prix_max, dups)
+    query = f"""
+        SELECT a.id, a.title, a.price, a.location_raw, ap.distance_km, a.url,
+               COALESCE(a.lat, g.latitude) AS latitude,
+               COALESCE(a.lon, g.longitude) AS longitude
+        FROM annonces a
+        JOIN annonce_profiles ap ON ap.annonce_id = a.id AND ap.profile = ?
+        LEFT JOIN geocoding_cache g ON a.location_raw = g.address
+        {where_sql}
+        ORDER BY a.price ASC
+    """
 
     with sqlite3.connect(DB_PATH) as con:
-        cur = con.execute(
-            "SELECT title FROM annonces WHERE id = ?", (int(annonce_id),)
-        )
-        row = cur.fetchone()
-        if row is None:
-            return redirect(_add_flash(back, "err", "Annonce introuvable."))
-        title = row[0] or f"#{annonce_id}"
-        con.execute("DELETE FROM annonces WHERE id = ?", (int(annonce_id),))
+        con.row_factory = sqlite3.Row
+        rows = con.execute(query, [profile.key] + params).fetchall()
 
-    return redirect(_add_flash(back, "ok", f"Annonce « {title[:50]} » supprimée."))
+    listings = [
+        {
+            "id": r["id"],
+            "title": r["title"] or f"Annonce #{r['id']}",
+            "price": r["price"],
+            "location_raw": r["location_raw"],
+            "distance_km": r["distance_km"],
+            "url": r["url"],
+            "lat": r["latitude"],
+            "lon": r["longitude"],
+        }
+        for r in rows
+    ]
+
+    geocoded = sum(1 for l in listings if l["lat"] is not None)
+    log.info(
+        "GET /api/map-data — profil=%s site=%s status=%s → %d listings (%d géocodées, %d sans coords)",
+        profile.key, site or "*", status or "*", len(listings), geocoded, len(listings) - geocoded,
+    )
+    return jsonify({
+        "target": {
+            "key": profile.key,
+            "label": profile.label,
+            "address": profile.target_address,
+            "lat": profile.target_lat,
+            "lon": profile.target_lon,
+            "radius_km": profile.max_distance_km,
+        },
+        "listings": listings,
+    })
 
 
 def _add_flash(url: str, ftype: str, msg: str) -> str:

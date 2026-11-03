@@ -15,6 +15,15 @@ from utils.logger import setup_logger
 logger = setup_logger("cleaner")
 
 RATE_LIMIT_DELAY = 1.0  # secondes entre chaque requête (mode requests)
+MAX_CONSECUTIVE_NETWORK_ERRORS = 3
+
+_NETWORK_ERROR_PATTERNS = [
+    "err_internet_disconnected",
+    "err_name_not_resolved",
+    "err_connection_refused",
+    "err_connection_reset",
+    "net::",
+]
 
 # Fragments de texte indiquant qu'une annonce a été supprimée
 _EXPIRED_PATTERNS = [
@@ -28,6 +37,12 @@ _EXPIRED_PATTERNS = [
     "cette annonce n'est plus en ligne",
     "cette annonce n'existe plus",
     "annonce n'est plus disponible",
+    "le bien a déjà été vendu",
+    "l'annonceur a supprimé son annonce",
+    "lien sur lequel vous avez cliqué peut être sectionné",
+    "annonce introuvable",
+    "cette annonce n'est plus disponible",
+    "request interrupted",
     # Génériques
     "page introuvable",
     "erreur 404",
@@ -92,32 +107,52 @@ def check_expired_annonces() -> dict:
     return summary
 
 
+def _mark_checked(annonce_id: int):
+    """Enregistre l'horodatage de la dernière vérification d'une annonce."""
+    with get_connection() as c:
+        c.execute(
+            "UPDATE annonces SET checked_at = datetime('now') WHERE id = ?",
+            (annonce_id,),
+        )
+
+
 def check_links_playwright(limit: int = None) -> dict:
     """
     Vérifie les annonces actives avec un navigateur Playwright headless.
     Attend 3–5 secondes aléatoires après chargement, puis inspecte le
     contenu de la page pour détecter les messages d'annonce supprimée.
     Marque les annonces concernées comme 'expired' en base.
+
+    Comportement :
+    - Ignore les annonces déjà vérifiées dans les dernières 24h (reprise possible).
+    - Distingue erreurs réseau (non comptées, re-tentées) des erreurs de page.
+    - Stoppe après MAX_CONSECUTIVE_NETWORK_ERRORS erreurs réseau consécutives.
     """
     from playwright.sync_api import sync_playwright
     from storage.sqlite import init_db
 
-    # Assure que la colonne status existe (migration)
+    # Assure que les colonnes status et checked_at existent (migrations)
     init_db()
 
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
-    query = "SELECT id, url, title, site FROM annonces WHERE COALESCE(status, 'active') = 'active'"
+    query = """
+        SELECT id, url, title, site FROM annonces
+        WHERE COALESCE(status, 'active') = 'active'
+          AND (checked_at IS NULL OR checked_at < datetime('now', '-24 hours'))
+    """
     if limit:
         query += f" LIMIT {int(limit)}"
-    annonces = cur.fetchall() if False else cur.execute(query).fetchall()
+    annonces = cur.execute(query).fetchall()
     conn.close()
 
     checked = 0
     expired = 0
-    errors = 0
+    network_errors = 0
+    page_errors = 0
+    consecutive_network_errors = 0
 
     logger.info(f"Vérification de {len(annonces)} annonce(s) avec Playwright...")
 
@@ -153,12 +188,31 @@ def check_links_playwright(limit: int = None) -> dict:
                 else:
                     logger.debug(f"Active : {annonce['title']}")
 
+                consecutive_network_errors = 0
                 checked += 1
+                _mark_checked(annonce["id"])
 
             except Exception as e:
-                logger.warning(f"Erreur sur {annonce['url']} : {e}")
-                errors += 1
-                checked += 1
+                err_str = str(e).lower()
+                is_network_error = any(p in err_str for p in _NETWORK_ERROR_PATTERNS)
+
+                if is_network_error:
+                    network_errors += 1
+                    consecutive_network_errors += 1
+                    logger.warning(f"Erreur réseau sur {annonce['url']} : {e}")
+                    if consecutive_network_errors >= MAX_CONSECUTIVE_NETWORK_ERRORS:
+                        logger.error(
+                            f"Connexion perdue — arrêt après "
+                            f"{consecutive_network_errors} erreurs réseau consécutives."
+                        )
+                        break
+                    # checked_at non mis à jour → sera re-tenté au prochain run
+                else:
+                    page_errors += 1
+                    consecutive_network_errors = 0
+                    logger.warning(f"Erreur de page sur {annonce['url']} : {e}")
+                    checked += 1
+                    _mark_checked(annonce["id"])
             finally:
                 page.close()
 
@@ -168,11 +222,12 @@ def check_links_playwright(limit: int = None) -> dict:
     summary = {
         "checked": checked,
         "expired": expired,
-        "still_active": checked - expired - errors,
-        "errors": errors,
+        "still_active": checked - expired - page_errors,
+        "network_errors": network_errors,
+        "page_errors": page_errors,
     }
     logger.info(
         f"Vérification terminée : {checked} vérifiées, "
-        f"{expired} expirées, {errors} erreurs"
+        f"{expired} expirées, {network_errors} erreurs réseau, {page_errors} erreurs de page"
     )
     return summary

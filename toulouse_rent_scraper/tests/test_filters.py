@@ -34,11 +34,33 @@ class TestPriceParser:
         assert parse_price("abc") is None
         assert parse_price("pas de prix") is None
     
+    def test_parse_price_thousands_separator(self):
+        """Prix ≥ 1000 € avec séparateur de milliers (bug « 1 200 € » → 200)."""
+        assert parse_price("1 200 €") == 1200
+        assert parse_price("1 050 € cc") == 1050
+        assert parse_price("1 050 €") == 1050
+        assert parse_price("1.050 €") == 1050
+        assert parse_price("12 500 €") == 12500
+
+    def test_parse_price_decimals(self):
+        """Les centimes sont ignorés."""
+        assert parse_price("450,50 €") == 450
+        assert parse_price("450.50 €") == 450
+
+    def test_parse_price_small_values(self):
+        """Les petits prix sont parsés (MIN_RENT_EUR fait le tri ensuite)."""
+        assert parse_price("5 €") == 5
+
+    def test_parse_price_numeric_input(self):
+        """Un prix déjà numérique est accepté."""
+        assert parse_price(480) == 480
+        assert parse_price(480.0) == 480
+
     def test_parse_price_edge_cases(self):
         """Test cas limites."""
         assert parse_price("99€") == 99
         assert parse_price("9999€") == 9999
-        assert parse_price("1€") is None  # 1 seul chiffre, regex demande 2+
+        assert parse_price("1€") == 1  # rejeté ensuite par MIN_RENT_EUR
     
     def test_parse_price_with_text(self):
         """Test extraction de prix noyé dans du texte."""
