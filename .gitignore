@@ -1,19 +1,39 @@
-# Environnement virtuel
+# Environnements virtuels / secrets
 venv/
 env/
+ENV/
 .env
 
-# Python cache
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
 
-# Logs et Données (on ne versionne pas la DB locale ni les logs)
-toulouse_rent_scraper/logs/*.log
-toulouse_rent_scraper/data/*.sqlite
+# Tests / couverture
+.pytest_cache/
+.coverage
+htmlcov/
+*.cover
+
+# Données locales du scraper (base, profil Chrome, logs, rapports)
+toulouse_rent_scraper/data/
+toulouse_rent_scraper/logs/
 toulouse_rent_scraper/reports/
-toulouse_rent_scraper/data/browser_profile/
+*.sqlite
+*.db
 
-# Fichiers système et IDE
-.DS_Store
+# Dossiers de candidature personnels (exports Markdown)
+toulouse_rent_scraper/Docrech/
+
+# IDE / OS
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db

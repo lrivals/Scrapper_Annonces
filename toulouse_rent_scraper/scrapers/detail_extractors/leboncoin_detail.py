@@ -7,7 +7,7 @@ import re
 import time
 from typing import Optional
 
-from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+from scrapers.browser import PlaywrightTimeoutError
 
 from utils.logger import setup_logger
 

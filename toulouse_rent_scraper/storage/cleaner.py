@@ -9,7 +9,7 @@ import time
 
 import requests
 
-from storage.sqlite import DB_PATH, get_connection
+from storage.sqlite import DB_PATH, connect, get_connection
 from utils.logger import setup_logger
 
 logger = setup_logger("cleaner")
@@ -109,7 +109,7 @@ def check_expired_annonces() -> dict:
 
 def _mark_checked(annonce_id: int):
     """Enregistre l'horodatage de la dernière vérification d'une annonce."""
-    with get_connection() as c:
+    with connect() as c:
         c.execute(
             "UPDATE annonces SET checked_at = datetime('now') WHERE id = ?",
             (annonce_id,),
@@ -129,6 +129,7 @@ def check_links_playwright(limit: int = None) -> dict:
     - Stoppe après MAX_CONSECUTIVE_NETWORK_ERRORS erreurs réseau consécutives.
     """
     from playwright.sync_api import sync_playwright
+    from config import USER_AGENT
     from storage.sqlite import init_db
 
     # Assure que les colonnes status et checked_at existent (migrations)
@@ -158,13 +159,7 @@ def check_links_playwright(limit: int = None) -> dict:
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        context = browser.new_context(
-            user_agent=(
-                "Mozilla/5.0 (X11; Linux x86_64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/131.0.0.0 Safari/537.36"
-            )
-        )
+        context = browser.new_context(user_agent=USER_AGENT)
 
         for annonce in annonces:
             page = context.new_page()
@@ -178,7 +173,7 @@ def check_links_playwright(limit: int = None) -> dict:
                 is_expired = any(pat in content for pat in _EXPIRED_PATTERNS)
 
                 if is_expired:
-                    with get_connection() as c:
+                    with connect() as c:
                         c.execute(
                             "UPDATE annonces SET status = 'expired' WHERE id = ?",
                             (annonce["id"],),

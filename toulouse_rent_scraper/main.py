@@ -1,302 +1,217 @@
 # main.py
 # =========================
-# Pipeline principal du projet
+# Point d'entrée CLI
+#
+#   python main.py scrape [--site leboncoin] [--profile blagnac] [--enrich] [--export csv]
+#   python main.py enrich [--site seloger] [--limit 20]
+#   python main.py check-links [--limit 50]
+#   python main.py purge
+#   python main.py export csv|json
+#   python main.py ui [--port 5000]
+#
+# Les anciennes options (--seloger, --ui, --check-links…) restent acceptées.
+# Imports paresseux : `ui`, `export`, `purge` fonctionnent sans Playwright.
 # =========================
 
 import argparse
 import sys
-from datetime import datetime
+from typing import List, Optional
 
-from config import SEARCH_PROFILES, enabled_profiles
+from config import SEARCH_PROFILES, ENRICHMENT_DEFAULT_LIMIT, enabled_profiles
+from scrapers import SCRAPER_PATHS, SITE_NAMES
 from utils.logger import setup_logger
 
-# Configuration du logger
-logger = setup_logger('main')
+logger = setup_logger("main")
+
+COMMANDS = ("scrape", "enrich", "check-links", "purge", "export", "ui")
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Scraper d'annonces immobilieres Toulouse (profils ENAC, Blagnac…)")
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument("--seloger", action="store_true", help="Scanner uniquement SeLoger")
-    group.add_argument("--leboncoin", action="store_true", help="Scanner uniquement LeBonCoin")
-    group.add_argument("--all", action="store_true", default=True, help="Scanner tous les sites (defaut)")
-    parser.add_argument("--export", choices=["csv", "json"], help="Exporter les annonces en CSV ou JSON")
-    parser.add_argument("--purge", action="store_true", help="Vérifier et marquer les annonces expirées")
-    parser.add_argument("--ui", action="store_true", help="Lancer l'interface web de navigation des annonces")
-    parser.add_argument("--port", type=int, default=5000, help="Port pour l'interface web (defaut: 5000)")
-    parser.add_argument("--check-links", action="store_true", dest="check_links",
-                        help="Vérifier les liens via navigateur et marquer les annonces expirées")
-    parser.add_argument("--enrich", action="store_true",
-                        help="Enrichir les annonces avec les données de détail (surface, DPE, etc.)")
-    parser.add_argument("--limit", type=int, default=None,
-                        help="Nombre max d'annonces à traiter (--check-links ou --enrich)")
-    parser.add_argument("--profile", action="append", choices=sorted(SEARCH_PROFILES),
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Scraper d'annonces immobilières Toulouse (profils ENAC, Blagnac…)"
+    )
+    sub = parser.add_subparsers(dest="command", metavar="COMMANDE")
+
+    site_opt = dict(action="append", choices=sorted(SCRAPER_PATHS), dest="sites",
+                    help="Site à traiter (répétable). Défaut : tous")
+
+    scrape = sub.add_parser("scrape", help="Scraper les sites (commande par défaut)")
+    scrape.add_argument("--site", **site_opt)
+    scrape.add_argument("--profile", action="append", choices=sorted(SEARCH_PROFILES),
                         help="Profil de recherche (répétable). Défaut : tous les profils actifs")
-    return parser.parse_args()
+    scrape.add_argument("--enrich", action="store_true", help="Enrichir les annonces après le scraping")
+    scrape.add_argument("--limit", type=int, help="Nombre max d'annonces à enrichir (avec --enrich)")
+    scrape.add_argument("--export", choices=["csv", "json"], help="Exporter après le scraping")
+    scrape.add_argument("--purge", action="store_true",
+                        help="Vérifier les annonces expirées après le scraping (requêtes HEAD)")
+
+    enrich = sub.add_parser("enrich", help="Enrichir les annonces en attente (surface, DPE…)")
+    enrich.add_argument("--site", **site_opt)
+    enrich.add_argument("--limit", type=int, help=f"Nombre max d'annonces (défaut {ENRICHMENT_DEFAULT_LIMIT})")
+
+    check = sub.add_parser("check-links", help="Vérifier les liens via navigateur headless")
+    check.add_argument("--limit", type=int, help="Nombre max d'annonces à vérifier")
+
+    sub.add_parser("purge", help="Marquer les annonces expirées (requêtes HEAD, peu fiable sur les SPA)")
+
+    export = sub.add_parser("export", help="Exporter les annonces actives")
+    export.add_argument("format", choices=["csv", "json"])
+
+    ui = sub.add_parser("ui", help="Lancer l'interface web")
+    ui.add_argument("--port", type=int, default=5000)
+    ui.add_argument("--no-browser", action="store_true", help="Ne pas ouvrir le navigateur")
+
+    return parser
 
 
-def selected_profiles(keys):
+def translate_legacy_args(argv: List[str]) -> List[str]:
+    """
+    Convertit l'ancienne syntaxe (options seules) en sous-commande.
+    Sans argument : `scrape` (comportement historique).
+    """
+    if not argv:
+        return ["scrape"]
+    if argv[0] in COMMANDS or argv[0] in ("-h", "--help"):
+        return argv
+
+    def take_value(flag: str) -> List[str]:
+        if flag in argv:
+            i = argv.index(flag)
+            if i + 1 < len(argv):
+                return [flag, argv[i + 1]]
+        return []
+
+    def take_all(flag: str) -> List[str]:
+        out = []
+        for i, a in enumerate(argv):
+            if a == flag and i + 1 < len(argv):
+                out += [flag, argv[i + 1]]
+        return out
+
+    has = lambda flag: flag in argv  # noqa: E731
+    explicit_sites = has("--seloger") or has("--leboncoin") or has("--all")
+
+    if has("--ui"):
+        new = ["ui"] + take_value("--port")
+    elif has("--check-links"):
+        new = ["check-links"] + take_value("--limit")
+    elif has("--enrich") and not explicit_sites:
+        new = ["enrich"] + take_value("--limit")
+    else:
+        new = ["scrape"]
+        if has("--seloger"):
+            new += ["--site", "seloger"]
+        if has("--leboncoin"):
+            new += ["--site", "leboncoin"]
+        new += take_all("--profile") + take_value("--export") + take_value("--limit")
+        if has("--enrich"):
+            new.append("--enrich")
+        if has("--purge"):
+            new.append("--purge")
+
+    print(f"⚠ Syntaxe obsolète : utiliser « python main.py {' '.join(new)} »", file=sys.stderr)
+    return new
+
+
+def selected_profiles(keys: Optional[List[str]]):
     """Profils demandés via --profile, ou tous les profils actifs."""
     if keys:
         return [SEARCH_PROFILES[k] for k in dict.fromkeys(keys)]
     return enabled_profiles()
 
 
-def main():
-    args = parse_args()
+def _site_filter(site_keys: Optional[List[str]]) -> Optional[str]:
+    # L'enrichissement filtre sur un seul site (nom stocké en base) ou aucun
+    if site_keys and len(set(site_keys)) == 1:
+        return SITE_NAMES[site_keys[0]]
+    return None
 
-    if args.ui:
-        from ui import run_ui
-        run_ui(port=args.port)
-        return
 
-    explicit_scraping = args.seloger or args.leboncoin or "--all" in sys.argv
-    if args.enrich and not explicit_scraping:
-        from scrapers.enricher import enrich_annonces
-        from config import ENRICHMENT_DEFAULT_LIMIT
+def cmd_enrich(site_keys, limit) -> dict:
+    from scrapers.enricher import enrich_annonces
 
-        limit = args.limit if args.limit is not None else ENRICHMENT_DEFAULT_LIMIT
-        summary = enrich_annonces(site_filter=None, limit=limit)
-        print(
-            f"Enrichissement terminé : {summary['enriched']}/{summary['total']} enrichis, "
-            f"{summary['errors']} erreurs"
-        )
-        return
-
-    if args.check_links:
-        from storage.cleaner import check_links_playwright
-        summary = check_links_playwright(limit=args.limit)
-        print(
-            f"Vérification terminée : {summary['checked']} vérifiées, "
-            f"{summary['expired']} expirées, "
-            f"{summary['network_errors']} erreurs réseau (non vérifiées), "
-            f"{summary['page_errors']} erreurs de page"
-        )
-        return
-
-    import random
-    import time
-
-    from config import SEARCH_PROFILES, PROFILE_SWITCH_MIN_DELAY, PROFILE_SWITCH_MAX_DELAY
-    from scrapers import SCRAPERS
-    from scrapers.seloger import SeLogerScraper
-    from scrapers.leboncoin import LeBonCoinScraper
-    from filters.price_and_distance import match_profiles
-    from storage.sqlite import (
-        init_db, insert_annonce, find_potential_duplicates, set_duplicate_of,
-        upsert_annonce_profile,
+    summary = enrich_annonces(
+        site_filter=_site_filter(site_keys),
+        limit=limit if limit is not None else ENRICHMENT_DEFAULT_LIMIT,
     )
-    from reporting.generator import generate_summary_reports
-    from reporting.exporter import run_export
+    logger.info(
+        f"Enrichissement terminé : {summary['enriched']}/{summary['total']} enrichis, "
+        f"{summary['errors']} erreurs"
+    )
+    return summary
+
+
+def cmd_check_links(limit):
+    from storage.cleaner import check_links_playwright
+
+    summary = check_links_playwright(limit=limit)
+    logger.info(
+        f"Vérification terminée : {summary['checked']} vérifiées, "
+        f"{summary['expired']} expirées, "
+        f"{summary['network_errors']} erreurs réseau (non vérifiées), "
+        f"{summary['page_errors']} erreurs de page"
+    )
+
+
+def cmd_purge():
     from storage.cleaner import check_expired_annonces
-    from utils.validation import validate_annonce
+    from storage.sqlite import init_db
 
-    scraper_map = {
-        "seloger": SeLogerScraper,
-        "leboncoin": LeBonCoinScraper,
-    }
+    init_db()
+    summary = check_expired_annonces()
+    logger.info(f"Purge : {summary['expired']} expirées / {summary['checked']} vérifiées")
 
-    if args.seloger:
-        scrapers_to_run = [scraper_map["seloger"]]
-    elif args.leboncoin:
-        scrapers_to_run = [scraper_map["leboncoin"]]
-    else:
-        scrapers_to_run = SCRAPERS
 
-    # Profils dont on lance les recherches ; les annonces trouvées sont
-    # testées contre TOUS les profils actifs (recoupements gratuits)
-    profiles_to_search = selected_profiles(args.profile)
+def cmd_export(fmt: str):
+    from reporting.exporter import run_export
+    from storage.sqlite import init_db
 
-    sites_label = ", ".join(s().site_name() for s in scrapers_to_run)
-    profiles_label = ", ".join(p.label for p in profiles_to_search)
-    logger.info(f"Demarrage du scraper — profils: {profiles_label} — sites: {sites_label}")
+    init_db()
+    path = run_export(fmt)
+    logger.info(f"📦 Export {fmt.upper()} généré : {path}")
 
-    run_start_time = datetime.now()
+
+def cmd_scrape(args):
+    from pipeline import run_scraping
+
+    site_keys = list(dict.fromkeys(args.sites)) if args.sites else list(SCRAPER_PATHS)
+    profiles = selected_profiles(args.profile)
+    logger.info(
+        "Démarrage du scraper — profils: "
+        + ", ".join(p.label for p in profiles)
+        + " — sites: " + ", ".join(SITE_NAMES[k] for k in site_keys)
+    )
 
     try:
-        # Initialisation base
-        init_db()
-        logger.info("Base de données initialisée")
-
-        total_raw = 0
-        total_kept = 0
-        total_rejected = 0
-        total_inserted = 0
-        total_updated = 0
-        total_unchanged = 0
-        total_reactivated = 0
-        total_validation_errors = 0
-        total_duplicates = 0
-        new_by_profile = {key: 0 for key in SEARCH_PROFILES}
-
-        runs = [(profile, ScraperClass) for profile in profiles_to_search for ScraperClass in scrapers_to_run]
-
-        # Boucle sur les couples (profil, site)
-        for run_idx, (profile, ScraperClass) in enumerate(runs):
-            scraper = ScraperClass(profile)
-            site_name = scraper.site_name()
-
-            if not scraper.search_url():
-                logger.warning(f"--- {site_name} / {profile.label} : recherche non configurée, ignoré ---")
-                continue
-
-            # Changement de recherche : pause longue pour limiter la détection anti-bot
-            if run_idx > 0:
-                pause = random.uniform(PROFILE_SWITCH_MIN_DELAY, PROFILE_SWITCH_MAX_DELAY)
-                logger.info(f"Pause de {pause:.0f}s avant la recherche suivante")
-                time.sleep(pause)
-
-            logger.info(f"--- Scraping {site_name} — profil {profile.label} ---")
-            raw_annonces = scraper.scrape()
-            logger.info(f"🔍 {len(raw_annonces)} annonces brutes récupérées de {site_name}")
-
-            kept = 0
-            rejected = 0
-            inserted = 0
-            updated = 0
-            unchanged = 0
-            reactivated = 0
-            validation_errors = 0
-            duplicates = 0
-
-            for annonce in raw_annonces:
-                # Validation des données brutes
-                validation_error = validate_annonce(annonce)
-                if validation_error:
-                    logger.warning(f"Annonce invalide ({site_name}) : {validation_error}")
-                    validation_errors += 1
-                    rejected += 1
-                    continue
-
-                # Filtrage par profil : budget, pièces, rayon autour de chaque cible
-                filtered, matches = match_profiles(annonce)
-
-                if not filtered:
-                    rejected += 1
-                    continue
-
-                kept += 1
-
-                # Insertion ou mise à jour en base
-                result = insert_annonce(filtered)
-
-                matched_labels = []
-                for matched_profile, dist in matches:
-                    matched_labels.append(f"{matched_profile.label} {dist}km")
-                    if upsert_annonce_profile(filtered["url"], matched_profile.key, dist):
-                        new_by_profile[matched_profile.key] += 1
-
-                # Détection de doublons (même bien publié sur un autre site)
-                potential_dups = find_potential_duplicates(filtered)
-                if potential_dups:
-                    original = potential_dups[0]
-                    if set_duplicate_of(filtered["url"], original["id"]):
-                        duplicates += 1
-                        logger.warning(
-                            f"⚠ Doublon détecté ({site_name}) : "
-                            f"\"{filtered['title']} {filtered['price']}€\" "
-                            f"↔ \"{original['title']} {original['price']}€\" ({original['url']})"
-                        )
-                if result == "new":
-                    inserted += 1
-                    logger.info(
-                        f"✨ Nouvelle annonce ({site_name}) : {filtered['title']} - "
-                        f"{filtered['price']}€ - {', '.join(matched_labels)}"
-                    )
-                elif result == "reactivated":
-                    reactivated += 1
-                    logger.info(
-                        f"♻ Annonce réactivée ({site_name}) : {filtered['title']} - "
-                        f"{filtered['price']}€"
-                    )
-                elif result == "updated":
-                    updated += 1
-                    logger.info(
-                        f"🔄 Prix mis à jour ({site_name}) : {filtered['title']} - "
-                        f"{filtered['price']}€"
-                    )
-                else:
-                    unchanged += 1
-
-            # Résumé par site
-            logger.info(f"📊 Résumé {site_name} — {profile.label} :")
-            logger.info(f"  - Annonces brutes : {len(raw_annonces)}")
-            logger.info(f"  - Erreurs de validation : {validation_errors}")
-            logger.info(f"  - Annonces filtrées conservées : {kept}")
-            logger.info(f"  - Annonces rejetées : {rejected}")
-            logger.info(
-                f"  - Nouvelles : {inserted} | Réactivées : {reactivated} | "
-                f"Mises à jour : {updated} | Inchangées : {unchanged}"
-            )
-            if duplicates:
-                logger.warning(f"  - Doublons détectés : {duplicates}")
-
-            total_raw += len(raw_annonces)
-            total_kept += kept
-            total_rejected += rejected
-            total_inserted += inserted
-            total_updated += updated
-            total_unchanged += unchanged
-            total_reactivated += reactivated
-            total_validation_errors += validation_errors
-            total_duplicates += duplicates
-
-        # Résumé global
-        logger.info("=" * 50)
-        logger.info("✅ Résumé global")
-        logger.info(f"  - Recherches lancées : {len(runs)} ({profiles_label} × {sites_label})")
-        logger.info(f"  - Annonces brutes totales : {total_raw}")
-        logger.info(f"  - Erreurs de validation : {total_validation_errors}")
-        logger.info(f"  - Annonces conservées : {total_kept}")
-        logger.info(f"  - Annonces rejetées : {total_rejected}")
-        logger.info(
-            f"  - Nouvelles : {total_inserted} | Réactivées : {total_reactivated} | "
-            f"Mises à jour : {total_updated} | Inchangées : {total_unchanged}"
-        )
-        for key, count in new_by_profile.items():
-            logger.info(f"  - Nouvelles pour {SEARCH_PROFILES[key].label} : {count}")
-        if total_duplicates:
-            logger.warning(f"  - Doublons détectés : {total_duplicates} (vérifier les logs)")
-        logger.info("🎯 Terminé.")
-
-        # Génération des rapports Markdown
-        generate_summary_reports(run_start_time)
-        logger.info("📄 Rapports générés dans le dossier reports/")
-
-        # Enrichissement post-scraping si --enrich
+        run_scraping(profiles, site_keys)
         if args.enrich:
-            from scrapers.enricher import enrich_annonces
-            from config import ENRICHMENT_DEFAULT_LIMIT
-
-            site_filter = None
-            if args.seloger:
-                site_filter = "SeLoger"
-            elif args.leboncoin:
-                site_filter = "LeBonCoin"
-
-            limit = args.limit if args.limit is not None else ENRICHMENT_DEFAULT_LIMIT
-            summary = enrich_annonces(site_filter=site_filter, limit=limit)
-            logger.info(
-                f"Enrichissement : {summary['enriched']}/{summary['total']} enrichis, "
-                f"{summary['errors']} erreurs"
-            )
-
-        # Purge des annonces expirées si demandé
+            cmd_enrich(args.sites, args.limit)
         if args.purge:
-            logger.info("Vérification des annonces expirées...")
-            summary = check_expired_annonces()
-            logger.info(
-                f"Purge : {summary['expired']} expirées / {summary['checked']} vérifiées"
-            )
-
-        # Export CSV/JSON si demandé
+            cmd_purge()
         if args.export:
-            export_path = run_export(args.export)
-            logger.info(f"📦 Export {args.export.upper()} généré : {export_path}")
-
+            cmd_export(args.export)
     except Exception as e:
         logger.error(f"❌ Erreur critique dans le pipeline : {e}", exc_info=True)
         raise
+
+
+def main(argv: Optional[List[str]] = None):
+    argv = translate_legacy_args(list(sys.argv[1:] if argv is None else argv))
+    args = build_parser().parse_args(argv)
+
+    if args.command == "ui":
+        from ui import run_ui
+        run_ui(port=args.port, open_browser=not args.no_browser)
+    elif args.command == "enrich":
+        cmd_enrich(args.sites, args.limit)
+    elif args.command == "check-links":
+        cmd_check_links(args.limit)
+    elif args.command == "purge":
+        cmd_purge()
+    elif args.command == "export":
+        cmd_export(args.format)
+    else:
+        cmd_scrape(args)
 
 
 if __name__ == "__main__":

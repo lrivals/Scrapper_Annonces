@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Annonces Toulouse — {{ profile.label }}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <meta name="csrf-token" content="{{ csrf_token() }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+</head>
+<body data-profile="{{ profile.key }}">
+  <div class="wrapper">
+    <header>
+      <h1>Annonces Toulouse</h1>
+      <nav class="profile-tabs">
+        {% for p in profiles %}
+        <a href="/?profile={{ p.key }}" class="btn-view {% if p.key == profile.key %}active{% endif %}"
+           title="{{ p.target_address }} — {{ p.min_rent_eur }}–{{ p.max_rent_eur }} € — {{ p.max_distance_km }} km">{{ p.label }}</a>
+        {% endfor %}
+      </nav>
+      <div class="count" id="annonce-count">{{ total }} annonce{{ 's' if total != 1 else '' }}</div>
+      <div class="action-bar">
+        <button class="btn-scrape" id="btn-scrape" onclick="startScraping()">Lancer le scraping</button>
+        <form method="POST" action="/clear-db" onsubmit="return confirmClear(this)">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="confirm" value="">
+          <input type="hidden" name="back" value="{{ request.full_path }}">
+          <button type="submit" class="btn-clear-db">Vider la BD</button>
+        </form>
+      </div>
+      <div class="scrape-log" id="scrape-log"></div>
+      <div class="doc-bar">
+        <button class="btn-doc-start" id="btn-doc-mode" onclick="toggleDocumentMode()">Commencer document</button>
+        <span class="doc-count-badge" id="doc-count"></span>
+        <button class="btn-doc-export" id="btn-export" onclick="exportDocument()">Exporter ↓</button>
+        <button class="btn-doc-clear" id="btn-clear" onclick="clearDocument()">Vider</button>
+      </div>
+      <form id="doc-form" method="POST" action="/export-document" style="display:none">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="ids" id="doc-ids-input">
+        <input type="hidden" name="profile" value="{{ profile.key }}">
+      </form>
+      <div class="view-toggle">
+        <button class="btn-view active" id="btn-view-list" onclick="setView('list')">&#9776; Liste</button>
+        <button class="btn-view" id="btn-view-map" onclick="setView('map')">&#128506; Carte</button>
+      </div>
+    </header>
+
+    {% if flash %}
+    <div class="flash flash-{{ flash.type }}">{{ flash.msg }}</div>
+    {% endif %}
+
+    <form method="get" class="filter-bar">
+      <input type="hidden" name="profile" value="{{ profile.key }}">
+      <div class="filter-group">
+        <label>Plateforme</label>
+        <select name="site">
+          <option value="">Toutes</option>
+          {% for s in sites %}
+          <option value="{{ s }}" {% if s == current_site %}selected{% endif %}>{{ s }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="filter-group">
+        <label>Statut</label>
+        <select name="status">
+          <option value="" {% if current_status == '' %}selected{% endif %}>Tous</option>
+          <option value="active" {% if current_status == 'active' %}selected{% endif %}>Actives</option>
+          <option value="expired" {% if current_status == 'expired' %}selected{% endif %}>Expirées</option>
+          <option value="hidden" {% if current_status == 'hidden' %}selected{% endif %}>Masquées</option>
+        </select>
+      </div>
+
+      <div class="filter-group">
+        <label>Doublons</label>
+        <select name="dups">
+          <option value="" {% if current_dups == '' %}selected{% endif %}>Afficher</option>
+          <option value="hide" {% if current_dups == 'hide' %}selected{% endif %}>Masquer</option>
+        </select>
+      </div>
+
+      <div class="filter-group">
+        <label>Prix (€)</label>
+        <div class="prix-range">
+          <input type="number" name="prix_min" value="{{ current_prix_min }}" placeholder="{{ profile.min_rent_eur }}" min="0">
+          <input type="number" name="prix_max" value="{{ current_prix_max }}" placeholder="{{ profile.max_rent_eur }}" min="0">
+        </div>
+      </div>
+
+      <div class="filter-group">
+        <label>Trier par</label>
+        <div style="display:flex;gap:8px;align-items:center">
+          <select name="sort">
+            <option value="price"            {% if current_sort == 'price' %}selected{% endif %}>Prix</option>
+            <option value="distance"         {% if current_sort in ('distance', 'distance_enac_km') %}selected{% endif %}>Distance {{ profile.label }}</option>
+            <option value="created_at"       {% if current_sort == 'created_at' %}selected{% endif %}>Derniers ajouts</option>
+          </select>
+          <input type="hidden" id="order-input" name="order" value="{{ current_order }}">
+          <button type="button" class="btn-order" id="order-btn" onclick="toggleOrder()" title="{{ 'Croissant' if current_order == 'asc' else 'Décroissant' }}">
+            {{ '↑' if current_order == 'asc' else '↓' }}
+          </button>
+        </div>
+      </div>
+
+      <div class="filter-group">
+        <button type="submit" class="btn-filter">Filtrer</button>
+      </div>
+      <div class="filter-group">
+        <a href="/?profile={{ profile.key }}" class="btn-reset">Reset</a>
+      </div>
+      <input type="hidden" name="view" id="view-input" value="list">
+    </form>
+
+    <main class="grid" id="card-grid">
+      {% for a in annonces %}
+      <article class="card">
+        <a href="{{ a.url }}" target="_blank" class="card-image">
+          {% if a.thumbnail %}
+            <img src="{{ a.thumbnail }}" alt="{{ a.title }}" loading="lazy" referrerpolicy="no-referrer"
+                 onerror="this.parentElement.innerHTML='<div class='card-image-placeholder'>🏠</div>'">
+          {% else %}
+            <div class="card-image-placeholder">🏠</div>
+          {% endif %}
+        </a>
+        <div class="card-content">
+          <div class="card-header">
+            <span class="site-tag">{{ a.site or 'Source' }}</span>
+            <div class="price-tag">{{ a.price or '—' }} €
+              {% if a.first_price and a.price and a.first_price != a.price %}
+              <span class="price-drop {{ 'up' if a.price > a.first_price else '' }}"
+                    title="Prix initial {{ a.first_price }} € ({{ (a.first_seen or '')[:10] }})">
+                {{ '↓' if a.price < a.first_price else '↑' }} {{ (a.price - a.first_price)|abs }} €
+              </span>
+              {% endif %}
+            </div>
+          </div>
+
+          <a href="{{ a.url }}" target="_blank" class="card-title">
+            {{ a.title or 'Annonce sans titre' }}
+          </a>
+
+          <div class="card-meta">
+            <div class="meta-item" title="Distance de {{ profile.target_address }}">
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+              {% if a.distance_km is not none %}
+                {{ "%.1f"|format(a.distance_km | float) }} km
+              {% else %}
+                Distance N/A
+              {% endif %}
+            </div>
+            
+            <div class="meta-item" title="Localisation">
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path></svg>
+              {{ (a.location_raw or 'Toulouse')[:22] }}{% if (a.location_raw or '')|length > 22 %}&hellip;{% endif %}
+            </div>
+
+            <div class="meta-item" title="Date d&rsquo;ajout">
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+              {% if a.created_at %}{{ a.created_at[:10] }}{% else %}Récent{% endif %}
+            </div>
+
+            <div class="meta-item" title="Type">
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path></svg>
+              {{ a.surface_m2 or '—' }} m²
+            </div>
+          </div>
+        </div>
+
+        <div class="card-footer">
+          <div class="status-pill">
+            {% set s = a.status or 'active' %}
+            <span class="dot dot-{{ s }}"></span>
+            {{ {'active': 'En ligne', 'expired': 'Expiré', 'hidden': 'Masquée'}.get(s, s) }}
+            {% if a.dup_url %}
+            · <a href="{{ a.dup_url }}" target="_blank" class="dup-tag" title="Même bien publié sur {{ a.dup_site }}">aussi sur {{ a.dup_site }}</a>
+            {% endif %}
+          </div>
+
+          <div style="display:flex;align-items:center;gap:8px">
+          <button class="btn-add-doc" id="doc-btn-{{ a.id }}" onclick="toggleAnnonce({{ a.id }}, this)">+ Doc</button>
+          {% if s == 'hidden' %}
+          <form method="post" action="/restore" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="id" value="{{ a.id }}">
+            <input type="hidden" name="back" value="{{ back_url }}">
+            <button type="submit" class="btn-restore" title="Restaurer l&rsquo;annonce">Restaurer</button>
+          </form>
+          {% else %}
+          <form method="post" action="/delete" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="id" value="{{ a.id }}">
+            <input type="hidden" name="back" value="{{ back_url }}">
+            <button type="submit" class="btn-del" title="Masquer (ne reviendra pas au prochain scraping)">
+              <svg style="width:18px;height:18px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+            </button>
+          </form>
+          {% endif %}
+          </div>
+        </div>
+      </article>
+      {% else %}
+      <div class="empty-state">
+        <p>Aucune annonce trouvée.</p>
+        <br>
+        <a href="/?profile={{ profile.key }}" style="color:var(--text-main); font-weight: 700;">Tout effacer</a>
+      </div>
+      {% endfor %}
+    </main>
+
+    <div id="map-view" style="display:none">
+      <div id="map"></div>
+      <p id="map-ungeolocated"></p>
+    </div>
+  </div>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
