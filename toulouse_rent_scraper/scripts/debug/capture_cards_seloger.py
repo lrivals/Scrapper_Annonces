@@ -1,24 +1,18 @@
 """Debug script: save HTML of first SeLoger card to inspect structure."""
+import sys
 import time
-import subprocess
 from pathlib import Path
-from playwright.sync_api import sync_playwright
-from config import SELOGER_BASE_URL, SELOGER_SEARCH_URL, BROWSER_PROFILE_DIR
 
-BROWSER_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-chrome_proc = subprocess.Popen(
-    ["google-chrome", "--remote-debugging-port=9222",
-     f"--user-data-dir={BROWSER_PROFILE_DIR}",
-     "--no-first-run", "--no-default-browser-check", "--window-size=1920,1080"],
-    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-)
-time.sleep(3)
+from config import SELOGER_BASE_URL, LOG_DIR, SEARCH_PROFILES  # noqa: E402
+from scrapers.browser import chrome_session  # noqa: E402
 
-with sync_playwright() as p:
-    browser = p.chromium.connect_over_cdp("http://localhost:9222")
-    ctx = browser.contexts[0]
-    page = ctx.pages[0] if ctx.pages else ctx.new_page()
+# Usage : python scripts/debug/capture_cards_seloger.py [profil]   (défaut : enac)
+PROFILE = SEARCH_PROFILES[sys.argv[1] if len(sys.argv) > 1 else "enac"]
+SEARCH_URL = PROFILE.seloger_search_urls()[0]
+
+with chrome_session() as (browser, page):
 
     page.goto(SELOGER_BASE_URL, timeout=60000, wait_until="domcontentloaded")
     time.sleep(3)
@@ -32,7 +26,7 @@ with sync_playwright() as p:
     except Exception:
         pass
 
-    page.goto(SELOGER_SEARCH_URL, timeout=60000, wait_until="domcontentloaded")
+    page.goto(SEARCH_URL, timeout=60000, wait_until="domcontentloaded")
     time.sleep(5)
 
     # Scroll to load lazy content
@@ -45,7 +39,7 @@ with sync_playwright() as p:
     cards = page.query_selector_all(selector)
     print(f"Found {len(cards)} cards")
 
-    output = Path("logs/debug_seloger_cards.html")
+    output = LOG_DIR / "debug_seloger_cards.html"
     with open(output, "w", encoding="utf-8") as f:
         for i, card in enumerate(cards[:3]):
             html = card.evaluate("el => el.outerHTML")
@@ -56,6 +50,4 @@ with sync_playwright() as p:
             print(f"\nCard {i+1} inner_text:\n{text}\n")
 
     print(f"\nSaved to {output}")
-    browser.close()
 
-chrome_proc.terminate()

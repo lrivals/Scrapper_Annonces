@@ -1,9 +1,5 @@
-# Core dependencies
-playwright>=1.40.0
-playwright-stealth>=2.0.0
-geopy>=2.4.0
-flask>=3.0.0
-
-# Development dependencies
-pytest>=7.4.0
-pytest-cov>=4.1.0
+# Dépendances d'exécution
+playwright>=1.40,<2
+geopy>=2.4,<3
+flask>=3.0,<4
+requests>=2.31,<3

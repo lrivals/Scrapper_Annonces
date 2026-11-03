@@ -29,23 +29,6 @@ MAX_DISTANCE_KM = 10
 MAX_RENT_EUR = 500
 MIN_RENT_EUR = 50
 
-PROPERTY_TYPES = [
-    "studio",
-    "chambre",
-    "appartement"
-]
-
-# Quartiers ciblés (indicatifs, filtrage final par distance)
-TARGET_DISTRICTS = [
-    "Rangueil",
-    "Ramonville-Saint-Agne",
-    "Saouzelong",
-    "Pont des Demoiselles",
-    "Pech-David",
-    "Saint-Agne"
-]
-
-
 # =========================
 # 🗺️ GÉOCODAGE
 # =========================
@@ -112,16 +95,6 @@ SELOGER_SEARCH_URLS = [SELOGER_SEARCH_URL] + [
 # =========================
 
 LEBONCOIN_BASE_URL = "https://www.leboncoin.fr"
-
-# Navigation progressive (étapes intermédiaires pour simuler un vrai utilisateur)
-LEBONCOIN_STEP_IMMOBILIER = "https://www.leboncoin.fr/c/locations"
-LEBONCOIN_STEP_LOCATION = "https://www.leboncoin.fr/c/locations/real_estate_type:2"
-LEBONCOIN_STEP_TOULOUSE = (
-    "https://www.leboncoin.fr/recherche"
-    "?category=10"
-    "&locations=Toulouse__43.599373754597394_1.435619856703149_9864_10000"
-    "&real_estate_type=2"
-)
 
 # URL finale avec tous les filtres — budget dérivé de MIN/MAX_RENT_EUR,
 # plus récentes d'abord (les nouveautés passent avant la limite de pages)
@@ -235,22 +208,23 @@ PROFILE_SWITCH_MAX_DELAY = 120
 # Timeout Playwright (ms)
 PAGE_LOAD_TIMEOUT = 90_000  # Augmenté à 90s
 
-# Stratégies anti-détection supplémentaires
-USE_STEALTH_MODE = True
-
 
 # =========================
 # 🧠 SCRAPING & ANTI-BLOCAGE
 # =========================
 
+# User-Agent du Chromium headless de --check-links (le scraping utilise le vrai Chrome)
 USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/131.0.0.0 Safari/537.36"
 )
 
-# Mettre à False pour debug visuel
-HEADLESS_BROWSER = False
+# Chrome « réel » piloté via CDP avec profil persistant (scraping + enrichissement).
+# Pas de mode headless : DataDome (LeBonCoin) le détecte et bloque.
+CHROME_BINARY = None          # None = recherche google-chrome / chromium dans le PATH
+CHROME_DEBUG_PORT = 9222      # 0 = port libre choisi automatiquement
+CHROME_STARTUP_TIMEOUT = 15   # secondes d'attente max du port CDP
 
 # Délais entre requêtes (secondes) - plus longs pour simuler un humain
 MIN_DELAY_BETWEEN_REQUESTS = 3.0
@@ -272,8 +246,6 @@ BASE_DIR = Path(__file__).resolve().parent
 BROWSER_PROFILE_DIR = BASE_DIR / "data" / "browser_profile"
 
 DATA_DIR = BASE_DIR / "data"
-RAW_DATA_DIR = DATA_DIR / "raw"
-PROCESSED_DATA_DIR = DATA_DIR / "processed"
 
 DB_PATH = BASE_DIR / "data" / "annonces.sqlite"
 
@@ -298,6 +270,7 @@ DUPLICATE_PRICE_TOLERANCE = 5
 # 🕒 PLANIFICATION
 # =========================
 
+# Utilisé par la planification systemd (Sprint 13)
 SCRAPE_FREQUENCY_HOURS = 8
 
 
@@ -308,11 +281,3 @@ SCRAPE_FREQUENCY_HOURS = 8
 ENRICHMENT_MIN_DELAY = 5.0
 ENRICHMENT_MAX_DELAY = 10.0
 ENRICHMENT_DEFAULT_LIMIT = 50
-
-
-# =========================
-# 🔧 DIVERS
-# =========================
-
-DEBUG = False
-SAVE_RAW_HTML = False

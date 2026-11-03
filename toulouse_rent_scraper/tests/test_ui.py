@@ -10,13 +10,35 @@ import pytest
 from storage.sqlite import init_db, insert_annonce, upsert_annonce_profile
 
 
+class CsrfClient:
+    """Client de test qui ajoute le jeton CSRF de la session à chaque POST."""
+
+    def __init__(self, client):
+        self._client = client
+        client.get("/")  # crée la session et le jeton
+        with client.session_transaction() as sess:
+            self.token = sess["csrf_token"]
+
+    def get(self, *args, **kwargs):
+        return self._client.get(*args, **kwargs)
+
+    def post(self, url, data=None, **kwargs):
+        data = dict(data or {})
+        data.setdefault("csrf_token", self.token)
+        return self._client.post(url, data=data, **kwargs)
+
+
 @pytest.fixture
-def client(temp_db, monkeypatch):
-    import ui
-    monkeypatch.setattr(ui, "DB_PATH", temp_db)
+def raw_client(temp_db):
     init_db()
-    ui.app.config["TESTING"] = True
-    return ui.app.test_client()
+    from ui import app
+    app.config["TESTING"] = True
+    return app.test_client()
+
+
+@pytest.fixture
+def client(raw_client):
+    return CsrfClient(raw_client)
 
 
 def _add(url, price=420, site="SeLoger", location="Rangueil", profile="enac", distance=1.0):
@@ -121,3 +143,81 @@ def test_export_document_uses_profile(client):
     assert "Blagnac" in text.splitlines()[0]
     assert "3.2 km" in text
     assert "candidatures_blagnac_" in resp.headers["Content-Disposition"]
+
+
+# ---- Sécurité (Sprint 12.6) ----
+
+def test_post_without_csrf_token_is_rejected(raw_client, temp_db):
+    _add("https://ex.com/1")
+    assert raw_client.post("/clear-db", data={"confirm": "VIDER"}).status_code == 403
+    assert raw_client.post("/delete", data={"id": "1"}).status_code == 403
+    assert raw_client.post("/start-scraping").status_code == 403
+    assert _status(temp_db, "https://ex.com/1") == "active"
+
+
+def test_csrf_token_accepted_in_header(client):
+    _add("https://ex.com/1")
+    resp = client._client.post(
+        "/delete", data={"id": "1"},
+        headers={"X-CSRF-Token": client.token, "X-Requested-With": "XMLHttpRequest"},
+    )
+    assert resp.get_json()["ok"] is True
+
+
+def test_wrong_csrf_token_rejected(client):
+    resp = client._client.post("/delete", data={"id": "1", "csrf_token": "faux"})
+    assert resp.status_code == 403
+
+
+def test_clear_db_requires_confirmation(client, temp_db):
+    _add("https://ex.com/1")
+    client.post("/clear-db", data={"back": "/"})
+    with sqlite3.connect(temp_db) as con:
+        assert con.execute("SELECT COUNT(*) FROM annonces").fetchone()[0] == 1
+    client.post("/clear-db", data={"back": "/", "confirm": "VIDER"})
+    with sqlite3.connect(temp_db) as con:
+        assert con.execute("SELECT COUNT(*) FROM annonces").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("back,expected_prefix", [
+    ("https://evil.com/phish", "/?"),
+    ("//evil.com/x", "/?"),
+    ("javascript:alert(1)", "/?"),
+    ("/?profile=blagnac&sort=price", "/?profile=blagnac&sort=price&flash="),
+    ("http://localhost/?profile=enac", "/?profile=enac&flash="),
+])
+def test_back_redirect_stays_local(client, back, expected_prefix):
+    _add("https://ex.com/1")
+    resp = client.post("/delete", data={"id": "1", "back": back})
+    location = resp.headers["Location"]
+    assert location.startswith(expected_prefix), location
+    assert "evil.com" not in location
+
+
+def test_page_exposes_csrf_meta_and_static_assets(client):
+    page = client.get("/").get_data(as_text=True)
+    assert f'<meta name="csrf-token" content="{client.token}">' in page
+    assert "/static/app.js" in page and "/static/app.css" in page
+    assert client.get("/static/app.js").status_code == 200
+
+
+# ---- Historique de prix (Sprint 12.4) ----
+
+def test_price_drop_shown(client):
+    _add("https://ex.com/1", price=480)
+    insert_annonce({"site": "SeLoger", "title": "Studio 480", "price": 450,
+                    "location_raw": "Rangueil", "url": "https://ex.com/1"})
+    page = client.get("/").get_data(as_text=True)
+    assert "↓ 30 €" in page
+    assert "Prix initial 480 €" in page
+
+
+def test_restore_button_visible_outside_document_mode(client):
+    """Régression : le bouton Restaurer utilisait .btn-add-doc (masqué hors mode document)."""
+    _add("https://ex.com/1")
+    client.post("/delete", data={"id": "1"})
+    page = client.get("/?status=hidden").get_data(as_text=True)
+    assert 'class="btn-restore"' in page
+    css = client.get("/static/app.css").get_data(as_text=True)
+    restore_rule = css[css.index(".btn-restore {"):].split("}")[0]
+    assert "display: none" not in restore_rule

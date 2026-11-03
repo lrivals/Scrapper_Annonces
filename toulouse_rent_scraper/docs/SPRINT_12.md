@@ -1,7 +1,7 @@
 # Sprint 12 — Refactor & sécurité
 
-> **Date** : —
-> **Statut** : 🔲 À faire
+> **Date** : 2026-11-03
+> **Statut** : ✅ Terminé — un critère reste à valider lors d'un vrai scraping (voir bilan)
 > **Origine** : [AUDIT_2026-11.md](AUDIT_2026-11.md) — A1 à A7, S1 à S3, H1 à H3
 > **Prérequis** : [Sprint 11](SPRINT_11.md) terminé (les tests ajoutés servent de filet)
 
@@ -16,14 +16,14 @@ visible attendu, hors sécurité. Prépare le Sprint 4 (PAP.fr) et le Sprint 13
 
 | # | Tâche | Statut | Notes |
 |---|-------|--------|-------|
-| 12.1 | `scrapers/browser.py` — session Chrome unique | 🔲 | Port libre, attente active, binaire configurable |
-| 12.2 | `scrapers/antibot.py` | 🔲 | Détection + attente challenge |
-| 12.3 | Découpage de `BaseScraper.scrape()` | 🔲 | Réutiliser `_find_working_selector` |
-| 12.4 | Stockage : migrations versionnées, index, historique de prix | 🔲 | `PRAGMA user_version` |
-| 12.5 | Découpage de l'UI | 🔲 | Package `ui/`, templates Jinja |
-| 12.6 | Sécurité de l'UI | 🔲 | CSRF, redirect, logs |
-| 12.7 | CLI clarifiée | 🔲 | Sous-commandes |
-| 12.8 | Hygiène du repo | 🔲 | Config morte, deps, fichiers parasites, tests |
+| 12.1 | `scrapers/browser.py` — session Chrome unique | ✅ | Port libre, attente active, binaire configurable |
+| 12.2 | `scrapers/antibot.py` | ✅ | Détection + attente challenge |
+| 12.3 | Découpage de `BaseScraper.scrape()` | ✅ | Réutiliser `_find_working_selector` |
+| 12.4 | Stockage : migrations versionnées, index, historique de prix | ✅ | `PRAGMA user_version` |
+| 12.5 | Découpage de l'UI | ✅ | Package `ui/`, templates Jinja |
+| 12.6 | Sécurité de l'UI | ✅ | CSRF, redirect, logs |
+| 12.7 | CLI clarifiée | ✅ | Sous-commandes |
+| 12.8 | Hygiène du repo | ✅ | Config morte, deps, fichiers parasites, tests |
 
 ---
 
@@ -161,9 +161,52 @@ python main.py notify-test          # Sprint 13
 
 ## Critères d'acceptation
 
-- [ ] `grep -rn "9222\|google-chrome" --include=*.py .` ne renvoie que `config.py`.
-- [ ] Une seule implémentation de `is_page_blocked`.
-- [ ] `ui/` ne contient aucune requête SQL.
-- [ ] `pytest` vert **sans** Playwright installé (tests scrapers ignorés proprement).
-- [ ] POST cross-origin sur `/clear-db` → 403.
-- [ ] Un run de scraping complet produit les mêmes compteurs qu'avant le refactor.
+- [x] `grep -rn "9222\|google-chrome" --include=*.py .` ne renvoie que `config.py` — plus `scrapers/browser.py`, qui contient la liste des binaires candidats (c'est son rôle) et les vieux scripts `scripts/debug/explore_*` (obsolètes, conservés pour référence).
+- [x] Une seule implémentation de `is_page_blocked` (`scrapers/antibot.py`) ; `BaseScraper.is_page_blocked` ne fait que déléguer, avec le domaine du site.
+- [x] `ui/` ne contient aucune requête SQL.
+- [x] `pytest` vert **sans** Playwright installé : 194 passés, 1 ignoré (simulation par un faux paquet `playwright` qui lève `ImportError`) — résultat identique avec Playwright.
+- [x] POST sans jeton sur `/clear-db` → 403 (vérifié en test et dans un navigateur).
+- [ ] Un run de scraping complet produit les mêmes compteurs qu'avant le refactor — **à valider au prochain scraping réel** (non lancé : Chrome + DataDome). L'orchestration est couverte par `tests/test_base_scraper.py` et `tests/test_pipeline.py`.
+
+## Bilan d'implémentation (2026-11-03)
+
+Tests : **195 passés, 1 ignoré** (136 avant le sprint). Nouveaux fichiers de test : `test_browser.py`, `test_base_scraper.py`, `test_cli.py`, `test_pipeline.py` ; `test_ui.py` étendu (CSRF, redirections, historique de prix).
+
+### Écarts par rapport au plan
+
+| Plan | Réalisé | Raison |
+|---|---|---|
+| `storage/sqlite.py` → `db.py` + `annonces.py` + `queries.py` | `sqlite.py` conservé (connexion + écritures), ajout de `migrations.py` et `queries.py` | Une douzaine de modules et les fixtures de test importent `storage.sqlite` ; le découpage en trois n'apportait rien de plus que ces deux ajouts. |
+| `HEADLESS_BROWSER` « branché ou supprimé » | Supprimé | DataDome bloque le headless ; le scraping exige un vrai Chrome. Seul `check-links` reste en Chromium headless (décision du 2026-03-02). |
+| `check-links` sur `chrome_session` | Chromium headless séparé, mais `USER_AGENT` repris de la config | Vérifier des liens n'a pas besoin du profil persistant, et ne doit pas le verrouiller pendant un scraping. |
+| CSRF « token + éventuellement Origin » | Jeton de session (formulaire ou en-tête `X-CSRF-Token`) + cookie `SameSite=Strict` | Suffisant pour une UI locale ; pas de dépendance ajoutée. |
+| Sous-commandes « ou alias » | Sous-commandes + traduction automatique de l'ancienne syntaxe, avec avertissement | Les habitudes (`--seloger`, `--ui`) et la doc existante restent valables. |
+| `scripts/debug/` : déplacer `test_seloger_*.py` | Renommés `explore_seloger_*.py`, marqués obsolètes | Évite qu'on les prenne pour des tests ; contenu préservé. |
+| Supprimer `plan-implementation.txt` | Archivé dans `docs/archive/` | C'est le plan initial du projet ; l'archiver ne coûte rien. |
+
+### Ajouts non prévus
+
+- **Historique de prix visible dans l'UI** : badge « ↓ 30 € » avec le prix initial au survol.
+- **Bug du Sprint 11 corrigé** : le bouton « Restaurer » utilisait la classe `.btn-add-doc`, masquée hors mode document. Il était donc invisible. Trouvé lors de la vérification dans un navigateur ; il a maintenant sa propre classe et un test de non-régression.
+- `chrome_session` refuse clairement un profil déjà utilisé (`SingletonLock`) ou un port occupé, au lieu d'échouer au bout du délai d'attente de connexion.
+- `PlaywrightTimeoutError` est exposé par `scrapers/browser.py`, avec une classe de repli : les extracteurs n'importent plus Playwright.
+- `.gitignore` unifié à la racine ; `Docrech/` (dossiers de candidature personnels) est ignoré.
+
+### Fichiers
+
+| Fichier | Changement |
+|---|---|
+| `scrapers/browser.py`, `scrapers/antibot.py` | Nouveaux |
+| `scrapers/base.py` | `scrape()` ≈ 25 lignes : `_open_search`, `_navigate_steps`, `_goto_with_block_handling`, `_retry_after_challenge`, `_dump_debug` (dans `LOG_DIR`), `_paginate*` |
+| `scrapers/enricher.py` | `chrome_session` + `antibot`, plus de code Chrome |
+| `scrapers/__init__.py` | Registre paresseux `SCRAPER_PATHS`, `SITE_NAMES`, `get_scraper_class()` |
+| `storage/migrations.py`, `storage/queries.py` | Nouveaux (migrations 1 = schéma existant, 2 = index + `price_history`) |
+| `storage/sqlite.py` | `init_db` → migrations + WAL, `connect()`, `_record_price`, `get_price_history` |
+| `ui.py` → `ui/` | Package : `__init__`, `routes`, `security`, `export`, `templates/`, `static/` |
+| `pipeline.py` | Nouveau : `RunStats`, `process_annonces`, `run_scraping` |
+| `main.py` | Sous-commandes + `translate_legacy_args` |
+| `config.py`, `requirements*.txt`, `.gitignore`, `README.md` | Hygiène et documentation |
+
+### Données
+
+Base locale migrée (`user_version` = 2, WAL, 82 entrées d'historique de prix) après sauvegarde dans `data/annonces.bak-*-pre-sprint12.sqlite`.

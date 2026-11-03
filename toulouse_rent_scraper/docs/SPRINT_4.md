@@ -29,7 +29,7 @@
   - Structure HTML des pages de détail
   - Mécanismes anti-bot (Captcha, rate limiting, User-Agent check)
   - Pagination (URL params ou bouton "Page suivante")
-- Capturer le HTML brut avec un script de debug (`debug_card_html_pap.py`)
+- Capturer le HTML brut avec un script de debug (`scripts/debug/capture_cards_pap.py`, sur le modèle des scripts existants)
 - Documenter les sélecteurs identifiés
 
 **Livrable** : Document `docs/pap_selectors.md` avec les sélecteurs validés.

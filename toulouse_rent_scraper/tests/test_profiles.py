@@ -50,7 +50,6 @@ class TestConfig:
         assert BLAGNAC.seloger_search_urls() == []
 
     def test_scrapers_follow_profile(self):
-        pytest.importorskip("playwright")
         from scrapers.leboncoin import LeBonCoinScraper
         from scrapers.seloger import SeLogerScraper
         assert LeBonCoinScraper(BLAGNAC).search_url() == BLAGNAC.leboncoin_search_url()
@@ -144,6 +143,8 @@ class TestStorage:
         self._insert("https://old/1", distance_enac_km=3.3)
         with sqlite3.connect(temp_db) as con:
             con.execute("DELETE FROM annonce_profiles")  # base d'avant le Sprint 14
+            con.execute("UPDATE annonces SET lat = NULL, lon = NULL")
+            con.execute("PRAGMA user_version = 0")       # base d'avant le versionnage
             con.execute(
                 "INSERT INTO geocoding_cache (address, latitude, longitude) VALUES ('Blagnac', 43.6, 1.39)"
             )

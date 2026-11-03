@@ -1,3 +1,5 @@
+# OBSOLÈTE — exploration initiale de SeLoger (anciennes URLs, Chromium sans profil).
+# Conservé pour référence ; utiliser scripts/debug/capture_cards_seloger.py.
 # test_quick_seloger.py
 # Test rapide pour diagnostiquer SeLoger
 

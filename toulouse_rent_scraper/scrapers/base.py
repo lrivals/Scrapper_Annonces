@@ -5,11 +5,9 @@
 
 import time
 import random
-import subprocess
 from abc import ABC, abstractmethod
 from typing import List, Dict, Optional
-
-from playwright.sync_api import sync_playwright, TimeoutError
+from urllib.parse import urlparse
 
 from config import (
     PAGE_LOAD_TIMEOUT,
@@ -18,11 +16,13 @@ from config import (
     MAX_DELAY_BETWEEN_REQUESTS,
     MIN_ACTION_DELAY,
     MAX_ACTION_DELAY,
-    BROWSER_PROFILE_DIR,
+    LOG_DIR,
     SEARCH_PROFILES,
     DEFAULT_PROFILE,
     SearchProfile,
 )
+from scrapers import antibot
+from scrapers.browser import chrome_session, BrowserError, PlaywrightTimeoutError
 from utils.logger import setup_logger
 
 
@@ -89,19 +89,11 @@ class BaseScraper(ABC):
 
     def blocked_domains(self) -> List[str]:
         """Domaines indiquant un blocage (DataDome, captcha, etc.)."""
-        return ["captcha-delivery.com", "datadome.co", "arkoselabs.com"]
+        return antibot.BLOCKED_DOMAINS
 
     def challenge_markers(self) -> List[str]:
         """Textes indiquant un challenge/blocage dans la page."""
-        return [
-            "activité suspecte",
-            "comportement du navigateur",
-            "vitesse surhumaine",
-            "accès temporairement restreint",
-            "non pas à un robot",
-            "we need to make sure",
-            "suspicious activity",
-        ]
+        return antibot.CHALLENGE_MARKERS
 
     # =========================
     # Simulation humaine
@@ -148,69 +140,17 @@ class BaseScraper(ABC):
     # =========================
 
     def is_page_blocked(self, page) -> bool:
-        """Détecte si la page est un challenge anti-bot."""
-        current_url = page.url
-        if any(domain in current_url for domain in self.blocked_domains()):
-            return True
-
-        site_domain = self.base_url().replace("https://", "").replace("http://", "").split("/")[0]
-        if site_domain not in current_url and current_url != "about:blank":
-            return True
-
-        # Vérifier le texte visible (inner_text)
-        try:
-            page_text = page.inner_text("body").lower()
-            if any(marker.lower() in page_text for marker in self.challenge_markers()):
-                return True
-        except Exception:
-            pass
-
-        # Fallback : vérifier le HTML brut (utile si le texte n'est pas encore rendu)
-        try:
-            html_content = page.content().lower()
-            if any(marker.lower() in html_content for marker in self.challenge_markers()):
-                return True
-        except Exception:
-            pass
-
-        # Vérifier le titre de la page
-        try:
-            title = page.title().lower()
-            block_titles = ["accès restreint", "blocked", "captcha", "restricted"]
-            if any(t in title for t in block_titles):
-                return True
-        except Exception:
-            pass
-
-        return False
+        """Détecte si la page est un challenge anti-bot (ou une redirection hors du site)."""
+        return antibot.is_page_blocked(
+            page,
+            site_domain=urlparse(self.base_url()).netloc,
+            blocked_domains=self.blocked_domains(),
+            markers=self.challenge_markers(),
+        )
 
     def wait_for_challenge(self, page, timeout_seconds=180) -> bool:
         """Attend la résolution manuelle d'un challenge. Retourne True si résolu."""
-        if not self.is_page_blocked(page):
-            return True
-
-        self.logger.warning("=" * 60)
-        self.logger.warning("CHALLENGE ANTI-BOT DETECTE !")
-        self.logger.warning("Resolvez le captcha dans la fenetre Chrome.")
-        self.logger.warning(f"Vous avez {timeout_seconds}s...")
-        self.logger.warning("=" * 60)
-
-        start = time.time()
-        while time.time() - start < timeout_seconds:
-            time.sleep(3)
-            try:
-                if not self.is_page_blocked(page):
-                    self.logger.info("Challenge resolu ! Reprise du scraping...")
-                    time.sleep(2)
-                    return True
-                remaining = int(timeout_seconds - (time.time() - start))
-                if remaining % 15 == 0:
-                    self.logger.info(f"En attente de resolution... ({remaining}s restantes)")
-            except Exception:
-                continue
-
-        self.logger.error("Timeout : challenge non resolu")
-        return False
+        return antibot.wait_for_challenge(page, timeout_seconds, is_blocked=self.is_page_blocked)
 
     # =========================
     # Gestion cookies
@@ -291,6 +231,7 @@ class BaseScraper(ABC):
         """Teste les sélecteurs et retourne le premier qui fonctionne."""
         for selector in [self.card_selector()] + self.fallback_card_selectors():
             try:
+                self.logger.debug(f"Tentative avec selecteur: {selector}")
                 page.wait_for_selector(selector, timeout=10000)
                 return selector
             except Exception:
@@ -351,209 +292,171 @@ class BaseScraper(ABC):
             return self.results
         self.logger.info(f"Demarrage scraping {self.site_name()} — profil {self.profile.label}")
 
-        BROWSER_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
-
-        chrome_proc = None
         try:
-            with sync_playwright() as p:
-                chrome_cmd = [
-                    "google-chrome",
-                    "--remote-debugging-port=9222",
-                    f"--user-data-dir={BROWSER_PROFILE_DIR}",
-                    "--no-first-run",
-                    "--no-default-browser-check",
-                    "--window-size=1920,1080",
-                ]
-
-                self.logger.info("Lancement de Chrome avec port de debug...")
-                chrome_proc = subprocess.Popen(
-                    chrome_cmd,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-                time.sleep(3)
-
-                self.logger.info("Connexion a Chrome via CDP...")
-                browser = p.chromium.connect_over_cdp("http://localhost:9222")
-
-                context = browser.contexts[0]
-                page = context.pages[0] if context.pages else context.new_page()
-
-                try:
-                    # Navigation progressive étape par étape
-                    steps = self.navigation_steps()
-                    for i, step in enumerate(steps):
-                        url = step["url"]
-                        label = step["label"]
-
-                        if i > 0:
-                            self.random_delay()
-
-                        self.logger.info(f"Etape {i+1}/{len(steps)} : {label} ({url[:80]}...)")
-                        try:
-                            page.goto(
-                                url,
-                                timeout=PAGE_LOAD_TIMEOUT,
-                                wait_until='domcontentloaded',
-                            )
-                        except Exception as nav_err:
-                            err_str = str(nav_err)
-                            if "ERR_BLOCKED_BY_RESPONSE" in err_str or "blocked" in err_str.lower():
-                                self.logger.warning(f"Blocage HTTP detecte a l'etape {i+1}. Attente...")
-                                # Tenter de naviguer quand même (la page peut afficher un challenge)
-                                time.sleep(5)
-                                if not self.wait_for_challenge(page, timeout_seconds=300):
-                                    browser.close()
-                                    return self.results
-                                # Re-tenter la navigation
-                                try:
-                                    page.goto(url, timeout=PAGE_LOAD_TIMEOUT, wait_until='domcontentloaded')
-                                except Exception:
-                                    self.logger.error(f"Impossible de naviguer vers {label} apres deblocage")
-                                    browser.close()
-                                    return self.results
-                            else:
-                                raise
-
-                        time.sleep(random.uniform(3, 5))
-
-                        if not self.wait_for_challenge(page):
-                            browser.close()
-                            return self.results
-
-                        self.human_mouse_move(page)
-                        if i == 0:
-                            self.handle_cookie_consent(page)
-                        self.action_delay()
-                        self.human_scroll(page)
-
-                    # Détection des cartes d'annonces
-                    selectors_to_try = [self.card_selector()] + self.fallback_card_selectors()
-                    working_selector = None
-
-                    for selector in selectors_to_try:
-                        try:
-                            self.logger.debug(f"Tentative avec selecteur: {selector}")
-                            page.wait_for_selector(selector, timeout=10000)
-                            working_selector = selector
-                            self.logger.info(f"Page chargee avec succes (selecteur: {selector})")
-                            break
-                        except Exception:
-                            continue
-
-                    if not working_selector:
-                        # Re-vérifier si c'est un blocage (le JS peut avoir rendu entre-temps)
-                        if self.is_page_blocked(page):
-                            self.logger.warning("Blocage detecte apres echec des selecteurs")
-                            if self.wait_for_challenge(page):
-                                # Challenge résolu, re-tenter la recherche des sélecteurs
-                                page.reload(wait_until='domcontentloaded')
-                                time.sleep(random.uniform(3, 5))
-                                for selector in selectors_to_try:
-                                    try:
-                                        page.wait_for_selector(selector, timeout=10000)
-                                        working_selector = selector
-                                        self.logger.info(f"Page chargee apres challenge (selecteur: {selector})")
-                                        break
-                                    except Exception:
-                                        continue
-
-                    if not working_selector:
-                        self.logger.error("Aucun selecteur d'annonce trouve")
-                        page.screenshot(path=f"logs/debug_{self.site_name().lower()}_screenshot.png")
-                        with open(f"logs/debug_{self.site_name().lower()}_page.html", "w", encoding="utf-8") as f:
-                            f.write(page.content())
-                        browser.close()
-                        return self.results
-
-                except TimeoutError:
-                    self.logger.error("Timeout au chargement initial")
-                    try:
-                        page.screenshot(path=f"logs/debug_{self.site_name().lower()}_timeout.png")
-                    except Exception:
-                        pass
-                    browser.close()
-                    return self.results
-
-                # Scraper la première page (déjà chargée)
-                self._scrape_current_page(page, working_selector, page_num=1)
-
-                # Pages suivantes — via URLs directes ou bouton "suivant"
-                all_urls = self.search_urls()
-                use_direct_urls = len(all_urls) > 1
-
-                if use_direct_urls:
-                    # Pagination par URLs directes (pages 2, 3, ...)
-                    for page_num, url in enumerate(all_urls[1:], start=2):
-                        if page_num > MAX_PAGES_PER_SITE:
-                            break
-
-                        self.human_mouse_move(page)
-                        self.random_delay()
-
-                        self.logger.info(f"Navigation vers page {page_num} (URL directe)")
-                        try:
-                            page.goto(url, timeout=PAGE_LOAD_TIMEOUT, wait_until='domcontentloaded')
-                        except Exception as nav_err:
-                            self.logger.warning(f"Erreur navigation page {page_num}: {nav_err}")
-                            break
-
-                        time.sleep(random.uniform(3, 5))
-
-                        if self.is_page_blocked(page):
-                            self.logger.warning(f"Blocage detecte page {page_num}, arret")
-                            if not self.wait_for_challenge(page):
-                                break
-
-                        self.handle_cookie_consent(page)
-                        self.human_scroll(page)
-
-                        working_selector = self._find_working_selector(page)
-                        if not working_selector:
-                            self.logger.warning(f"Aucun selecteur trouve page {page_num}, arret")
-                            break
-
-                        self._scrape_current_page(page, working_selector, page_num)
-                else:
-                    # Pagination par bouton "suivant"
-                    current_page = 1
-                    while current_page < MAX_PAGES_PER_SITE:
-                        try:
-                            next_button = page.query_selector(self.next_page_selector())
-                            if not next_button:
-                                self.logger.info("Pas de page suivante, fin de la pagination")
-                                break
-
-                            self.human_mouse_move(page)
-                            self.random_delay()
-
-                            current_page += 1
-                            self.logger.debug("Clic sur 'page suivante'...")
-                            next_button.click()
-                            page.wait_for_selector(working_selector, timeout=PAGE_LOAD_TIMEOUT)
-
-                            if not self.wait_for_challenge(page):
-                                break
-
-                            time.sleep(random.uniform(1, 3))
-                            self.human_scroll(page)
-
-                            self._scrape_current_page(page, working_selector, current_page)
-
-                        except TimeoutError:
-                            self.logger.warning("Timeout lors de la pagination, arret")
-                            break
-                        except Exception as e:
-                            self.logger.error(f"Erreur lors de la pagination : {e}")
-                            break
-
-                browser.close()
-
+            with chrome_session() as (_browser, page):
+                selector = self._open_search(page)
+                if selector:
+                    self._scrape_current_page(page, selector, page_num=1)
+                    self._paginate(page, selector)
+        except BrowserError as e:
+            self.logger.error(f"Navigateur indisponible : {e}")
         except Exception as e:
             self.logger.error(f"Erreur critique lors du scraping : {e}", exc_info=True)
-        finally:
-            if chrome_proc:
-                chrome_proc.terminate()
 
         self.logger.info(f"Scraping termine : {len(self.results)} annonces au total")
         return self.results
+
+    def _open_search(self, page) -> Optional[str]:
+        """Navigation jusqu'aux résultats. Retourne le sélecteur de cartes, ou None si échec."""
+        try:
+            if not self._navigate_steps(page):
+                return None
+            selector = self._find_working_selector(page) or self._retry_after_challenge(page)
+            if not selector:
+                self.logger.error("Aucun selecteur d'annonce trouve")
+                self._dump_debug(page, "page")
+                return None
+            self.logger.info(f"Page chargee avec succes (selecteur: {selector})")
+            return selector
+        except PlaywrightTimeoutError:
+            self.logger.error("Timeout au chargement initial")
+            self._dump_debug(page, "timeout", html=False)
+            return None
+
+    def _navigate_steps(self, page) -> bool:
+        """Navigation progressive (accueil → recherche). False si bloqué sans résolution."""
+        steps = self.navigation_steps()
+        for i, step in enumerate(steps):
+            url, label = step["url"], step["label"]
+            if i > 0:
+                self.random_delay()
+
+            self.logger.info(f"Etape {i+1}/{len(steps)} : {label} ({url[:80]}...)")
+            if not self._goto_with_block_handling(page, url, label):
+                return False
+
+            time.sleep(random.uniform(3, 5))
+            if not self.wait_for_challenge(page):
+                return False
+
+            self.human_mouse_move(page)
+            if i == 0:
+                self.handle_cookie_consent(page)
+            self.action_delay()
+            self.human_scroll(page)
+        return True
+
+    def _goto_with_block_handling(self, page, url: str, label: str) -> bool:
+        try:
+            page.goto(url, timeout=PAGE_LOAD_TIMEOUT, wait_until="domcontentloaded")
+            return True
+        except Exception as nav_err:
+            err_str = str(nav_err)
+            if "ERR_BLOCKED_BY_RESPONSE" not in err_str and "blocked" not in err_str.lower():
+                raise
+        # Blocage HTTP : la page peut afficher un challenge à résoudre à la main
+        self.logger.warning(f"Blocage HTTP detecte ({label}). Attente...")
+        time.sleep(5)
+        if not self.wait_for_challenge(page, timeout_seconds=300):
+            return False
+        try:
+            page.goto(url, timeout=PAGE_LOAD_TIMEOUT, wait_until="domcontentloaded")
+            return True
+        except Exception:
+            self.logger.error(f"Impossible de naviguer vers {label} apres deblocage")
+            return False
+
+    def _retry_after_challenge(self, page) -> Optional[str]:
+        """Les sélecteurs ont échoué : si c'est un challenge (rendu tardif), attendre puis réessayer."""
+        if not self.is_page_blocked(page):
+            return None
+        self.logger.warning("Blocage detecte apres echec des selecteurs")
+        if not self.wait_for_challenge(page):
+            return None
+        page.reload(wait_until="domcontentloaded")
+        time.sleep(random.uniform(3, 5))
+        return self._find_working_selector(page)
+
+    def _dump_debug(self, page, suffix: str, html: bool = True):
+        """Capture écran (+ HTML) dans LOG_DIR pour diagnostiquer un changement de page."""
+        base = LOG_DIR / f"debug_{self.site_name().lower()}_{suffix}"
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        try:
+            page.screenshot(path=str(base.with_suffix(".png")))
+            if html:
+                base.with_suffix(".html").write_text(page.content(), encoding="utf-8")
+            self.logger.info(f"Capture de debug : {base}.*")
+        except Exception as e:
+            self.logger.debug(f"Capture de debug impossible : {e}")
+
+    def _paginate(self, page, selector: str):
+        """Pages suivantes : URLs directes si fournies, sinon bouton « suivant »."""
+        urls = self.search_urls()
+        if len(urls) > 1:
+            self._paginate_by_urls(page, urls[1:])
+        else:
+            self._paginate_by_button(page, selector)
+
+    def _paginate_by_urls(self, page, urls: List[str]):
+        for page_num, url in enumerate(urls, start=2):
+            if page_num > MAX_PAGES_PER_SITE:
+                break
+
+            self.human_mouse_move(page)
+            self.random_delay()
+
+            self.logger.info(f"Navigation vers page {page_num} (URL directe)")
+            try:
+                page.goto(url, timeout=PAGE_LOAD_TIMEOUT, wait_until="domcontentloaded")
+            except Exception as nav_err:
+                self.logger.warning(f"Erreur navigation page {page_num}: {nav_err}")
+                break
+
+            time.sleep(random.uniform(3, 5))
+
+            if self.is_page_blocked(page):
+                self.logger.warning(f"Blocage detecte page {page_num}")
+                if not self.wait_for_challenge(page):
+                    break
+
+            self.handle_cookie_consent(page)
+            self.human_scroll(page)
+
+            selector = self._find_working_selector(page)
+            if not selector:
+                self.logger.warning(f"Aucun selecteur trouve page {page_num}, arret")
+                break
+
+            self._scrape_current_page(page, selector, page_num)
+
+    def _paginate_by_button(self, page, selector: str):
+        current_page = 1
+        while current_page < MAX_PAGES_PER_SITE:
+            try:
+                next_button = page.query_selector(self.next_page_selector())
+                if not next_button:
+                    self.logger.info("Pas de page suivante, fin de la pagination")
+                    break
+
+                self.human_mouse_move(page)
+                self.random_delay()
+
+                current_page += 1
+                self.logger.debug("Clic sur 'page suivante'...")
+                next_button.click()
+                page.wait_for_selector(selector, timeout=PAGE_LOAD_TIMEOUT)
+
+                if not self.wait_for_challenge(page):
+                    break
+
+                time.sleep(random.uniform(1, 3))
+                self.human_scroll(page)
+
+                self._scrape_current_page(page, selector, current_page)
+
+            except PlaywrightTimeoutError:
+                self.logger.warning("Timeout lors de la pagination, arret")
+                break
+            except Exception as e:
+                self.logger.error(f"Erreur lors de la pagination : {e}")
+                break

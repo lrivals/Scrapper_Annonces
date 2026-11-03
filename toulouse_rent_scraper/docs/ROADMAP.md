@@ -31,7 +31,7 @@ Sprint 11 (Fiabilité des données)          ✅
     ↓
 Sprint 14 (Profils multiples : ENAC + Blagnac) ✅
     ↓
-Sprint 12 (Refactor & sécurité)
+Sprint 12 (Refactor & sécurité)            ✅
     ↓
 Sprint 13 (Alerte & priorisation)
     ↓
@@ -59,7 +59,7 @@ Sprint 2-bis (API REST & Dashboard)
 | 10 | Vue Carte OpenStreetMap | ✅ Terminé | 6/6 | 2026-03-25 | 2026-03-25 |
 | 11 | Fiabilité des données (bugs audit) | ✅ Terminé | 7/7 (2 validations manuelles SeLoger) | 2026-11-03 | 2026-11-03 |
 | 14 | Profils de recherche (ENAC + Blagnac) | ✅ Terminé | 8/8 (URL SeLoger Blagnac à capturer) | 2026-11-03 | 2026-11-03 |
-| 12 | Refactor & sécurité | 🔲 À faire | 0/8 | — | — |
+| 12 | Refactor & sécurité | ✅ Terminé | 8/8 (compteurs à revalider au prochain scraping réel) | 2026-11-03 | 2026-11-03 |
 | 13 | Alerte & priorisation | 🔲 À faire | 0/5 | — | — |
 | 4 | Scraper PAP.fr | 🔲 À faire | 0/6 | — | — |
 | 5 | Rapports Markdown avancés | 🔲 À faire | 0/6 | — | — |
@@ -110,14 +110,14 @@ Nouveau cas d'usage : appartement ≈ 700 € (550–750 €, T1–T3) à ≤ 8 
 
 | # | Tâche | Statut | Notes |
 |---|-------|--------|-------|
-| 12.1 | `scrapers/browser.py` | 🔲 | Session Chrome unique (3 copies aujourd'hui) |
-| 12.2 | `scrapers/antibot.py` | 🔲 | Détection challenge unique |
-| 12.3 | Découpage `BaseScraper.scrape()` | 🔲 | ~210 lignes → orchestrateur |
-| 12.4 | Migrations versionnées, index, historique prix | 🔲 | `PRAGMA user_version`, `price_history` |
-| 12.5 | Découpage UI | 🔲 | `ui/` + templates Jinja |
-| 12.6 | Sécurité UI | 🔲 | CSRF, open redirect |
-| 12.7 | CLI en sous-commandes | 🔲 | `pipeline.py` |
-| 12.8 | Hygiène du repo | 🔲 | Config morte, deps, tests sans Playwright |
+| 12.1 | `scrapers/browser.py` | ✅ | Session Chrome unique (remplace 3 copies) |
+| 12.2 | `scrapers/antibot.py` | ✅ | Détection challenge unique |
+| 12.3 | Découpage `BaseScraper.scrape()` | ✅ | ~210 lignes → orchestrateur |
+| 12.4 | Migrations versionnées, index, historique prix | ✅ | `PRAGMA user_version`, `price_history` |
+| 12.5 | Découpage UI | ✅ | `ui/` + templates Jinja |
+| 12.6 | Sécurité UI | ✅ | CSRF, open redirect |
+| 12.7 | CLI en sous-commandes | ✅ | `pipeline.py` |
+| 12.8 | Hygiène du repo | ✅ | Config morte, deps, tests sans Playwright |
 
 ---
 
@@ -335,7 +335,7 @@ Tâches originellement prévues en Sprint 2, reportées.
 | 2026-02-09 | Colonne `status` (active/expired) | Migration auto, purge via HEAD request |
 | 2026-02-09 | MIN_RENT_EUR = 50 | Filtrer garages et prix aberrants (11-21€) |
 | 2026-03-02 | Flask plutôt que FastAPI+Streamlit | Périmètre "petite interface" — 1 fichier, 0 dépendance lourde |
-| 2026-03-02 | Template HTML embarqué dans `ui.py` | Pas de dossier templates/, tout en un fichier |
+| 2026-03-02 | Template HTML embarqué dans `ui.py` | Pas de dossier templates/, tout en un fichier — **remplacé le 2026-11-03** par le package `ui/` (Sprint 12) |
 | 2026-03-02 | Imports lazy dans `main.py` | `--ui` et `--check-links` sans playwright installé |
 | 2026-03-02 | Playwright headless pour link check | Les SPAs (SeLoger, LBC) bloquent `requests.head()` — faux positifs garantis |
 | 2026-03-02 | `--purge` déprécié pour SPAs | Marqué avec avertissement dans `cleaner.py`, remplacé par `--check-links` |
@@ -348,6 +348,10 @@ Tâches originellement prévues en Sprint 2, reportées.
 | 2026-03-25 | `COALESCE(photos, ?)` dans `insert_annonce` | Empêche d'écraser les photos complètes (enrichissement Sprint 3) lors d'un re-scraping de la liste |
 | 2026-03-25 | Leaflet.js via CDN pour la carte | Aucune clé API, tuiles OSM gratuites, aucune dépendance Python supplémentaire — `L.divIcon` pour les marqueurs personnalisés |
 | 2026-03-25 | LEFT JOIN `geocoding_cache` pour les coords carte | Réutilise le cache existant sans nouvelle colonne en base — les annonces sans entrée cache sont comptabilisées mais non affichées |
+| 2026-11-03 | Package `ui/` (templates Jinja + statiques) | `ui.py` dépassait 1400 lignes ; le SQL passe dans `storage/queries.py` |
+| 2026-11-03 | Migrations versionnées (`PRAGMA user_version`) + WAL | Schéma rejoué une seule fois ; l'UI peut lire pendant un scraping |
+| 2026-11-03 | Jeton CSRF de session sur l'UI | Une page web quelconque pouvait vider la base via `localhost:5000/clear-db` |
+| 2026-11-03 | CLI en sous-commandes, ancienne syntaxe traduite | Clarté (`scrape`, `enrich`, `ui`…) sans casser les habitudes |
 | 2026-11-03 | Masquage global plutôt que par profil | Budgets ENAC (≤ 500 €) et Blagnac (≥ 550 €) disjoints — une annonce ne matche jamais les deux |
 | 2026-11-03 | Profils de recherche (Sprint 14) juste après le Sprint 11 | Nouveau besoin Blagnac ≈ 700 € ; table `annonce_profiles` plutôt qu'une colonne `profile` car une annonce peut matcher plusieurs cibles |
 | 2026-11-03 | Sprints 11→13 avant PAP.fr | Audit : bugs de données (prix, statuts, géocodage) et code Chrome dupliqué à corriger avant d'ajouter une 3ᵉ source — voir [AUDIT_2026-11.md](AUDIT_2026-11.md) |
@@ -359,7 +363,7 @@ Tâches originellement prévues en Sprint 2, reportées.
 | Risque | Impact | Mitigation |
 |--------|--------|------------|
 | DataDome (LBC) bloque l'IP | Haut | Profil Chrome persistant, délais longs, limite de runs |
-| Changement de sélecteurs HTML | Moyen | Scripts de debug (`debug_card_html_*.py`), tests réguliers |
+| Changement de sélecteurs HTML | Moyen | Scripts de debug (`scripts/debug/capture_cards_*.py`), tests réguliers |
 | Nominatim rate-limited (géocodage) | Faible | Cache local, coordonnées ENAC en dur |
 | Trop de requêtes enrichissement | Moyen | `--limit` configurable, délais 5-10s |
 | `--purge` (requests) sur SPAs | Haut | **Résolu** — utiliser `--check-links` à la place |

@@ -5,6 +5,7 @@
 
 import json
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -23,113 +24,32 @@ def get_connection():
     return sqlite3.connect(DB_PATH)
 
 
-def init_db():
+@contextmanager
+def connect(row_factory=sqlite3.Row):
+    """Connexion courte : commit en sortie (rollback si erreur), toujours fermée."""
     conn = get_connection()
-    cur = conn.cursor()
+    conn.row_factory = row_factory
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS annonces (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            site TEXT,
-            title TEXT,
-            price INTEGER,
-            location_raw TEXT,
-            distance_enac_km REAL,
-            url TEXT UNIQUE,
-            scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
 
-    # Migrations
-    cur.execute("PRAGMA table_info(annonces)")
-    columns = [row[1] for row in cur.fetchall()]
+def init_db():
+    """Crée/met à jour le schéma (migrations versionnées) et active le mode WAL."""
+    from storage.migrations import migrate
 
-    if "created_at" not in columns:
-        cur.execute("ALTER TABLE annonces ADD COLUMN created_at TIMESTAMP")
-        cur.execute("UPDATE annonces SET created_at = scraped_at WHERE created_at IS NULL")
-
-    if "status" not in columns:
-        cur.execute("ALTER TABLE annonces ADD COLUMN status TEXT DEFAULT 'active'")
-        cur.execute("UPDATE annonces SET status = 'active' WHERE status IS NULL")
-
-    if "checked_at" not in columns:
-        cur.execute("ALTER TABLE annonces ADD COLUMN checked_at TIMESTAMP")
-
-    # Sprint 11 — lien vers l'annonce d'origine (même bien publié sur un autre site)
-    if "duplicate_of" not in columns:
-        cur.execute("ALTER TABLE annonces ADD COLUMN duplicate_of INTEGER")
-
-    # Sprint 14 — coordonnées (distance recalculable vers n'importe quelle cible)
-    for col in ("lat", "lon"):
-        if col not in columns:
-            cur.execute(f"ALTER TABLE annonces ADD COLUMN {col} REAL")
-
-    # Sprint 3 — colonnes enrichissement
-    enrichment_columns = {
-        "surface_m2": "REAL",
-        "nb_rooms": "INTEGER",
-        "nb_bedrooms": "INTEGER",
-        "floor": "INTEGER",
-        "description": "TEXT",
-        "charges": "INTEGER",
-        "deposit": "INTEGER",
-        "furnished": "BOOLEAN",
-        "dpe_rating": "TEXT",
-        "photos": "TEXT",
-        "publisher_type": "TEXT",
-        "published_at": "TEXT",
-        "enriched_at": "TIMESTAMP",
-        "enrichment_status": "TEXT DEFAULT 'pending'",
-    }
-
-    for col_name, col_type in enrichment_columns.items():
-        if col_name not in columns:
-            cur.execute(f"ALTER TABLE annonces ADD COLUMN {col_name} {col_type}")
-
-    # Mettre enrichment_status à 'pending' pour les annonces existantes sans statut
-    cur.execute("UPDATE annonces SET enrichment_status = 'pending' WHERE enrichment_status IS NULL")
-
-    # Cache géocodage persistant
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS geocoding_cache (
-            address TEXT PRIMARY KEY,
-            latitude REAL,
-            longitude REAL,
-            cached_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-
-    # Sprint 14 — pertinence d'une annonce pour chaque profil de recherche
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS annonce_profiles (
-            annonce_id  INTEGER NOT NULL REFERENCES annonces(id) ON DELETE CASCADE,
-            profile     TEXT    NOT NULL,
-            distance_km REAL,
-            matched_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (annonce_id, profile)
-        )
-    """)
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_annonce_profiles_profile ON annonce_profiles(profile)")
-
-    # Annonces antérieures aux profils : rattachées au profil historique ENAC
-    cur.execute("""
-        INSERT OR IGNORE INTO annonce_profiles (annonce_id, profile, distance_km, matched_at)
-        SELECT a.id, 'enac', a.distance_enac_km, COALESCE(a.created_at, CURRENT_TIMESTAMP)
-        FROM annonces a
-        WHERE NOT EXISTS (SELECT 1 FROM annonce_profiles ap WHERE ap.annonce_id = a.id)
-    """)
-
-    # Coordonnées manquantes : reprises du cache de géocodage
-    cur.execute("""
-        UPDATE annonces SET
-            lat = (SELECT g.latitude FROM geocoding_cache g WHERE g.address = annonces.location_raw),
-            lon = (SELECT g.longitude FROM geocoding_cache g WHERE g.address = annonces.location_raw)
-        WHERE lat IS NULL AND location_raw IS NOT NULL
-    """)
-
-    conn.commit()
-    conn.close()
+    conn = get_connection()
+    try:
+        # WAL : l'UI peut lire pendant qu'un scraping écrit (réglage persistant dans le fichier)
+        conn.execute("PRAGMA journal_mode=WAL")
+        migrate(conn)
+    finally:
+        conn.close()
 
 
 def annonce_exists(url: str) -> bool:
@@ -159,11 +79,11 @@ def insert_annonce(annonce: Dict) -> str:
     conn = get_connection()
     cur = conn.cursor()
 
-    cur.execute("SELECT price, COALESCE(status, 'active') FROM annonces WHERE url = ?", (url,))
+    cur.execute("SELECT id, price, COALESCE(status, 'active') FROM annonces WHERE url = ?", (url,))
     row = cur.fetchone()
 
     if row is not None:
-        existing_price, existing_status = row
+        annonce_id, existing_price, existing_status = row
         new_price = annonce.get("price")
         price_changed = new_price is not None and new_price != existing_price
 
@@ -194,6 +114,8 @@ def insert_annonce(annonce: Dict) -> str:
                 url,
             ),
         )
+        if price_changed:
+            _record_price(cur, annonce_id, new_price, now)
         conn.commit()
         conn.close()
 
@@ -228,10 +150,29 @@ def insert_annonce(annonce: Dict) -> str:
         annonce.get("lat"),
         annonce.get("lon"),
     ))
+    if annonce.get("price") is not None:
+        _record_price(cur, cur.lastrowid, annonce["price"], now)
 
     conn.commit()
     conn.close()
     return "new"
+
+
+def _record_price(cur: sqlite3.Cursor, annonce_id: int, price: int, seen_at: str):
+    cur.execute(
+        "INSERT INTO price_history (annonce_id, price, seen_at) VALUES (?, ?, ?)",
+        (annonce_id, price, seen_at),
+    )
+
+
+def get_price_history(annonce_id: int) -> List[Dict]:
+    """Prix successifs d'une annonce, du plus ancien au plus récent."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT price, seen_at FROM price_history WHERE annonce_id = ? ORDER BY seen_at, id",
+            (annonce_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def upsert_annonce_profile(url: str, profile: str, distance_km: Optional[float]) -> bool:
@@ -393,6 +334,7 @@ def clear_db() -> int:
     count = cur.fetchone()[0]
     cur.execute("DELETE FROM annonces")
     cur.execute("DELETE FROM annonce_profiles")
+    cur.execute("DELETE FROM price_history")
     conn.commit()
     conn.close()
     return count

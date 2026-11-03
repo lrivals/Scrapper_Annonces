@@ -1,24 +1,18 @@
 """Debug script: save HTML of first LeBonCoin cards to inspect structure."""
+import sys
 import time
-import subprocess
 from pathlib import Path
-from playwright.sync_api import sync_playwright
-from config import LEBONCOIN_BASE_URL, LEBONCOIN_SEARCH_URL, BROWSER_PROFILE_DIR
 
-BROWSER_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-chrome_proc = subprocess.Popen(
-    ["google-chrome", "--remote-debugging-port=9222",
-     f"--user-data-dir={BROWSER_PROFILE_DIR}",
-     "--no-first-run", "--no-default-browser-check", "--window-size=1920,1080"],
-    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-)
-time.sleep(3)
+from config import LEBONCOIN_BASE_URL, LOG_DIR, SEARCH_PROFILES  # noqa: E402
+from scrapers.browser import chrome_session  # noqa: E402
 
-with sync_playwright() as p:
-    browser = p.chromium.connect_over_cdp("http://localhost:9222")
-    ctx = browser.contexts[0]
-    page = ctx.pages[0] if ctx.pages else ctx.new_page()
+# Usage : python scripts/debug/capture_cards_leboncoin.py [profil]   (défaut : enac)
+PROFILE = SEARCH_PROFILES[sys.argv[1] if len(sys.argv) > 1 else "enac"]
+SEARCH_URL = PROFILE.leboncoin_search_url()
+
+with chrome_session() as (browser, page):
 
     # Etape 1: page d'accueil
     print("Etape 1: page d'accueil...")
@@ -41,23 +35,19 @@ with sync_playwright() as p:
     body_text = page.inner_text("body").lower()
     if "vitesse surhumaine" in body_text or "temporairement restreint" in body_text:
         print("BLOQUE par DataDome! Attends que le blocage se leve.")
-        browser.close()
-        chrome_proc.terminate()
-        exit(1)
+        sys.exit(1)  # chrome_session ferme Chrome
 
     # Etape 2: page de recherche
-    print(f"Etape 2: recherche ({LEBONCOIN_SEARCH_URL[:80]}...)")
+    print(f"Etape 2: recherche ({SEARCH_URL[:80]}...)")
     time.sleep(3)
-    page.goto(LEBONCOIN_SEARCH_URL, timeout=60000, wait_until="domcontentloaded")
+    page.goto(SEARCH_URL, timeout=60000, wait_until="domcontentloaded")
     time.sleep(5)
 
     # Re-verifier blocage
     body_text = page.inner_text("body").lower()
     if "vitesse surhumaine" in body_text or "temporairement restreint" in body_text:
         print("BLOQUE par DataDome apres navigation!")
-        browser.close()
-        chrome_proc.terminate()
-        exit(1)
+        sys.exit(1)  # chrome_session ferme Chrome
 
     # Scroll pour charger les cartes lazy-loaded
     print("Scroll pour lazy-loading...")
@@ -89,12 +79,12 @@ with sync_playwright() as p:
 
     if not cards:
         print("Aucune carte trouvee. Sauvegarde de la page entiere pour debug...")
-        with open("logs/debug_lbc_fullpage.html", "w", encoding="utf-8") as f:
+        with open(LOG_DIR / "debug_lbc_fullpage.html", "w", encoding="utf-8") as f:
             f.write(page.content())
-        page.screenshot(path="logs/debug_lbc_screenshot.png")
-        print("Sauvegarde dans logs/debug_lbc_fullpage.html et logs/debug_lbc_screenshot.png")
+        page.screenshot(path=str(LOG_DIR / "debug_lbc_screenshot.png"))
+        print(f"Sauvegarde dans {LOG_DIR}/debug_lbc_fullpage.html et debug_lbc_screenshot.png")
     else:
-        output = Path("logs/debug_leboncoin_cards.html")
+        output = LOG_DIR / "debug_leboncoin_cards.html"
         with open(output, "w", encoding="utf-8") as f:
             for i, card in enumerate(cards[:5]):
                 html = card.evaluate("el => el.outerHTML")
@@ -131,6 +121,4 @@ with sync_playwright() as p:
 
         print(f"\nSaved to {output}")
 
-    browser.close()
 
-chrome_proc.terminate()

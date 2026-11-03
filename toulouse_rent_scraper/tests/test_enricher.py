@@ -3,8 +3,17 @@
 # Tests pour le pipeline d'enrichissement
 # =========================
 
+from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 import pytest
+
+
+def _fake_session(page):
+    """Remplace chrome_session : aucun Chrome lancé, yield (browser, page)."""
+    @contextmanager
+    def session(*args, **kwargs):
+        yield MagicMock(), page
+    return session
 
 
 class TestEnrichAnnonces:
@@ -47,19 +56,8 @@ class TestEnrichAnnonces:
         mock_page.url = "https://seloger.com/test/enricher/1"
         mock_page.goto.return_value = None
 
-        mock_context = MagicMock()
-        mock_context.pages = [mock_page]
-        mock_browser = MagicMock()
-        mock_browser.contexts = [mock_context]
-
-        mock_playwright = MagicMock()
-        mock_playwright.__enter__ = MagicMock(return_value=mock_playwright)
-        mock_playwright.__exit__ = MagicMock(return_value=False)
-        mock_playwright.chromium.connect_over_cdp.return_value = mock_browser
-
-        with patch("scrapers.enricher.subprocess.Popen"), \
-             patch("scrapers.enricher.sync_playwright", return_value=mock_playwright), \
-             patch("scrapers.enricher._is_page_blocked", return_value=False), \
+        with patch("scrapers.enricher.chrome_session", _fake_session(mock_page)), \
+             patch("scrapers.enricher.is_page_blocked", return_value=False), \
              patch("scrapers.detail_extractors.seloger_detail.extract_detail", return_value=fake_detail):
             from scrapers.enricher import enrich_annonces
             result = enrich_annonces(limit=10)
@@ -97,19 +95,8 @@ class TestEnrichAnnonces:
         mock_page.url = "https://www.leboncoin.fr/ad/locations/enricher/1"
         mock_page.goto.return_value = None
 
-        mock_context = MagicMock()
-        mock_context.pages = [mock_page]
-        mock_browser = MagicMock()
-        mock_browser.contexts = [mock_context]
-
-        mock_playwright = MagicMock()
-        mock_playwright.__enter__ = MagicMock(return_value=mock_playwright)
-        mock_playwright.__exit__ = MagicMock(return_value=False)
-        mock_playwright.chromium.connect_over_cdp.return_value = mock_browser
-
-        with patch("scrapers.enricher.subprocess.Popen"), \
-             patch("scrapers.enricher.sync_playwright", return_value=mock_playwright), \
-             patch("scrapers.enricher._is_page_blocked", return_value=False), \
+        with patch("scrapers.enricher.chrome_session", _fake_session(mock_page)), \
+             patch("scrapers.enricher.is_page_blocked", return_value=False), \
              patch(
                  "scrapers.detail_extractors.leboncoin_detail.extract_detail",
                  side_effect=RuntimeError("Sélecteur introuvable"),

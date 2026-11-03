@@ -38,10 +38,16 @@ source venv/bin/activate
 ### 3. Installer les dépendances
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements.txt        # exécution
+pip install -r requirements-dev.txt    # + outils de test
 ```
 
-### 4. Installer Playwright
+### 4. Navigateurs
+
+- **Scraping et enrichissement** : un vrai Chrome/Chromium installé sur la machine
+  (`google-chrome` ou `chromium` dans le PATH, sinon renseigner `CHROME_BINARY` dans `config.py`).
+  Il est piloté via CDP avec un profil persistant (`data/browser_profile/`) pour passer l'anti-bot DataDome.
+- **Vérification des liens** (`check-links`) : le Chromium de Playwright, en headless :
 
 ```bash
 playwright install chromium
@@ -54,44 +60,50 @@ playwright install chromium
 ### Lancer le scraper
 
 ```bash
-python main.py
+python main.py scrape        # ou simplement : python main.py
 ```
 
 Le script va :
 
-1. Scraper SeLoger et LeBonCoin avec les critères définis
-2. Filtrer les annonces par prix et distance ENAC
+1. Lancer une recherche par profil (ENAC, Blagnac…) et par site (SeLoger, LeBonCoin)
+2. Filtrer les annonces par budget, nombre de pièces et distance à la cible de chaque profil
 3. Stocker les nouvelles annonces dans `data/annonces.sqlite`
 4. Générer des rapports Markdown dans `reports/`
 5. Générer des logs dans `logs/`
 
-### Options CLI
+### Commandes
 
 ```bash
-python main.py --seloger          # SeLoger uniquement
-python main.py --leboncoin        # LeBonCoin uniquement
-python main.py --all              # Tous les sites (défaut)
-python main.py --profile blagnac  # Uniquement les recherches du profil Blagnac (répétable)
-python main.py --export csv       # Exporter en CSV après le scrape
-python main.py --export json      # Exporter en JSON après le scrape
-python main.py --purge            # Vérifier les annonces expirées (HEAD requests)
-python main.py --ui               # Lancer l'interface web Flask (port 5000)
-python main.py --port 8080        # Lancer l'interface sur un port personnalisé
-python main.py --check-links      # Vérifier les liens via Playwright
-python main.py --limit 20         # Limiter le nombre de liens vérifiés
+python main.py scrape                              # tous les sites, tous les profils
+python main.py scrape --site leboncoin             # un site (répétable)
+python main.py scrape --profile blagnac            # un profil (répétable)
+python main.py scrape --enrich --limit 20          # + enrichissement des nouvelles annonces
+python main.py scrape --export csv                 # + export CSV (ou json)
+python main.py enrich [--site seloger] [--limit 20]  # enrichir les annonces en attente
+python main.py check-links [--limit 50]            # vérifier les liens (Chromium headless)
+python main.py purge                               # vérification HEAD (peu fiable sur SeLoger/LBC)
+python main.py export csv|json                     # export des annonces actives
+python main.py ui [--port 8080] [--no-browser]     # interface web
 ```
+
+L'ancienne syntaxe (`--seloger`, `--leboncoin`, `--ui`, `--check-links`…) reste acceptée, avec un avertissement indiquant la commande équivalente.
 
 ### Interface Web
 
 ```bash
-python main.py --ui
+python main.py ui        # ou : python -m ui
 ```
 
 Ouvre `http://localhost:5000` — interface responsive pour :
 
-- Consulter toutes les annonces avec filtres (site, statut, prix)
-- Trier par prix, distance ou date
-- Supprimer les annonces manuellement
+- Basculer entre les profils (onglets ENAC / Blagnac)
+- Filtrer (site, statut, prix, doublons) et trier par prix, distance au profil ou date
+- Voir l'évolution du prix (↓ 30 € depuis la première détection)
+- Masquer / restaurer une annonce, vue carte, export d'un dossier de candidature
+- Lancer un scraping (sortie dans `logs/ui_scraping.log`, dernière ligne affichée)
+
+Les actions (masquer, vider la base, lancer le scraping) sont protégées par un jeton CSRF ;
+« Vider la BD » demande de taper `VIDER`.
 
 ### Consulter les résultats
 
@@ -129,21 +141,36 @@ pytest tests/ --cov=. --cov-report=html
 
 ```text
 toulouse_rent_scraper/
-├── config.py              # Configuration globale
-├── main.py                # Point d'entrée du pipeline
-├── ui.py                  # Interface web Flask
-├── requirements.txt       # Dépendances Python
+├── config.py              # Configuration globale (profils de recherche, Chrome, délais)
+├── main.py                # CLI (sous-commandes)
+├── pipeline.py            # Recherches profil × site → filtre → stockage → rapports
+├── requirements.txt       # Dépendances d'exécution (+ requirements-dev.txt)
+│
+├── ui/                    # Interface web Flask
+│   ├── __init__.py        # create_app(), run_ui()
+│   ├── routes.py          # Vues (sans SQL)
+│   ├── security.py        # CSRF, redirections sûres
+│   ├── export.py          # Dossier de candidature Markdown
+│   ├── templates/index.html
+│   └── static/            # app.css, app.js
 │
 ├── scrapers/              # Scrapers par site
-│   ├── base.py            # Classe abstraite (Playwright + anti-bot)
+│   ├── __init__.py        # Registre (import paresseux, sans Playwright)
+│   ├── browser.py         # Session Chrome partagée (profil persistant + CDP)
+│   ├── antibot.py         # Détection / attente des challenges DataDome
+│   ├── base.py            # Classe abstraite (navigation, pagination)
 │   ├── seloger.py
-│   └── leboncoin.py
+│   ├── leboncoin.py
+│   ├── enricher.py        # Enrichissement (page de détail)
+│   └── detail_extractors/
 │
 ├── filters/               # Filtres métier
 │   └── price_and_distance.py
 │
 ├── storage/               # Stockage SQLite
-│   ├── sqlite.py
+│   ├── sqlite.py          # Connexion, écritures (annonces, profils, historique de prix)
+│   ├── migrations.py      # Schéma versionné (PRAGMA user_version)
+│   ├── queries.py         # Lectures de l'interface web
 │   └── cleaner.py         # Vérification des liens expirés
 │
 ├── reporting/             # Génération de rapports
@@ -151,21 +178,18 @@ toulouse_rent_scraper/
 │   └── exporter.py        # Export CSV/JSON
 │
 ├── geo/                   # Géolocalisation
-│   └── distance.py        # Geocoding Nominatim + distance ENAC
+│   └── distance.py        # Géocodage Nominatim (cache) + distances
 │
 ├── utils/                 # Utilitaires
 │   ├── logger.py          # Logging rotatif
 │   ├── validation.py      # Validation des données
 │   └── retry.py           # Retry avec backoff exponentiel
 │
-├── tests/                 # Tests unitaires (~85% de couverture)
-│   ├── conftest.py
-│   ├── test_filters.py
-│   ├── test_validation.py
-│   ├── test_storage.py
-│   ├── test_cleaner.py
-│   ├── test_exporter.py
-│   └── test_leboncoin.py
+├── scripts/
+│   ├── repair_data.py     # Réparation des données (Sprint 11)
+│   └── debug/             # Capture HTML des cartes (diagnostic des sélecteurs)
+│
+├── tests/                 # Tests unitaires — passent sans Playwright ni Chrome
 │
 ├── docs/                  # Documentation des sprints
 │   ├── ROADMAP.md
@@ -173,8 +197,8 @@ toulouse_rent_scraper/
 │   └── ...
 │
 ├── reports/               # Rapports générés (gitignored)
-│   ├── nouvelles_annonces.md
-│   └── toutes_les_annonces.md
+│   ├── enac/              # un dossier par profil
+│   └── blagnac/
 │
 ├── data/                  # Données générées (gitignored)
 │   ├── annonces.sqlite
@@ -193,8 +217,10 @@ Modifiez `config.py` pour ajuster :
 - `SEARCH_PROFILES` : profils de recherche (cible, budget, rayon, pièces, URLs LeBonCoin/SeLoger).
   Ajouter un profil = ajouter une entrée ; l'URL SeLoger (`seloger_locations`) se capture depuis le site.
 - `MAX_RENT_EUR` / `MAX_DISTANCE_KM` : budget et rayon du profil historique `enac`
-- `HEADLESS_BROWSER` : Navigateur en mode headless (défaut : False)
+- `CHROME_BINARY` / `CHROME_DEBUG_PORT` : Chrome utilisé et port CDP (`0` = port libre)
 - `MAX_PAGES_PER_SITE` : Nombre de pages à scraper (défaut : 10)
+- `PROFILE_SWITCH_MIN_DELAY` / `MAX_DELAY` : pause entre deux recherches d'un même run
+- `UI_SECRET_KEY` (variable d'environnement, optionnelle) : clé de session fixe de l'interface
 
 ---
 
@@ -209,7 +235,7 @@ crontab -e
 Ajouter :
 
 ```cron
-0 */8 * * * /home/user/Scrapper_Annonces/venv/bin/python /home/user/Scrapper_Annonces/toulouse_rent_scraper/main.py
+0 */8 * * * cd /home/user/Scrapper_Annonces/toulouse_rent_scraper && DISPLAY=:0 ../venv/bin/python main.py scrape
 ```
 
 ---
