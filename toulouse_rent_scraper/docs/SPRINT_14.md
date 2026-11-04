@@ -219,3 +219,24 @@ python main.py --enrich --profile blagnac --limit 20
 1. **URL SeLoger Blagnac** : sur seloger.com, chercher « Blagnac », rayon 8 km, T1–T3, loyer max 750 €, copier la valeur du paramètre `locations=` de l'URL dans `SEARCH_PROFILES["blagnac"].seloger_locations` (et `seloger_sub_types` si T1–T3 ont des codes dédiés). Tant que ce n'est pas fait, SeLoger est ignoré pour Blagnac (avertissement dans les logs).
 2. **Premier run LBC Blagnac** : `python main.py --leboncoin --profile blagnac`. Vérifier dans Chrome que la recherche affiche bien Blagnac, rayon 8 km, 550–750 €, 1–3 pièces. Sinon, refaire la recherche à la main et reporter le paramètre `locations=` dans `lbc_location`.
 3. Les anciens rapports à la racine de `reports/` ne sont plus mis à jour (remplacés par `reports/enac/` et `reports/blagnac/`) et peuvent être supprimés.
+
+
+---
+
+## Suivi — 2026-11-04 (premiers runs réels du profil Blagnac)
+
+- **Recherches copiées du site** : le format `lbc_location` construit n'a jamais été validé, et
+  la recherche SeLoger restait à capturer. Les deux sont remplacés par des URLs copiées du site
+  (`lbc_search_url`, `seloger_search_url`), utilisées telles quelles et paginées par `&page=N`
+  jusqu'à `MAX_PAGES_PER_SITE` (10).
+- **Warm-up** : `lbc_warmup_urls` / `seloger_warmup_urls`. Le parcours accueil → recherches
+  intermédiaires → recherche scannée est géré dans `BaseScraper` (`warmup_urls()`,
+  `step_delay()`, `page_delay()`), avec des cooldowns `WARMUP_*`.
+- **Plus de budget ni de pièces pour Blagnac** : `min_rent_eur` / `max_rent_eur` / `rooms`
+  deviennent optionnels. La note loyer du score utilise 1,5× `target_rent_eur` comme plafond
+  quand il n'y en a pas.
+- **Fiabilité** : suppression des verrous Chrome orphelins, environnement nettoyé des
+  variables snap (crash de Chrome depuis VS Code), détection du challenge DataDome en iframe,
+  sélecteur de cartes LBC choisi page par page.
+- **Premiers résultats** : SeLoger 300 annonces brutes, 202 nouvelles pour Blagnac ; LeBonCoin
+  110 puis 47 brutes (sous-comptage des cartes, corrigé mais pas encore revérifié).

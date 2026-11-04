@@ -27,6 +27,9 @@ class SeLogerScraper(BaseScraper):
     def search_urls(self) -> list:
         return self.profile.seloger_search_urls()
 
+    def warmup_urls(self) -> List[str]:
+        return list(self.profile.seloger_warmup_urls)
+
     def card_selector(self) -> str:
         return 'div[data-testid^="classified-card-mfe-"]'
 

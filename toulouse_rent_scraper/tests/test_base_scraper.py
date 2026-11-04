@@ -135,3 +135,28 @@ def test_selector_missing_dumps_debug():
          patch.object(FakeScraper, "_dump_debug") as dump:
         assert scraper.scrape() == []
     dump.assert_called_once()
+
+
+def test_navigation_and_pagination_use_delay_hooks():
+    page = _make_page()
+    urls = ["https://fake.test/p1", "https://fake.test/p2", "https://fake.test/p3"]
+    scraper = FakeScraper(urls)
+    scraper.step_delay = MagicMock()
+    scraper.page_delay = MagicMock()
+    with patch("scrapers.base.chrome_session", _session(page)):
+        scraper.scrape()
+    assert scraper.step_delay.call_count == 1   # entre accueil et recherche
+    assert scraper.page_delay.call_count == 2   # avant les pages 2 et 3
+
+
+def test_picks_selector_with_most_cards():
+    class Multi(FakeScraper):
+        def fallback_card_selectors(self):
+            return ["article.new"]
+
+    page = MagicMock()
+    page.query_selector_all.side_effect = lambda sel: (
+        [MagicMock()] * 5 if sel == "article" else [MagicMock()] * 35
+    )
+    selector, cards = Multi(["https://fake.test/p1"])._best_selector_cards(page, "article")
+    assert selector == "article.new" and len(cards) == 35

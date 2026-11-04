@@ -102,6 +102,14 @@ def guess_rooms(annonce: Dict) -> Optional[int]:
     return None
 
 
+def _price_ok(price: int, profile: SearchProfile) -> bool:
+    if profile.min_rent_eur is not None and price < profile.min_rent_eur:
+        return False
+    if profile.max_rent_eur is not None and price > profile.max_rent_eur:
+        return False
+    return True
+
+
 def _rooms_ok(rooms: Optional[int], profile: SearchProfile) -> bool:
     # Pièces inconnues : on garde (mieux vaut un faux positif qu'une annonce ratée)
     if profile.rooms is None or rooms is None:
@@ -129,7 +137,7 @@ def match_profiles(
     rooms = guess_rooms(annonce)
     candidates = [
         p for p in profiles
-        if p.min_rent_eur <= price <= p.max_rent_eur and _rooms_ok(rooms, p)
+        if _price_ok(price, p) and _rooms_ok(rooms, p)
     ]
     if not candidates:
         return None, []

@@ -23,12 +23,11 @@ class LeBonCoinScraper(BaseScraper):
     def search_url(self) -> Optional[str]:
         return self.profile.leboncoin_search_url()
 
-    def navigation_steps(self) -> List[Dict]:
-        """Navigation progressive : accueil puis recherche directe."""
-        return [
-            {"url": LEBONCOIN_BASE_URL, "label": "page d'accueil LeBonCoin"},
-            {"url": self.search_url(), "label": f"recherche avec filtres ({self.profile.label})"},
-        ]
+    def search_urls(self) -> List[str]:
+        return self.profile.leboncoin_search_urls()
+
+    def warmup_urls(self) -> List[str]:
+        return list(self.profile.lbc_warmup_urls)
 
     def card_selector(self) -> str:
         return 'article[data-qa-id="aditem_container"]'

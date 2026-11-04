@@ -6,7 +6,7 @@
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 # =========================
 # 📍 LOCALISATION DE RÉFÉRENCE
@@ -134,12 +134,16 @@ class SearchProfile:
     target_lat: float
     target_lon: float
     max_distance_km: float
-    min_rent_eur: int
-    max_rent_eur: int
+    min_rent_eur: Optional[int] = None          # None = pas de borne
+    max_rent_eur: Optional[int] = None          # None = pas de plafond
     rooms: Optional[Tuple[int, int]] = None     # (min, max) pièces ; None = pas de contrainte
     target_rent_eur: Optional[int] = None       # loyer CC « idéal » : note loyer maximale en dessous
     lbc_location: Optional[str] = None          # paramètre `locations` LeBonCoin
+    lbc_search_url: Optional[str] = None        # URL LBC brute (copiée du site), prioritaire sur lbc_location
+    lbc_warmup_urls: Tuple[str, ...] = ()       # recherches visitées avant celle scannée (cooldown entre chaque)
     seloger_locations: Optional[str] = None     # paramètre `locations` SeLoger (base64, à capturer)
+    seloger_search_url: Optional[str] = None    # URL SeLoger brute (copiée du site), prioritaire
+    seloger_warmup_urls: Tuple[str, ...] = ()   # recherches visitées avant celle scannée
     seloger_sub_types: str = "Studio"
     enabled: bool = True
 
@@ -148,13 +152,27 @@ class SearchProfile:
         return (self.target_lat, self.target_lon)
 
     def leboncoin_search_url(self) -> Optional[str]:
+        if self.lbc_search_url:
+            return self.lbc_search_url
         if not self.lbc_location:
             return None
         return build_leboncoin_search_url(
             self.lbc_location, self.min_rent_eur, self.max_rent_eur, self.rooms
         )
 
+    def leboncoin_search_urls(self) -> List[str]:
+        """Page 1 puis &page=2… Les profils sans lbc_search_url gardent la pagination par bouton."""
+        first = self.leboncoin_search_url()
+        if not first:
+            return []
+        if not self.lbc_search_url:
+            return [first]
+        return [first] + [f"{first}&page={n}" for n in range(2, MAX_PAGES_PER_SITE + 1)]
+
     def seloger_search_urls(self):
+        if self.seloger_search_url:
+            first = self.seloger_search_url
+            return [first] + [f"{first}&page={n}" for n in range(2, MAX_PAGES_PER_SITE + 1)]
         if not self.seloger_locations:
             return []
         first = build_seloger_search_url(
@@ -185,15 +203,40 @@ SEARCH_PROFILES: Dict[str, SearchProfile] = {
         target_lat=43.6417,
         target_lon=1.3693,
         max_distance_km=8,
-        min_rent_eur=550,
-        max_rent_eur=750,
-        rooms=(1, 3),
+        # Pas de fourchette de prix ni de nombre de pièces (2026-11-04) : seuls
+        # le rayon et la recherche LBC filtrent. target_rent_eur sert au score.
         target_rent_eur=600,
-        # Format LBC : Ville_CP__lat_lon_rayonDefaut_rayon(m) — à vérifier au premier run
-        lbc_location="Blagnac_31700__43.6417_1.3693_5000_8000",
-        # ⚠️ À capturer sur seloger.com (Blagnac, rayon 8 km, T1–T3, 750 € max) :
-        # tant que c'est None, SeLoger est ignoré pour ce profil.
-        seloger_locations=None,
+        # URLs copiées depuis leboncoin.fr (2026-11-04) : Blagnac 5 km + Toulouse,
+        # appartement/maison avec balcon/terrasse/jardin. Pas de filtre prix côté LBC :
+        # budget et distance ≤ 8 km sont filtrés en local.
+        lbc_warmup_urls=(
+            "https://www.leboncoin.fr/recherche?category=10"
+            "&locations=Toulouse__43.599373754597394_1.435619856703149_9864__d31",
+            "https://www.leboncoin.fr/recherche?category=10"
+            "&locations=Blagnac_31700__43.63458_1.39684_5000,"
+            "Toulouse__43.599373754597394_1.435619856703149_9864__d31",
+        ),
+        lbc_search_url=(
+            "https://www.leboncoin.fr/recherche?category=10&text=location"
+            "&locations=Blagnac_31700__43.63458_1.39684_5000%2C"
+            "Toulouse__43.599373754597394_1.435619856703149_9864__d31"
+            "&real_estate_type=2%2C1&outside_access=balcony%2Cterrace%2Cgarden"
+        ),
+        # SeLoger (2026-11-04) : accueil onglet Louer → Toulouse → recherche scannée
+        # (appartement, balcon/terrasse, Toulouse + Blagnac, 1+ chambre, ≤ 3 pièces).
+        seloger_warmup_urls=(
+            "https://www.seloger.com/?tab=rent#?BD=Head_LO_Loc_2",
+            "https://www.seloger.com/classified-search?distributionTypes=Rent"
+            "&estateTypes=House,Apartment&initialQuery=Toulouse&locations=AD08FR12535"
+            "&method=smart_suggestion&m=homepage_new_search_classified_search_result",
+        ),
+        seloger_search_url=(
+            "https://www.seloger.com/classified-search?distributionTypes=Rent"
+            "&estateTypes=Apartment&featuresIncluded=Balcony_Terrace"
+            "&initialQuery=Toulouse%20Blagnac&locations=AD08FR12535,AD08FR12051"
+            "&method=form&numberOfBedroomsMin=1&numberOfRoomsMax=3&projectTypes=Stock"
+            "&order=DateDesc"
+        ),
     ),
 }
 
@@ -233,6 +276,12 @@ CHROME_STARTUP_TIMEOUT = 15   # secondes d'attente max du port CDP
 # Délais entre requêtes (secondes) - plus longs pour simuler un humain
 MIN_DELAY_BETWEEN_REQUESTS = 3.0
 MAX_DELAY_BETWEEN_REQUESTS = 7.0
+
+# Recherches avec warm-up (LBC, SeLoger) : cooldown entre étapes de warm-up et entre pages scannées
+WARMUP_STEP_MIN_DELAY = 15.0
+WARMUP_STEP_MAX_DELAY = 30.0
+WARMUP_PAGE_MIN_DELAY = 10.0
+WARMUP_PAGE_MAX_DELAY = 20.0
 
 # Délai supplémentaire entre les actions sur une même page
 MIN_ACTION_DELAY = 0.5

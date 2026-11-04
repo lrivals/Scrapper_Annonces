@@ -16,7 +16,7 @@ from scoring import (
 from storage.sqlite import init_db, insert_annonce, upsert_annonce_profile, update_annonce_enrichment
 
 ENAC = SEARCH_PROFILES["enac"]        # cible 350 €, max 500 €, 10 km
-BLAGNAC = SEARCH_PROFILES["blagnac"]  # cible 600 €, max 750 €, 8 km
+BLAGNAC = SEARCH_PROFILES["blagnac"]  # cible 600 €, pas de plafond (note nulle à 900 €), 8 km
 
 
 class TestCriteria:
@@ -32,8 +32,10 @@ class TestCriteria:
     def test_rent_enac(self, price, charges, expected):
         assert rent_score(price, charges, ENAC) == pytest.approx(expected)
 
-    def test_rent_uses_profile_budget(self):
-        assert rent_score(675, None, BLAGNAC) == pytest.approx(0.5)
+    def test_rent_without_max_budget(self):
+        assert rent_score(600, None, BLAGNAC) == pytest.approx(1.0)
+        assert rent_score(750, None, BLAGNAC) == pytest.approx(0.5)
+        assert rent_score(900, None, BLAGNAC) == pytest.approx(0.0)
 
     @pytest.mark.parametrize("dist,expected", [(0, 1.0), (5, 0.5), (10, 0.0), (12, 0.0), (None, NEUTRAL)])
     def test_distance(self, dist, expected):

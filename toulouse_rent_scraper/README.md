@@ -8,10 +8,14 @@ Scraper d'annonces de location à Toulouse, avec filtrage automatique par prix e
 
 Rechercher automatiquement des annonces de location, avec lien direct vers l'annonce, pour chaque profil défini dans `config.SEARCH_PROFILES` :
 
-| Profil | Cible | Budget | Rayon | Pièces |
-|--------|-------|--------|-------|--------|
-| `enac` | ENAC — 7 av. Édouard Belin, Toulouse | 50 – 500 € | 10 km | toutes |
-| `blagnac` | 14 Pl. Marcel Dassault, Blagnac | 550 – 750 € | 8 km | T1 – T3 |
+| Profil | Cible | Budget | Rayon | Pièces | Recherches |
+|--------|-------|--------|-------|--------|------------|
+| `enac` | ENAC — 7 av. Édouard Belin, Toulouse | 50 – 500 € | 10 km | toutes | URLs construites (studio, Toulouse) |
+| `blagnac` | 14 Pl. Marcel Dassault, Blagnac | aucun filtre (cible 600 € pour le score) | 8 km | aucun filtre | URLs copiées du site + warm-up (voir ci-dessous) |
+
+Pour `blagnac`, le filtrage se fait surtout dans les recherches elles-mêmes : appartement (et maison
+sur LeBonCoin) avec balcon/terrasse/jardin, Toulouse + Blagnac, ≤ 3 pièces sur SeLoger. Côté
+scraper, seul le rayon de 8 km est appliqué.
 
 ---
 
@@ -67,6 +71,7 @@ Le script va :
 
 1. Lancer une recherche par profil (ENAC, Blagnac…) et par site (SeLoger, LeBonCoin)
 2. Filtrer les annonces par budget, nombre de pièces et distance à la cible de chaque profil
+   (un critère absent du profil n'est pas filtré)
 3. Stocker les nouvelles annonces dans `data/annonces.sqlite`
 4. Générer des rapports Markdown dans `reports/`
 5. Générer des logs dans `logs/`
@@ -112,7 +117,7 @@ Chaque annonce reçoit, pour chaque profil, un score sur 100 (pastille ★ dans 
 
 | Critère | Poids | Calcul |
 |---|---|---|
-| Loyer charges comprises | 35 | 1 au loyer cible du profil (`target_rent_eur`), 0 au budget max |
+| Loyer charges comprises | 35 | 1 au loyer cible du profil (`target_rent_eur`), 0 au budget max (ou à 1,5× la cible si pas de plafond) |
 | Distance | 30 | 1 sur la cible, 0 en limite de rayon |
 | €/m² | 15 | comparé à la médiane des annonces du profil |
 | Meublé | 10 | oui = 1, non = 0 |
@@ -250,11 +255,32 @@ toulouse_rent_scraper/
 Modifiez `config.py` pour ajuster :
 
 - `SEARCH_PROFILES` : profils de recherche (cible, budget, rayon, pièces, URLs LeBonCoin/SeLoger).
-  Ajouter un profil = ajouter une entrée ; l'URL SeLoger (`seloger_locations`) se capture depuis le site.
+  Ajouter un profil = ajouter une entrée. `min_rent_eur`, `max_rent_eur` et `rooms` sont
+  optionnels (`None` = pas de filtre). Deux façons de décrire une recherche :
+  - **URL construite** : `lbc_location` / `seloger_locations` (+ budget), comme `enac` ;
+  - **URL copiée du site** : `lbc_search_url` / `seloger_search_url`, utilisée telle quelle et
+    paginée par `&page=2…` jusqu'à `MAX_PAGES_PER_SITE`, avec en option des recherches de
+    **warm-up** (`lbc_warmup_urls` / `seloger_warmup_urls`) visitées avant, comme `blagnac`.
 - `MAX_RENT_EUR` / `MAX_DISTANCE_KM` : budget et rayon du profil historique `enac`
 - `CHROME_BINARY` / `CHROME_DEBUG_PORT` : Chrome utilisé et port CDP (`0` = port libre)
 - `MAX_PAGES_PER_SITE` : Nombre de pages à scraper (défaut : 10)
 - `PROFILE_SWITCH_MIN_DELAY` / `MAX_DELAY` : pause entre deux recherches d'un même run
+- `WARMUP_STEP_MIN/MAX_DELAY` (15–30 s) et `WARMUP_PAGE_MIN/MAX_DELAY` (10–20 s) : cooldowns
+  entre étapes de navigation et entre pages, pour les recherches qui ont des warm-ups
+
+### Navigation avec warm-up
+
+Pour une recherche avec warm-up, le scraper suit un parcours « humain » au lieu d'aller
+directement sur l'URL de résultats :
+
+```
+accueil → warm-up 1 → warm-up 2 … → recherche scannée → page 2 → … → page 10
+        (15–30 s entre chaque étape)                  (10–20 s entre chaque page)
+```
+
+Chaque étape inclut mouvements de souris, scroll et détection de challenge. La pagination
+s'arrête dès qu'une page ne contient plus d'annonces. Un run Blagnac complet (2 sites × 10
+pages) prend environ 25 minutes.
 - `UI_SECRET_KEY` (variable d'environnement, optionnelle) : clé de session fixe de l'interface
 
 ---
@@ -298,6 +324,31 @@ LeBonCoin utilise DataDome. En cas de challenge détecté, le script attend 3 mi
 - Attendre plusieurs heures avant de relancer
 - Vérifier que le profil Chrome persistant (`data/browser_profile/`) est bien utilisé
 - Ne pas lancer trop de scrapes en succession rapide
+
+Le challenge DataDome s'affiche parfois dans une iframe (`geo.captcha-delivery.com`) avec le
+titre « leboncoin.fr » : il est détecté via les frames de la page. La page « Accès temporairement
+restreint » (`t:'bv'` dans le HTML) est un ban d'IP, sans captcha à résoudre : il faut attendre.
+
+### Problème : Chrome s'arrête au démarrage (code -5)
+
+Typiquement en lançant depuis le terminal de VS Code installé en **snap** : le snap injecte
+`GSETTINGS_SCHEMA_DIR`, `GTK_PATH`, etc., et Chrome plante sur une erreur GLib. Le scraper
+retire ces variables avant de lancer Chrome (`scrapers/browser.py::chrome_env`). La sortie de
+Chrome est enregistrée dans `logs/chrome_stderr.log`, et ses dernières lignes sont reprises dans
+l'erreur affichée.
+
+### Problème : « Profil Chrome déjà utilisé »
+
+Un autre Chrome (scraping ou enrichissement) utilise `data/browser_profile/`. Un verrou
+`SingletonLock` laissé par un Chrome mort (crash, kill) est détecté et supprimé automatiquement.
+Si le message persiste, c'est qu'un Chrome tourne vraiment : le fermer.
+
+### Problème : peu de cartes par page LeBonCoin (5 au lieu de ~35)
+
+LeBonCoin mélange parfois les attributs des cartes (`data-qa-id="aditem_container"` /
+`data-test-id="ad"`). Le scraper garde, page par page, le sélecteur qui trouve le plus de cartes.
+Si le log affiche encore « 5 cartes trouvées », capturer la page avec
+`scripts/debug/capture_cards_leboncoin.py` et vérifier les sélecteurs de `scrapers/leboncoin.py`.
 
 ### Problème : `--purge` ne fonctionne pas pour SeLoger/LeBonCoin
 
