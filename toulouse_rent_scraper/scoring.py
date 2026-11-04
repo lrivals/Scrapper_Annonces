@@ -15,6 +15,7 @@ from utils.logger import setup_logger
 logger = setup_logger("scoring")
 
 NEUTRAL = 0.5
+NO_MAX_RENT_FACTOR = 1.5   # profil sans budget max : note loyer nulle à 1,5× la cible
 
 
 def _clamp(value: float) -> float:
@@ -33,9 +34,17 @@ def rent_score(price: Optional[int], charges: Optional[int], profile: SearchProf
     if cc is None:
         return NEUTRAL
     target = profile.target_rent_eur or profile.min_rent_eur
-    if profile.max_rent_eur <= target:
-        return 1.0 if cc <= profile.max_rent_eur else 0.0
-    return _clamp((profile.max_rent_eur - cc) / (profile.max_rent_eur - target))
+    max_rent = profile.max_rent_eur
+    if target is None:
+        if max_rent is None:
+            return NEUTRAL
+        target = max_rent
+    if max_rent is None:
+        # Pas de plafond : la note tombe à 0 à 1,5× le loyer cible
+        max_rent = round(target * NO_MAX_RENT_FACTOR)
+    if max_rent <= target:
+        return 1.0 if cc <= max_rent else 0.0
+    return _clamp((max_rent - cc) / (max_rent - target))
 
 
 def distance_score(distance_km: Optional[float], profile: SearchProfile) -> float:

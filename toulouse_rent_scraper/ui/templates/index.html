@@ -19,7 +19,7 @@
       <nav class="profile-tabs">
         {% for p in profiles %}
         <a href="/?profile={{ p.key }}" class="btn-view {% if p.key == profile.key %}active{% endif %}"
-           title="{{ p.target_address }} — {{ p.min_rent_eur }}–{{ p.max_rent_eur }} € — {{ p.max_distance_km }} km">{{ p.label }}</a>
+           title="{{ p.target_address }}{% if p.min_rent_eur or p.max_rent_eur %} — {{ p.min_rent_eur or 0 }}–{{ p.max_rent_eur or '∞' }} €{% endif %} — {{ p.max_distance_km }} km">{{ p.label }}</a>
         {% endfor %}
       </nav>
       <div class="count" id="annonce-count">{{ total }} annonce{{ 's' if total != 1 else '' }}</div>
@@ -87,8 +87,8 @@
       <div class="filter-group">
         <label>Prix (€)</label>
         <div class="prix-range">
-          <input type="number" name="prix_min" value="{{ current_prix_min }}" placeholder="{{ profile.min_rent_eur }}" min="0">
-          <input type="number" name="prix_max" value="{{ current_prix_max }}" placeholder="{{ profile.max_rent_eur }}" min="0">
+          <input type="number" name="prix_min" value="{{ current_prix_min }}" placeholder="{{ profile.min_rent_eur or '' }}" min="0">
+          <input type="number" name="prix_max" value="{{ current_prix_max }}" placeholder="{{ profile.max_rent_eur or '' }}" min="0">
         </div>
       </div>
 

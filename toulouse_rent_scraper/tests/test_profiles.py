@@ -41,19 +41,51 @@ class TestConfig:
         assert ENAC.seloger_search_urls() == SELOGER_SEARCH_URLS
 
     def test_blagnac_leboncoin_url(self):
+        # URL copiée du site, utilisée telle quelle (budget filtré en local)
         url = BLAGNAC.leboncoin_search_url()
-        assert "locations=Blagnac_31700__43.6417_1.3693" in url
-        assert "price=550-750" in url
-        assert "rooms=1-3" in url
+        assert url == BLAGNAC.lbc_search_url
+        assert "Blagnac_31700__43.63458_1.39684_5000" in url
+        assert "outside_access=balcony%2Cterrace%2Cgarden" in url
+        assert "price=" not in url
 
-    def test_blagnac_seloger_not_configured_yet(self):
-        assert BLAGNAC.seloger_search_urls() == []
+    def test_blagnac_leboncoin_pages(self):
+        from config import MAX_PAGES_PER_SITE
+        urls = BLAGNAC.leboncoin_search_urls()
+        assert urls[0] == BLAGNAC.lbc_search_url
+        assert urls[1] == BLAGNAC.lbc_search_url + "&page=2"
+        assert len(urls) == MAX_PAGES_PER_SITE
+
+    def test_enac_leboncoin_single_url(self):
+        # ENAC garde la pagination par bouton
+        assert ENAC.leboncoin_search_urls() == [LEBONCOIN_SEARCH_URL]
+
+    def test_leboncoin_navigation_steps(self):
+        from config import LEBONCOIN_BASE_URL
+        from scrapers.leboncoin import LeBonCoinScraper
+        steps = [s["url"] for s in LeBonCoinScraper(BLAGNAC).navigation_steps()]
+        assert steps == [LEBONCOIN_BASE_URL, *BLAGNAC.lbc_warmup_urls, BLAGNAC.lbc_search_url]
+        assert len(LeBonCoinScraper(ENAC).navigation_steps()) == 2
+
+    def test_blagnac_seloger_pages(self):
+        from config import MAX_PAGES_PER_SITE
+        urls = BLAGNAC.seloger_search_urls()
+        assert urls[0] == BLAGNAC.seloger_search_url
+        assert "locations=AD08FR12535,AD08FR12051" in urls[0]
+        assert urls[1] == BLAGNAC.seloger_search_url + "&page=2"
+        assert len(urls) == MAX_PAGES_PER_SITE == 10
+
+    def test_seloger_navigation_steps(self):
+        from config import SELOGER_BASE_URL
+        from scrapers.seloger import SeLogerScraper
+        steps = [s["url"] for s in SeLogerScraper(BLAGNAC).navigation_steps()]
+        assert steps == [SELOGER_BASE_URL, *BLAGNAC.seloger_warmup_urls, BLAGNAC.seloger_search_url]
+        assert len(SeLogerScraper(ENAC).navigation_steps()) == 2
 
     def test_scrapers_follow_profile(self):
         from scrapers.leboncoin import LeBonCoinScraper
         from scrapers.seloger import SeLogerScraper
         assert LeBonCoinScraper(BLAGNAC).search_url() == BLAGNAC.leboncoin_search_url()
-        assert SeLogerScraper(BLAGNAC).search_url() is None
+        assert SeLogerScraper(BLAGNAC).search_url() == BLAGNAC.seloger_search_url
         assert LeBonCoinScraper().profile.key == "enac"
 
 
@@ -84,27 +116,38 @@ class TestMatchProfiles:
         _, keys, _ = _match(_annonce(700, "Appartement T2"), BLAGNAC_CENTRE)
         assert keys == ["blagnac"]
 
-    def test_between_budgets_matches_nothing_without_geocoding(self):
-        enriched, keys, geo = _match(_annonce(520, "T1"), PURPAN)
-        assert enriched is None and keys == []
-        geo.assert_not_called()  # aucun profil n'accepte 520 € : pas d'appel Nominatim
+    def test_blagnac_has_no_budget_or_rooms(self):
+        assert BLAGNAC.min_rent_eur is None and BLAGNAC.max_rent_eur is None
+        assert BLAGNAC.rooms is None
+
+    def test_520_near_blagnac_matches_blagnac(self):
+        # Hors budget ENAC, mais Blagnac n'a plus de fourchette de prix
+        _, keys, _ = _match(_annonce(520, "T1"), PURPAN)
+        assert keys == ["blagnac"]
+
+    def test_no_profile_accepts_price_skips_geocoding(self):
+        enac_only = [ENAC]
+        with patch("filters.price_and_distance.geocode_address") as geo:
+            enriched, matches = match_profiles(_annonce(900, "T3"), enac_only)
+        assert enriched is None and matches == []
+        geo.assert_not_called()
 
     def test_t1_600_saint_cyprien_matches_blagnac(self):
         _, keys, _ = _match(_annonce(600, "Appartement T1"), SAINT_CYPRIEN)
         assert keys == ["blagnac"]
 
-    def test_too_many_rooms_rejected_by_blagnac(self):
-        _, keys, geo = _match(_annonce(720, "Maison 5 pièces"), BLAGNAC_CENTRE)
-        assert keys == []
-        geo.assert_not_called()
+    def test_big_house_accepted_by_blagnac(self):
+        _, keys, _ = _match(_annonce(720, "Maison 5 pièces"), BLAGNAC_CENTRE)
+        assert keys == ["blagnac"]
 
     def test_outside_radius(self):
         _, keys, _ = _match(_annonce(700, "T2"), RANGUEIL)  # ~10 km de Blagnac
         assert keys == []
 
-    def test_price_with_thousands_separator_rejected(self):
-        _, keys, _ = _match(_annonce("1 200", "T3"), BLAGNAC_CENTRE)
-        assert keys == []
+    def test_price_with_thousands_separator_parsed(self):
+        enriched, keys, _ = _match(_annonce("1 200", "T3"), BLAGNAC_CENTRE)
+        assert keys == ["blagnac"]
+        assert enriched["price"] == 1200
 
     def test_geocoding_failure(self):
         enriched, keys, _ = _match(_annonce(700, "T2"), None)

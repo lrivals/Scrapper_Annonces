@@ -14,6 +14,10 @@ from config import (
     MAX_PAGES_PER_SITE,
     MIN_DELAY_BETWEEN_REQUESTS,
     MAX_DELAY_BETWEEN_REQUESTS,
+    WARMUP_PAGE_MAX_DELAY,
+    WARMUP_PAGE_MIN_DELAY,
+    WARMUP_STEP_MAX_DELAY,
+    WARMUP_STEP_MIN_DELAY,
     MIN_ACTION_DELAY,
     MAX_ACTION_DELAY,
     LOG_DIR,
@@ -86,13 +90,20 @@ class BaseScraper(ABC):
         Chaque étape est un dict avec :
           - 'url': URL à visiter
           - 'label': description pour les logs
-        Par défaut : page d'accueil → page de recherche.
-        Surcharger pour une navigation multi-étapes (ex: LeBonCoin).
+        Par défaut : page d'accueil → recherches de warm-up éventuelles → recherche scannée.
         """
-        return [
-            {"url": self.base_url(), "label": "page d'accueil"},
-            {"url": self.search_url(), "label": "page de recherche"},
+        warmups = self.warmup_urls()
+        steps = [{"url": self.base_url(), "label": "page d'accueil"}]
+        steps += [
+            {"url": url, "label": f"warm-up {i}/{len(warmups)}"}
+            for i, url in enumerate(warmups, start=1)
         ]
+        steps.append({"url": self.search_url(), "label": f"recherche ({self.profile.label})"})
+        return steps
+
+    def warmup_urls(self) -> List[str]:
+        """Recherches visitées avant la recherche scannée (cooldown entre chaque). Défaut : aucune."""
+        return []
 
     def blocked_domains(self) -> List[str]:
         """Domaines indiquant un blocage (DataDome, captcha, etc.)."""
@@ -110,6 +121,23 @@ class BaseScraper(ABC):
         """Pause aléatoire entre les pages."""
         delay = random.uniform(MIN_DELAY_BETWEEN_REQUESTS, MAX_DELAY_BETWEEN_REQUESTS)
         self.logger.debug(f"Pause de {delay:.1f}s entre requetes")
+        time.sleep(delay)
+
+    def step_delay(self):
+        """Pause entre deux étapes de navigation ; cooldown long si parcours avec warm-up."""
+        if not self.warmup_urls():
+            return self.random_delay()
+        self._cooldown(WARMUP_STEP_MIN_DELAY, WARMUP_STEP_MAX_DELAY, "l'etape suivante")
+
+    def page_delay(self):
+        """Pause entre deux pages de résultats ; cooldown long si parcours avec warm-up."""
+        if not self.warmup_urls():
+            return self.random_delay()
+        self._cooldown(WARMUP_PAGE_MIN_DELAY, WARMUP_PAGE_MAX_DELAY, "la page suivante")
+
+    def _cooldown(self, low: float, high: float, what: str):
+        delay = random.uniform(low, high)
+        self.logger.info(f"Cooldown {delay:.0f}s avant {what}")
         time.sleep(delay)
 
     def action_delay(self):
@@ -259,6 +287,27 @@ class BaseScraper(ABC):
                 continue
         return None
 
+    def _best_selector_cards(self, page, preferred: str):
+        """
+        Cartes de la page courante avec le sélecteur qui en trouve le plus.
+        LBC mélange parfois les attributs (quelques cartes en data-qa-id, le reste
+        en data-test-id) : s'en tenir au premier sélecteur qui matche en rate la plupart.
+        """
+        best_selector, best_cards = preferred, []
+        candidates = [preferred] + [
+            s for s in [self.card_selector()] + self.fallback_card_selectors() if s != preferred
+        ]
+        for candidate in candidates:
+            try:
+                cards = page.query_selector_all(candidate)
+            except Exception:
+                continue
+            if len(cards) > len(best_cards):
+                best_selector, best_cards = candidate, cards
+        if best_selector != preferred:
+            self.logger.info(f"  Selecteur {best_selector} retenu ({len(best_cards)} cartes)")
+        return best_selector, best_cards
+
     def _scrape_current_page(self, page, selector: str, page_num: int):
         """Scrape les cartes de la page courante."""
         self.logger.info(f"Scraping page {page_num}")
@@ -267,7 +316,7 @@ class BaseScraper(ABC):
         self.human_scroll(page, scroll_back=True)
         time.sleep(random.uniform(1, 2))
 
-        cards = page.query_selector_all(selector)
+        selector, cards = self._best_selector_cards(page, selector)
         if not cards:
             self.logger.warning(f"Aucune annonce trouvee sur la page {page_num}")
             return
@@ -350,7 +399,7 @@ class BaseScraper(ABC):
         for i, step in enumerate(steps):
             url, label = step["url"], step["label"]
             if i > 0:
-                self.random_delay()
+                self.step_delay()
 
             self.logger.info(f"Etape {i+1}/{len(steps)} : {label} ({url[:80]}...)")
             if not self._goto_with_block_handling(page, url, label):
@@ -424,7 +473,7 @@ class BaseScraper(ABC):
                 break
 
             self.human_mouse_move(page)
-            self.random_delay()
+            self.page_delay()
 
             self.logger.info(f"Navigation vers page {page_num} (URL directe)")
             try:
