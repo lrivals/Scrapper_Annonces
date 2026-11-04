@@ -47,6 +47,15 @@ def is_page_blocked(
     if site_domain and site_domain not in current_url and current_url != "about:blank":
         return True
 
+    # DataDome affiche son challenge dans une iframe (geo.captcha-delivery.com) :
+    # l'URL principale et le titre restent ceux du site.
+    try:
+        for frame in page.frames:
+            if any(domain in (frame.url or "") for domain in blocked_domains):
+                return True
+    except Exception:
+        pass
+
     markers = [m.lower() for m in markers]
 
     # Texte visible, puis HTML brut (le texte peut ne pas être encore rendu)
