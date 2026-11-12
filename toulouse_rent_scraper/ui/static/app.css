@@ -306,6 +306,23 @@ h1 {
 .dot-expired { background: #d1d5db; }
 .dot-hidden  { background: #fca5a5; }
 
+.card-feats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 12px;
+}
+
+.feat {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  padding: 1px 7px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
 .dup-tag {
   font-size: 0.7rem;
   font-weight: 600;

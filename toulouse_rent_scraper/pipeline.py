@@ -74,7 +74,8 @@ def process_annonces(raw_annonces: Sequence[Dict], site_name: str) -> RunStats:
     """
     from filters.price_and_distance import match_profiles
     from storage.sqlite import (
-        insert_annonce, find_potential_duplicates, get_price, set_duplicate_of, upsert_annonce_profile,
+        insert_annonce, find_potential_duplicates, get_coordinates, get_price, set_duplicate_of,
+        upsert_annonce_profile,
     )
     from utils.validation import validate_annonce
 
@@ -88,7 +89,14 @@ def process_annonces(raw_annonces: Sequence[Dict], site_name: str) -> RunStats:
             stats.rejected += 1
             continue
 
-        filtered, matches = match_profiles(annonce)
+        # Point GPS exact déjà connu (enrichissement) : prioritaire sur le géocodage de l'adresse
+        known = get_coordinates(annonce.get("url", ""))
+        known_coords = (
+            (known["lat"], known["lon"])
+            if known and known.get("geo_precision") == "exact" and known.get("lat") is not None
+            else None
+        )
+        filtered, matches = match_profiles(annonce, known_coords=known_coords)
         if not filtered:
             stats.rejected += 1
             continue

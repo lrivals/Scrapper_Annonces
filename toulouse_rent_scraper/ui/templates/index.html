@@ -175,6 +175,22 @@
               {{ a.surface_m2 or '—' }} m²
             </div>
           </div>
+
+          {# Sprint 15.1 — caractéristiques issues de l'enrichissement #}
+          {% set feats = [] %}
+          {% if a.nb_rooms %}{% set _ = feats.append(('T' ~ a.nb_rooms, 'Pièces')) %}{% endif %}
+          {% if a.dpe_rating %}{% set _ = feats.append(('DPE ' ~ a.dpe_rating, 'Diagnostic énergétique')) %}{% endif %}
+          {% if a.ges_rating %}{% set _ = feats.append(('GES ' ~ a.ges_rating, 'Émissions de gaz à effet de serre')) %}{% endif %}
+          {% if a.furnished is not none and a.enrichment_status == 'done' %}{% set _ = feats.append(('Meublé' if a.furnished else 'Vide', 'Meublé / non meublé')) %}{% endif %}
+          {% if a.charges_included %}{% set _ = feats.append(('CC', 'Prix charges comprises')) %}{% elif a.charges %}{% set _ = feats.append(('+' ~ a.charges ~ ' € ch.', 'Charges mensuelles')) %}{% endif %}
+          {% if a.floor is not none %}{% set _ = feats.append(('RDC' if a.floor == 0 else 'Ét. ' ~ a.floor, 'Étage')) %}{% endif %}
+          {% if a.elevator %}{% set _ = feats.append(('Ascenseur', 'Ascenseur')) %}{% endif %}
+          {% if a.geo_precision == 'exact' %}{% set _ = feats.append(('📍 GPS', 'Position exacte fournie par l’annonce')) %}{% endif %}
+          {% if feats %}
+          <div class="card-feats">
+            {% for label, title in feats %}<span class="feat" title="{{ title }}">{{ label }}</span>{% endfor %}
+          </div>
+          {% endif %}
         </div>
 
         <div class="card-footer">

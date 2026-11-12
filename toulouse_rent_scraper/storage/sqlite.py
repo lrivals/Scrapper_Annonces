@@ -102,6 +102,7 @@ def insert_annonce(annonce: Dict) -> str:
                 distance_enac_km = COALESCE(?, distance_enac_km),
                 lat = COALESCE(?, lat),
                 lon = COALESCE(?, lon),
+                geo_precision = COALESCE(geo_precision, CASE WHEN ? IS NOT NULL THEN 'approx' END),
                 photos = COALESCE(photos, ?)
             WHERE url = ?
             """,
@@ -112,6 +113,7 @@ def insert_annonce(annonce: Dict) -> str:
                 annonce.get("distance_enac_km"),
                 annonce.get("lat"),
                 annonce.get("lon"),
+                annonce.get("lat"),
                 annonce.get("photos"),
                 url,
             ),
@@ -138,8 +140,9 @@ def insert_annonce(annonce: Dict) -> str:
             created_at,
             photos,
             lat,
-            lon
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            lon,
+            geo_precision
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         annonce.get("site"),
         annonce.get("title"),
@@ -151,6 +154,7 @@ def insert_annonce(annonce: Dict) -> str:
         annonce.get("photos"),
         annonce.get("lat"),
         annonce.get("lon"),
+        "approx" if annonce.get("lat") is not None else None,
     ))
     if annonce.get("price") is not None:
         _record_price(cur, cur.lastrowid, annonce["price"], now)
@@ -209,7 +213,7 @@ def annonces_for_scoring(profile: str) -> List[Dict]:
     with connect() as conn:
         rows = conn.execute(
             """
-            SELECT a.id, a.price, a.charges, a.surface_m2, a.furnished, a.dpe_rating,
+            SELECT a.id, a.price, a.charges, a.charges_included, a.surface_m2, a.furnished, a.dpe_rating,
                    COALESCE(a.status, 'active') AS status, ap.distance_km
             FROM annonces a
             JOIN annonce_profiles ap ON ap.annonce_id = a.id AND ap.profile = ?
@@ -407,35 +411,80 @@ def clear_db() -> int:
 def update_annonce_enrichment(url: str, data: Dict) -> bool:
     """
     Met à jour une annonce avec les données d'enrichissement.
-    Les champs 'photos' (liste) sont sérialisés en JSON.
+    Les listes et dictionnaires (photos, field_sources, extra_attributes) sont sérialisés en JSON.
+
+    Coordonnées : un point `exact` (fourni par l'annonce) remplace le géocodage de
+    l'adresse ; un point `approx` ne sert que si l'annonce n'en avait aucun.
     """
-    conn = get_connection()
-    cur = conn.cursor()
+    data = dict(data)
+    for key in ("photos", "field_sources", "extra_attributes"):
+        if isinstance(data.get(key), (list, dict)):
+            data[key] = json.dumps(data[key], ensure_ascii=False)
 
-    # Sérialiser les photos en JSON si c'est une liste
-    if "photos" in data and isinstance(data["photos"], list):
-        data["photos"] = json.dumps(data["photos"])
-
-    # Construire le SET dynamiquement
     allowed_fields = {
         "surface_m2", "nb_rooms", "nb_bedrooms", "floor",
         "description", "charges", "deposit", "furnished",
         "dpe_rating", "photos", "publisher_type", "published_at",
         "enriched_at", "enrichment_status", "enrichment_attempts", "error_detail",
+        # Sprint 15.1
+        "ges_rating", "elevator", "charges_included", "extraction_source",
+        "field_sources", "extra_attributes",
     }
-
     fields_to_update = {k: v for k, v in data.items() if k in allowed_fields}
 
-    if not fields_to_update:
-        conn.close()
+    set_parts = [f"{k} = ?" for k in fields_to_update]
+    values = list(fields_to_update.values())
+
+    lat, lon, precision = data.get("lat"), data.get("lon"), data.get("geo_precision")
+    if lat is not None and lon is not None:
+        if precision == "exact":
+            set_parts += ["lat = ?", "lon = ?", "geo_precision = 'exact'"]
+            values += [lat, lon]
+        else:
+            set_parts += [
+                "geo_precision = CASE WHEN lat IS NULL THEN 'approx' ELSE geo_precision END",
+                "lat = COALESCE(lat, ?)",
+                "lon = COALESCE(lon, ?)",
+            ]
+            values += [lat, lon]
+
+    if not set_parts:
         return False
 
-    set_clause = ", ".join(f"{k} = ?" for k in fields_to_update)
-    values = list(fields_to_update.values()) + [url]
-
-    cur.execute(f"UPDATE annonces SET {set_clause} WHERE url = ?", values)
-
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(f"UPDATE annonces SET {', '.join(set_parts)} WHERE url = ?", values + [url])
     updated = cur.rowcount > 0
     conn.commit()
     conn.close()
     return updated
+
+
+def get_coordinates(url: str) -> Optional[Dict]:
+    """{id, lat, lon, geo_precision} de l'annonce, ou None."""
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT id, lat, lon, geo_precision FROM annonces WHERE url = ?", (url,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def set_distances(annonce_id: int, distance_enac_km: Optional[float], by_profile: Dict[str, float]) -> int:
+    """
+    Met à jour la distance historique ENAC et la distance de chaque profil DÉJÀ rattaché
+    (une annonce n'est jamais rattachée à un nouveau profil ici). Retourne le nombre de profils mis à jour.
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    if distance_enac_km is not None:
+        cur.execute("UPDATE annonces SET distance_enac_km = ? WHERE id = ?", (distance_enac_km, annonce_id))
+    count = 0
+    for profile, dist in by_profile.items():
+        cur.execute(
+            "UPDATE annonce_profiles SET distance_km = ? WHERE annonce_id = ? AND profile = ?",
+            (dist, annonce_id, profile),
+        )
+        count += cur.rowcount
+    conn.commit()
+    conn.close()
+    return count

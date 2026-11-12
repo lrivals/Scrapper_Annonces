@@ -348,6 +348,19 @@ ENRICHMENT_DEFAULT_LIMIT = 50
 ENRICHMENT_MAX_ATTEMPTS = 3
 ENRICHMENT_RETRY_DELAY_HOURS = 24
 
+# Santé de l'extraction (Sprint 15.1) : taux de remplissage minimal attendu par champ
+# sur les annonces enrichies d'un run. En dessous → alerte « sélecteurs probablement cassés ».
+QUALITY_MIN_SAMPLES = 5            # pas de verdict en dessous de N annonces enrichies par site
+QUALITY_MIN_FILL_RATES = {
+    "surface_m2": 0.6,
+    "nb_rooms": 0.6,
+    "description": 0.6,
+    "photos": 0.6,
+}
+# Part minimale d'annonces LBC extraites depuis le JSON : en dessous, `__NEXT_DATA__`
+# a probablement disparu ou changé de forme
+QUALITY_MIN_JSON_RATE = {"LeBonCoin": 0.5}
+
 
 # =========================
 # ⭐ SCORE D'INTÉRÊT (Sprint 13)

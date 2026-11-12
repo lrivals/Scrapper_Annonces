@@ -20,10 +20,15 @@ def _raw(n, price=450, title="Studio", site="LeBonCoin"):
             "location_raw": "Rangueil", "url": f"https://lbc.fr/{site}/{n}"}
 
 
-def _matches(annonce, profiles=None):
+KNOWN_COORDS_SEEN = []
+
+
+def _matches(annonce, profiles=None, known_coords=None):
     """match_profiles simulé : ENAC si prix ≤ 500, sinon Blagnac."""
+    KNOWN_COORDS_SEEN.append(known_coords)
     price = int(annonce["price"].split()[0])
-    enriched = {**annonce, "price": price, "lat": 43.56, "lon": 1.46, "distance_enac_km": 1.0}
+    lat, lon = known_coords or (43.56, 1.46)
+    enriched = {**annonce, "price": price, "lat": lat, "lon": lon, "distance_enac_km": 1.0}
     if price > 750:
         return None, []
     return enriched, [(ENAC if price <= 500 else BLAGNAC, 1.5)]

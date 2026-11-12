@@ -168,10 +168,31 @@ def _m3_scores_and_enrichment_retry(cur: sqlite3.Cursor):
     """)
 
 
+def _m4_structured_extraction(cur: sqlite3.Cursor):
+    """Sprint 15.1 — champs issus du JSON embarqué, précision GPS, provenance des champs."""
+    a_cols = {r[1] for r in cur.execute("PRAGMA table_info(annonces)")}
+    new_columns = {
+        "ges_rating": "TEXT",
+        "elevator": "BOOLEAN",
+        "charges_included": "BOOLEAN",
+        "geo_precision": "TEXT",        # 'exact' (point de l'annonce) | 'approx' (commune, géocodage)
+        "extraction_source": "TEXT",    # 'json' | 'json+dom' | 'dom'
+        "field_sources": "TEXT",        # JSON {champ: 'json' | 'description' | 'dom'}
+        "extra_attributes": "TEXT",     # JSON des attributs bruts du site
+    }
+    for col, col_type in new_columns.items():
+        if col not in a_cols:
+            cur.execute(f"ALTER TABLE annonces ADD COLUMN {col} {col_type}")
+    # Coordonnées existantes : géocodage de l'adresse texte → approximatives
+    cur.execute("UPDATE annonces SET geo_precision = 'approx' WHERE lat IS NOT NULL AND geo_precision IS NULL")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_annonces_enrichment ON annonces(site, enrichment_status)")
+
+
 MIGRATIONS = [
     _m1_base_schema,
     _m2_indexes_and_price_history,
     _m3_scores_and_enrichment_retry,
+    _m4_structured_extraction,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)

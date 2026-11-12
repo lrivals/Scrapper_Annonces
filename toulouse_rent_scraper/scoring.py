@@ -22,15 +22,20 @@ def _clamp(value: float) -> float:
     return max(0.0, min(1.0, value))
 
 
-def rent_cc(price: Optional[int], charges: Optional[int]) -> Optional[int]:
+def rent_cc(price: Optional[int], charges: Optional[int], charges_included=None) -> Optional[int]:
+    """Loyer charges comprises. Si l'annonce indique un prix CC, les charges n'y sont pas rajoutées."""
     if price is None:
         return None
+    if charges_included:
+        return price
     return price + (charges or 0)
 
 
-def rent_score(price: Optional[int], charges: Optional[int], profile: SearchProfile) -> float:
+def rent_score(
+    price: Optional[int], charges: Optional[int], profile: SearchProfile, charges_included=None
+) -> float:
     """1 au loyer cible (ou en dessous), 0 au budget max, linéaire entre les deux."""
-    cc = rent_cc(price, charges)
+    cc = rent_cc(price, charges, charges_included)
     if cc is None:
         return NEUTRAL
     target = profile.target_rent_eur or profile.min_rent_eur
@@ -97,7 +102,9 @@ def compute_score(
 ) -> Tuple[float, Dict[str, float]]:
     """Retourne (score sur 100, valeur 0–1 de chaque critère)."""
     detail = {
-        "loyer": rent_score(annonce.get("price"), annonce.get("charges"), profile),
+        "loyer": rent_score(
+            annonce.get("price"), annonce.get("charges"), profile, annonce.get("charges_included")
+        ),
         "distance": distance_score(distance_km, profile),
         "prix_m2": price_per_m2_score(
             price_per_m2(annonce.get("price"), annonce.get("surface_m2")), median_ppm2

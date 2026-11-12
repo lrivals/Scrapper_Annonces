@@ -20,7 +20,14 @@ from config import (
 from scrapers.antibot import is_page_blocked, record_block, wait_for_challenge
 from scrapers.browser import chrome_session, BrowserError
 from storage.cleaner import is_expired_content
-from storage.sqlite import get_pending_annonces, init_db, set_annonce_status, update_annonce_enrichment
+from storage.sqlite import (
+    get_coordinates,
+    get_pending_annonces,
+    init_db,
+    set_annonce_status,
+    set_distances,
+    update_annonce_enrichment,
+)
 from utils.logger import setup_logger
 
 logger = setup_logger("enricher")
@@ -51,6 +58,41 @@ def _extractor_for(site: str):
     return None
 
 
+def _refresh_distances(url: str) -> bool:
+    """
+    L'annonce a maintenant un point GPS exact : distances ENAC et profils recalculées
+    (elles venaient du géocodage de l'adresse texte, souvent le centre de la commune).
+    """
+    from config import ENAC_LATITUDE, ENAC_LONGITUDE, SEARCH_PROFILES
+    from geo.distance import distance_km
+
+    coords = get_coordinates(url)
+    if not coords or coords.get("geo_precision") != "exact" or coords.get("lat") is None:
+        return False
+    point = (coords["lat"], coords["lon"])
+    by_profile = {key: distance_km(point, p.target) for key, p in SEARCH_PROFILES.items()}
+    set_distances(coords["id"], distance_km(point, (ENAC_LATITUDE, ENAC_LONGITUDE)), by_profile)
+    return True
+
+
+def report_extraction_health(rows_by_site: dict) -> list:
+    """Alerte (log + notification) si un site renvoie des fiches anormalement vides."""
+    from storage.quality import check_fill_rates
+
+    alerts = check_fill_rates(rows_by_site)
+    for alert in alerts:
+        logger.warning(f"🩺 {alert}")
+    if alerts:
+        from notify import send
+        send(
+            "Extraction dégradée — sélecteurs à vérifier",
+            "\n".join(alerts) + "\n\nDétail : python main.py quality",
+            priority="high",
+            tags=["warning"],
+        )
+    return alerts
+
+
 def enrich_annonces(
     site_filter: Optional[str] = None,
     limit: int = ENRICHMENT_DEFAULT_LIMIT,
@@ -78,6 +120,8 @@ def enrich_annonces(
     enriched_count = 0
     error_count = 0
     expired_count = 0
+    relocated_count = 0
+    done_by_site: dict = {}
 
     try:
         with chrome_session() as (_browser, page):
@@ -153,8 +197,12 @@ def enrich_annonces(
 
                 if detail_data.get("enrichment_status") == "done":
                     enriched_count += 1
+                    done_by_site.setdefault(site or "?", []).append(detail_data)
+                    if detail_data.get("geo_precision") == "exact" and _refresh_distances(url):
+                        relocated_count += 1
                     logger.info(
-                        f"  ✓ Enrichi : surface={detail_data.get('surface_m2')}m², "
+                        f"  ✓ Enrichi ({detail_data.get('extraction_source', '?')}) : "
+                        f"surface={detail_data.get('surface_m2')}m², "
                         f"pièces={detail_data.get('nb_rooms')}, DPE={detail_data.get('dpe_rating')}"
                     )
                 else:
@@ -170,7 +218,9 @@ def enrich_annonces(
         logger.error(f"Erreur critique dans l'enrichissement : {e}", exc_info=True)
         raise
 
-    # Surface, charges, DPE… ont changé : les scores aussi
+    report_extraction_health(done_by_site)
+
+    # Surface, charges, DPE, position… ont changé : les scores aussi
     if enriched_count:
         from scoring import rescore
         rescore()
@@ -178,6 +228,9 @@ def enrich_annonces(
     total = len(pending)
     logger.info(
         f"Enrichissement terminé : {enriched_count}/{total} enrichis, {error_count} erreurs, "
-        f"{expired_count} annonces retirées"
+        f"{expired_count} annonces retirées, {relocated_count} repositionnées (GPS exact)"
     )
-    return {"total": total, "enriched": enriched_count, "errors": error_count, "expired": expired_count}
+    return {
+        "total": total, "enriched": enriched_count, "errors": error_count,
+        "expired": expired_count, "relocated": relocated_count,
+    }
