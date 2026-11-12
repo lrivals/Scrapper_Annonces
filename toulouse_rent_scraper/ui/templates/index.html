@@ -44,7 +44,8 @@
         <input type="hidden" name="ids" id="doc-ids-input">
         <input type="hidden" name="profile" value="{{ profile.key }}">
       </form>
-      <div class="view-toggle">
+      <div class="view-toggle" id="view-toggle">
+        <span class="view-indicator" id="view-indicator" aria-hidden="true" hidden></span>
         <button class="btn-view active" id="btn-view-list" onclick="setView('list')">&#9776; Liste</button>
         <button class="btn-view" id="btn-view-map" onclick="setView('map')">&#128506; Carte</button>
       </div>
@@ -119,7 +120,7 @@
 
     <main class="grid" id="card-grid">
       {% for a in annonces %}
-      <article class="card">
+      <article class="card" style="--i: {{ [loop.index0, 10]|min }}">
         <a href="{{ a.url }}" target="_blank" class="card-image">
           {% if a.thumbnail %}
             <img src="{{ a.thumbnail }}" alt="{{ a.title }}" loading="lazy" referrerpolicy="no-referrer"

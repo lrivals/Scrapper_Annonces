@@ -9,6 +9,17 @@
   --shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
   --glass-bg: rgba(255, 255, 255, 0.9);
   --glass-border: #e5e7eb;
+
+  /* ---- Motion tokens ---- */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);       /* entrées */
+  --ease-in: cubic-bezier(0.55, 0, 1, 0.45);        /* sorties */
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);    /* déplacements à l'écran */
+  --dur-fast: 150ms;
+  --dur-enter: 200ms;
+  --dur-exit: 160ms;     /* ~20 % plus court que l'entrée */
+  --dur-move: 250ms;
+  --dur-weighty: 320ms;  /* révélations, changements de couleur */
+  --stagger: 30ms;
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -96,7 +107,7 @@ h1 {
   font-size: 0.875rem;
   background: white;
   color: var(--text-main);
-  transition: border-color 0.2s;
+  transition: border-color var(--dur-fast) var(--ease-out);
   min-width: 160px;
 }
 
@@ -123,7 +134,7 @@ h1 {
   cursor: pointer;
   font-size: 0.875rem;
   font-weight: 700;
-  transition: opacity 0.2s;
+  transition: opacity var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
 }
 .btn-filter:hover {
   opacity: 0.9;
@@ -137,7 +148,7 @@ h1 {
   font-weight: 600;
   border: 1px solid transparent;
   border-radius: 8px;
-  transition: all 0.2s;
+  transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
 }
 .btn-reset:hover {
   background: #f3f4f6;
@@ -154,7 +165,7 @@ h1 {
   font-size: 1rem;
   font-weight: 700;
   line-height: 1;
-  transition: all 0.2s;
+  transition: border-color var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
   flex-shrink: 0;
 }
 .btn-order:hover {
@@ -173,10 +184,29 @@ h1 {
   background: white;
   border: 1px solid var(--border);
   border-radius: 12px;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  transition:
+    transform var(--dur-enter) var(--ease-out),
+    box-shadow var(--dur-weighty) var(--ease-out),
+    border-color var(--dur-weighty) var(--ease-out);
   display: flex;
   flex-direction: column;
   padding: 24px;
+  /* Entrée en cascade : --i est posé par le template (plafonné) */
+  animation: card-enter var(--dur-weighty) var(--ease-out) backwards;
+  animation-delay: calc(var(--i, 0) * var(--stagger));
+}
+
+@keyframes card-enter {
+  from { opacity: 0; transform: translateY(8px); }
+}
+
+/* Sortie d'une carte masquée (plus courte que l'entrée) */
+.card.is-leaving {
+  animation: card-exit var(--dur-exit) var(--ease-in) forwards;
+  pointer-events: none;
+}
+@keyframes card-exit {
+  to { opacity: 0; transform: scale(0.96); }
 }
 
 .card:hover {
@@ -290,7 +320,7 @@ h1 {
   cursor: pointer;
   padding: 4px;
   border-radius: 4px;
-  transition: all 0.2s;
+  transition: color var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
 }
 .btn-del:hover {
   color: #ef4444;
@@ -317,6 +347,14 @@ h1 {
   font-weight: 600;
   box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1);
   z-index: 100;
+  animation: toast-enter var(--dur-enter) var(--ease-out);
+}
+.flash.is-leaving { animation: toast-exit var(--dur-exit) var(--ease-in) forwards; }
+@keyframes toast-enter {
+  from { opacity: 0; transform: translate(-50%, 12px) scale(0.95); }
+}
+@keyframes toast-exit {
+  to { opacity: 0; transform: translate(-50%, 8px) scale(0.97); }
 }
 .flash-ok  { background: #111827; color: white; }
 .flash-err { background: #ef4444; color: white; }
@@ -340,7 +378,7 @@ h1 {
   cursor: pointer;
   font-size: 0.8125rem;
   font-weight: 700;
-  transition: opacity 0.2s;
+  transition: opacity var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
 }
 .btn-scrape:hover { opacity: 0.85; }
 .btn-scrape:disabled { opacity: 0.6; cursor: not-allowed; }
@@ -354,7 +392,7 @@ h1 {
   cursor: pointer;
   font-size: 0.8125rem;
   font-weight: 700;
-  transition: all 0.2s;
+  transition: background-color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
 }
 .btn-clear-db:hover { background: #fef2f2; }
 
@@ -388,7 +426,11 @@ h1 {
   cursor: pointer;
   font-size: 0.8125rem;
   font-weight: 700;
-  transition: all 0.2s;
+  transition:
+    border-color var(--dur-weighty) var(--ease-out),
+    background-color var(--dur-weighty) var(--ease-out),
+    color var(--dur-weighty) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
 }
 .btn-doc-start:hover { border-color: var(--text-main); background: #f9fafb; }
 .btn-doc-start.active { background: var(--text-main); color: white; border-color: var(--text-main); }
@@ -399,7 +441,7 @@ h1 {
   color: var(--text-muted);
   display: none;
 }
-.doc-count-badge.visible { display: inline; }
+.doc-count-badge.visible { display: inline-block; animation: reveal var(--dur-weighty) var(--ease-out); }
 
 .btn-doc-export {
   padding: 8px 20px;
@@ -410,11 +452,11 @@ h1 {
   cursor: pointer;
   font-size: 0.8125rem;
   font-weight: 700;
-  transition: opacity 0.2s;
+  transition: opacity var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
   display: none;
 }
 .btn-doc-export:hover { opacity: 0.85; }
-.btn-doc-export.visible { display: inline-block; }
+.btn-doc-export.visible { display: inline-block; animation: reveal var(--dur-weighty) var(--ease-out); }
 
 .btn-doc-clear {
   padding: 8px 14px;
@@ -425,11 +467,11 @@ h1 {
   cursor: pointer;
   font-size: 0.8125rem;
   font-weight: 600;
-  transition: all 0.2s;
+  transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
   display: none;
 }
 .btn-doc-clear:hover { background: #fef2f2; color: #ef4444; }
-.btn-doc-clear.visible { display: inline-block; }
+.btn-doc-clear.visible { display: inline-block; animation: reveal var(--dur-weighty) var(--ease-out) 40ms backwards; }
 
 .btn-add-doc {
   padding: 5px 12px;
@@ -440,15 +482,25 @@ h1 {
   cursor: pointer;
   font-size: 0.75rem;
   font-weight: 700;
-  transition: all 0.2s;
+  transition:
+    border-color var(--dur-weighty) var(--ease-out),
+    background-color var(--dur-weighty) var(--ease-out),
+    color var(--dur-weighty) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
   display: none;
 }
 .btn-add-doc:hover { border-color: #059669; color: #059669; }
 .btn-add-doc.in-doc { background: #059669; color: white; border-color: #059669; }
-body.doc-mode-active .btn-add-doc { display: inline-block; }
+body.doc-mode-active .btn-add-doc { display: inline-block; animation: reveal var(--dur-weighty) var(--ease-out); }
+
+/* Révélation avec du poids : un peu de déplacement et de flou */
+@keyframes reveal {
+  from { opacity: 0; transform: translateY(4px); filter: blur(2px); }
+}
 
 /* Toujours visible (contrairement à .btn-add-doc, réservé au mode document) */
 .btn-restore {
+  transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
   padding: 5px 12px;
   background: white;
   color: var(--text-muted);
@@ -488,7 +540,7 @@ body.doc-mode-active .btn-add-doc { display: inline-block; }
   height: 100%;
   object-fit: cover;
   display: block;
-  transition: transform 0.3s ease;
+  transition: transform var(--dur-weighty) var(--ease-out);
 }
 
 .card:hover .card-image img {
@@ -510,6 +562,32 @@ body.doc-mode-active .btn-add-doc { display: inline-block; }
 .view-toggle {
   display: flex;
   gap: 8px;
+  position: relative;
+}
+/* Indicateur partagé : un seul élément qui glisse d'un bouton à l'autre
+   (équivalent d'un layoutId). Il remplace le fond noir des boutons actifs. */
+.view-indicator {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  border-radius: 8px;
+  background: var(--text-main);
+  pointer-events: none;
+  transition:
+    transform var(--dur-move) var(--ease-in-out),
+    width var(--dur-move) var(--ease-in-out);
+  view-transition-name: view-indicator;
+}
+.view-toggle.has-indicator .btn-view { position: relative; z-index: 1; background: transparent; }
+.view-toggle.has-indicator .btn-view:hover:not(.active) { background: rgb(17 24 39 / 0.04); }
+/* Les libellés ont leur propre calque pendant la View Transition,
+   pour rester au-dessus de l'indicateur qui glisse */
+.view-toggle.has-indicator #btn-view-list { view-transition-name: view-btn-list; }
+.view-toggle.has-indicator #btn-view-map  { view-transition-name: view-btn-map; }
+.view-toggle.has-indicator .btn-view.active {
+  background: transparent;
+  border-color: transparent;
 }
 .btn-view {
   padding: 8px 20px;
@@ -520,7 +598,11 @@ body.doc-mode-active .btn-add-doc { display: inline-block; }
   cursor: pointer;
   font-size: 0.8125rem;
   font-weight: 700;
-  transition: all 0.2s;
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    background-color var(--dur-weighty) var(--ease-out),
+    color var(--dur-weighty) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
 }
 .btn-view:hover { border-color: var(--text-main); background: #f9fafb; }
 .btn-view.active { background: var(--text-main); color: white; border-color: var(--text-main); }
@@ -562,4 +644,64 @@ body.doc-mode-active .btn-add-doc { display: inline-block; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ==== Motion : retours tactiles, confirmations, popovers ==== */
+
+/* Bouton enfoncé : légère compression */
+.btn-filter:active, .btn-reset:active, .btn-order:active, .btn-del:active,
+.btn-scrape:active:not(:disabled), .btn-clear-db:active, .btn-doc-start:active,
+.btn-doc-export:active, .btn-doc-clear:active, .btn-add-doc:active,
+.btn-restore:active, .btn-view:active {
+  transform: scale(0.97);
+}
+
+/* Pulsations de confirmation et fondus d'icônes : voir app.js (Web Animations API) */
+
+/* Popovers Leaflet : démarrent à 0,95, depuis le marqueur qui les déclenche.
+   (On anime les enfants : Leaflet positionne .leaflet-popup via transform.) */
+.leaflet-popup-content-wrapper {
+  transform-origin: 50% calc(100% + 20px);
+  animation: popover-in var(--dur-enter) var(--ease-out);
+}
+.leaflet-popup-tip-container {
+  transform-origin: 50% 100%;
+  animation: popover-in var(--dur-enter) var(--ease-out);
+}
+@keyframes popover-in {
+  from { opacity: 0; transform: scale(0.95); }
+}
+
+/* Bascule Liste / Carte : l'ancienne vue sort pendant que la nouvelle entre */
+::view-transition-old(root) {
+  animation: vt-fade-out var(--dur-exit) var(--ease-in) both;
+}
+::view-transition-new(root) {
+  animation: vt-fade-in var(--dur-enter) var(--ease-out) both;
+}
+::view-transition-group(view-indicator),
+::view-transition-group(view-btn-list),
+::view-transition-group(view-btn-map),
+::view-transition-old(view-btn-list), ::view-transition-new(view-btn-list),
+::view-transition-old(view-btn-map),  ::view-transition-new(view-btn-map) {
+  animation-duration: var(--dur-move);
+  animation-timing-function: var(--ease-in-out);
+}
+@keyframes vt-fade-out { to { opacity: 0; } }
+@keyframes vt-fade-in { from { opacity: 0; } }
+
+/* Fallback sans View Transitions */
+.view-enter { animation: vt-fade-in var(--dur-enter) var(--ease-out); }
+
+/* Accessibilité : pas de mouvement si l'utilisateur l'a demandé */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 1ms !important;
+    animation-delay: 0ms !important;
+    transition-duration: 1ms !important;
+  }
+  .spinner { animation-duration: 1.6s !important; }
+  ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) {
+    animation: none !important;
+  }
 }

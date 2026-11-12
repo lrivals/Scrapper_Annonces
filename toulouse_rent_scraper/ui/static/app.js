@@ -6,6 +6,61 @@ function csrfToken() {
   return meta ? meta.content : '';
 }
 
+/* ---- Motion helpers ---- */
+var EASE_OUT = 'cubic-bezier(0.22, 1, 0.36, 1)';
+var EASE_IN = 'cubic-bezier(0.55, 0, 1, 0.45)';
+var EASE_IN_OUT = 'cubic-bezier(0.65, 0, 0.35, 1)';
+var DUR_ENTER = 200, DUR_EXIT = 160, DUR_MOVE = 250, DUR_WEIGHTY = 320;
+
+function reducedMotion() {
+  return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+function canAnimate(el) { return el && el.animate && !reducedMotion(); }
+
+/* Petite pulsation pour confirmer une réussite */
+function pulse(el) {
+  if (!canAnimate(el)) return;
+  el.animate(
+    [{ transform: 'scale(1)' }, { transform: 'scale(1.06)', offset: 0.4 }, { transform: 'scale(1)' }],
+    { duration: DUR_WEIGHTY, easing: EASE_OUT }
+  );
+}
+function pulseRing(el) {
+  if (!canAnimate(el)) return;
+  el.animate(
+    [{ boxShadow: '0 0 0 0 rgba(5, 150, 105, 0.35)' }, { boxShadow: '0 0 0 10px rgba(5, 150, 105, 0)' }],
+    { duration: 600, easing: EASE_OUT }
+  );
+}
+
+/* Fondu enchaîné du contenu (icône / libellé) avec un peu d'échelle et de flou */
+function swapText(el, text, instant) {
+  if (el.textContent === text) return;
+  if (instant || !canAnimate(el) || !el.offsetParent) { el.textContent = text; return; }
+  var out = el.animate(
+    [{ opacity: 1, transform: 'scale(1)', filter: 'blur(0)' },
+     { opacity: 0, transform: 'scale(0.9)', filter: 'blur(2px)' }],
+    { duration: 100, easing: EASE_IN }
+  );
+  out.onfinish = function() {
+    el.textContent = text;
+    el.animate(
+      [{ opacity: 0, transform: 'scale(0.9)', filter: 'blur(2px)' },
+       { opacity: 1, transform: 'scale(1)', filter: 'blur(0)' }],
+      { duration: 150, easing: EASE_OUT }
+    );
+  };
+}
+
+/* Joue l'animation CSS de sortie (classe .is-leaving), puis appelle done */
+function leave(el, done) {
+  var finished = false;
+  function finish() { if (!finished) { finished = true; done(); } }
+  el.classList.add('is-leaving');
+  el.addEventListener('animationend', finish, { once: true });
+  setTimeout(finish, DUR_EXIT + 100);  // filet de sécurité
+}
+
 function showScrapeLog(line) {
   var el = document.getElementById('scrape-log');
   if (el) el.textContent = line || '';
@@ -42,7 +97,11 @@ function getIds() {
 function saveIds(ids) { localStorage.setItem('documentIds', JSON.stringify(ids)); }
 function isDocMode() { return localStorage.getItem('documentMode') === 'true'; }
 
+var _docUIReady = false;  // pas d'animation au premier rendu
+
 function updateDocUI() {
+  var instant = !_docUIReady;
+  _docUIReady = true;
   var ids = getIds();
   var active = isDocMode();
   var btnMode = document.getElementById('btn-doc-mode');
@@ -52,11 +111,11 @@ function updateDocUI() {
 
   if (active) {
     document.body.classList.add('doc-mode-active');
-    btnMode.textContent = 'Terminer';
+    swapText(btnMode, 'Terminer', instant);
     btnMode.classList.add('active');
   } else {
     document.body.classList.remove('doc-mode-active');
-    btnMode.textContent = 'Commencer document';
+    swapText(btnMode, 'Commencer document', instant);
     btnMode.classList.remove('active');
   }
 
@@ -76,11 +135,11 @@ function updateDocUI() {
     var id = parseInt(btn.id.replace('doc-btn-', ''));
     var card = btn.closest('article');
     if (ids.indexOf(id) !== -1) {
-      btn.textContent = '✓ Dans le doc';
+      swapText(btn, '✓ Dans le doc', instant);
       btn.classList.add('in-doc');
       if (card) card.classList.add('in-doc');
     } else {
-      btn.textContent = '+ Doc';
+      swapText(btn, '+ Doc', instant);
       btn.classList.remove('in-doc');
       if (card) card.classList.remove('in-doc');
     }
@@ -98,6 +157,12 @@ function toggleAnnonce(id) {
   if (idx === -1) { ids.push(id); } else { ids.splice(idx, 1); }
   saveIds(ids);
   updateDocUI();
+  if (idx === -1) {
+    var btn = document.getElementById('doc-btn-' + id);
+    pulse(btn);
+    pulseRing(btn && btn.closest('article'));
+    pulse(document.getElementById('doc-count'));
+  }
 }
 
 function clearDocument() {
@@ -153,7 +218,8 @@ function pollScrapingStatus() {
           _scrapingPoll = null;
           var btn = document.getElementById('btn-scrape');
           btn.disabled = false;
-          btn.textContent = 'Lancer le scraping';
+          btn.textContent = '✓ Terminé';
+          pulse(btn);
           setTimeout(function() { window.location.reload(); }, 1500);
         }
       });
@@ -186,11 +252,11 @@ document.querySelectorAll('form[action="/delete"], form[action="/restore"]').for
     .then(function(res) {
       if (res.ok) {
         var card = form.closest('article');
-        if (card) card.remove();
+        if (card) removeCard(card);
         var countEl = document.getElementById('annonce-count');
         if (countEl) {
           var n = parseInt(countEl.textContent) - 1;
-          countEl.textContent = n + ' annonce' + (n !== 1 ? 's' : '');
+          swapText(countEl, n + ' annonce' + (n !== 1 ? 's' : ''));
         }
         showToast('ok', res.msg);
       } else {
@@ -201,25 +267,95 @@ document.querySelectorAll('form[action="/delete"], form[action="/restore"]').for
   });
 });
 
+/* Retire une carte : elle sort, puis les voisines glissent à leur nouvelle place (FLIP) */
+function removeCard(card) {
+  leave(card, function() {
+    var grid = card.parentNode;
+    var siblings = Array.prototype.filter.call(grid.children, function(c) {
+      if (c === card) return false;
+      var r = c.getBoundingClientRect();
+      return r.bottom > -200 && r.top < window.innerHeight + 200;  // seulement autour de l'écran
+    });
+    var before = siblings.map(function(c) { return c.getBoundingClientRect(); });
+    card.remove();
+    if (reducedMotion()) return;
+    siblings.forEach(function(c, i) {
+      var after = c.getBoundingClientRect();
+      var dx = before[i].left - after.left, dy = before[i].top - after.top;
+      if (!dx && !dy) return;
+      c.animate(
+        [{ transform: 'translate(' + dx + 'px,' + dy + 'px)' }, { transform: 'none' }],
+        { duration: DUR_MOVE, easing: EASE_IN_OUT }
+      );
+    });
+  });
+}
+
+/* Toast : le nouveau entre pendant que l'ancien sort */
+function dismissToast(el) {
+  if (!el || el.classList.contains('is-leaving')) return;
+  leave(el, function() { el.remove(); });
+}
+
 function showToast(type, msg) {
-  var existing = document.querySelector('.flash');
-  if (existing) existing.remove();
+  document.querySelectorAll('.flash').forEach(dismissToast);
   var div = document.createElement('div');
   div.className = 'flash flash-' + type;
   div.textContent = msg;
   document.body.appendChild(div);
-  setTimeout(function() { div.remove(); }, 3000);
+  setTimeout(function() { dismissToast(div); }, 3000);
 }
 
 /* ---- Vue carte OpenStreetMap ---- */
 var _mapInitialized = false;
 var _leafletMap = null;
 
-function setView(view) {
+/* Indicateur partagé Liste / Carte : un seul élément qui se déplace */
+function positionIndicator(instant) {
+  var ind = document.getElementById('view-indicator');
+  var active = document.querySelector('#view-toggle .btn-view.active');
+  if (!ind || !active) return;
+  if (instant) ind.style.transition = 'none';
+  ind.style.width = active.offsetWidth + 'px';
+  ind.style.transform = 'translateX(' + active.offsetLeft + 'px)';
+  if (instant) { ind.offsetWidth; ind.style.transition = ''; }
+}
+
+(function initIndicator() {
+  var ind = document.getElementById('view-indicator');
+  if (!ind) return;
+  ind.hidden = false;
+  document.getElementById('view-toggle').classList.add('has-indicator');
+  positionIndicator(true);
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(function() { positionIndicator(true); });
+  }
+  window.addEventListener('resize', function() { positionIndicator(true); });
+})();
+
+function setView(view, instant) {
+  var current = document.getElementById('btn-view-map').classList.contains('active') ? 'map' : 'list';
+  if (view === current) instant = true;
+  if (!instant && document.startViewTransition && !reducedMotion()) {
+    // L'ancienne vue sort pendant que la nouvelle entre ; l'indicateur glisse
+    document.startViewTransition(function() { applyView(view, true); });
+  } else {
+    applyView(view, instant);
+    if (!instant && !reducedMotion()) {
+      var shown = document.getElementById(view === 'list' ? 'card-grid' : 'map-view');
+      shown.classList.remove('view-enter');
+      shown.offsetWidth;
+      shown.classList.add('view-enter');
+    }
+  }
+}
+
+function applyView(view, instantIndicator) {
   document.getElementById('card-grid').style.display = view === 'list' ? '' : 'none';
   document.getElementById('map-view').style.display  = view === 'map'  ? '' : 'none';
   document.getElementById('btn-view-list').classList.toggle('active', view === 'list');
   document.getElementById('btn-view-map').classList.toggle('active',  view === 'map');
+  positionIndicator(instantIndicator);
   var vi = document.getElementById('view-input');
   if (vi) vi.value = view;
   if (view === 'map') {
@@ -233,6 +369,11 @@ function setView(view) {
 }
 
 function initMap() {
+  if (typeof L === 'undefined') {  // Leaflet (CDN) indisponible : hors ligne, bloqué…
+    document.getElementById('map-ungeolocated').textContent =
+      '⚠ Impossible de charger la carte (Leaflet indisponible).';
+    return;
+  }
   var enacIcon = L.divIcon({
     className: '',
     html: '<div style="width:16px;height:16px;background:#111827;border-radius:50%;border:3px solid white;box-shadow:0 1px 5px rgba(0,0,0,0.6)"></div>',
@@ -296,5 +437,5 @@ function initMap() {
 /* Auto-restore map view if URL contains ?view=map */
 (function() {
   var p = new URLSearchParams(window.location.search);
-  if (p.get('view') === 'map') { setView('map'); }
+  if (p.get('view') === 'map') { setView('map', true); }
 })();
