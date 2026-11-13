@@ -55,6 +55,9 @@ def build_messages(events: List[Dict]) -> List[Dict]:
             a = infos.get(e["url"])
             if not a or e["url"] in seen:
                 continue
+            # Même bien déjà connu sur un autre site (doublon) : pas une nouveauté
+            if e["kind"] == "new" and a.get("duplicate_of"):
+                continue
             # Un favori (⭐, 15.6) est toujours suivi, quel que soit son score
             if (a.get("score") or 0) < config.NOTIFY_MIN_SCORE and a.get("feedback") != "favorite":
                 continue

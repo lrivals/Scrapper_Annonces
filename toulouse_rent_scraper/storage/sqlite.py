@@ -245,7 +245,7 @@ def annonces_for_notification(profile: str, urls: List[str]) -> Dict[str, Dict]:
         rows = conn.execute(
             f"""
             SELECT a.url, a.title, a.price, a.location_raw, a.surface_m2, a.nb_rooms, a.dpe_rating,
-                   a.scam_risk, a.available_from, ap.distance_km, ap.score, f.feedback
+                   a.scam_risk, a.available_from, a.duplicate_of, ap.distance_km, ap.score, f.feedback
             FROM annonces a
             JOIN annonce_profiles ap ON ap.annonce_id = a.id AND ap.profile = ?
             LEFT JOIN annonce_feedback f ON f.annonce_id = a.id AND f.profile = ap.profile
@@ -330,6 +330,48 @@ def find_potential_duplicates(annonce: Dict) -> List[Dict]:
             matches.append(candidate)
 
     return matches
+
+
+def annonces_without_photo_hash(max_attempts: int, limit: int) -> List[Dict]:
+    """Annonces actives avec photo et sans empreinte (15.8), des plus récentes aux plus anciennes."""
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, url, site, photos FROM annonces
+            WHERE COALESCE(status, 'active') = 'active'
+              AND photo_hash IS NULL AND photos IS NOT NULL AND photos NOT IN ('', '[]')
+              AND COALESCE(photo_hash_attempts, 0) < ?
+            ORDER BY id DESC LIMIT ?
+            """,
+            (max_attempts, limit),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def save_photo_hash(annonce_id: int, photo_hash: Optional[str]) -> None:
+    """Empreinte calculée, ou None = échec (une tentative de plus)."""
+    with connect() as conn:
+        if photo_hash:
+            conn.execute("UPDATE annonces SET photo_hash = ? WHERE id = ?", (photo_hash, annonce_id))
+        else:
+            conn.execute(
+                "UPDATE annonces SET photo_hash_attempts = COALESCE(photo_hash_attempts, 0) + 1 WHERE id = ?",
+                (annonce_id,),
+            )
+
+
+def photo_hash_rows() -> List[Dict]:
+    """Annonces actives avec une empreinte photo, et le site de leur origine si ce sont des doublons."""
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT a.id, a.url, a.site, a.price, a.photo_hash, a.duplicate_of, o.site AS root_site
+            FROM annonces a
+            LEFT JOIN annonces o ON o.id = a.duplicate_of
+            WHERE a.photo_hash IS NOT NULL AND COALESCE(a.status, 'active') = 'active'
+            """
+        ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def set_duplicate_of(url: str, original_id: int) -> bool:

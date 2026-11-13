@@ -269,6 +269,12 @@ def run_scraping(
     from scrapers.enricher import report_extraction_health
     report_extraction_health({site: rows for site, rows in health_rows.items() if rows})
 
+    # Doublons inter-sites par empreinte photo (15.8) : avant l'analyse LLM (un doublon
+    # réutilise l'analyse de l'original) et les notifications (un bien déjà connu n'est
+    # pas annoncé comme nouveau)
+    from filters.photo_duplicates import run_photo_dedup
+    total.duplicates += run_photo_dedup()["linked"]
+
     # Analyse LLM des nouvelles descriptions (15.4, si activée) : avant le score et les
     # notifications, pour que le malus « risque d'arnaque » filtre les alertes
     from analysis.llm import maybe_analyze

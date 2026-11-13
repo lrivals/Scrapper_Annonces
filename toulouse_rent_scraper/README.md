@@ -91,6 +91,7 @@ python main.py purge                               # vérification HEAD (peu fia
 python main.py export csv|json                     # export des annonces actives
 python main.py rescore                             # recalculer les scores (après un changement de poids)
 python main.py weights [--apply|--reset]           # poids du score appris de vos ⭐ / 📞 / 👎
+python main.py dedupe                              # doublons inter-sites par empreinte de la 1re photo
 python main.py notify-test                         # vérifier la configuration des notifications
 python main.py quality [--days 7]                  # taux de remplissage des champs par site (santé de l’extraction)
 python main.py analyze [--limit 20]                # analyse LLM des nouvelles descriptions (une lecture par texte) — voir SPRINT_15

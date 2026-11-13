@@ -226,6 +226,11 @@ def enrich_annonces(
         from storage.cleaner import _notify_gone
         _notify_gone(gone)
 
+    # Photos complètes : empreintes et doublons par photo (15.8), avant l'analyse LLM
+    if enriched_count:
+        from filters.photo_duplicates import run_photo_dedup
+        run_photo_dedup()
+
     # Nouvelles descriptions : analyse LLM (15.4, si activée) avant le recalcul des scores
     if enriched_count:
         from analysis.llm import maybe_analyze

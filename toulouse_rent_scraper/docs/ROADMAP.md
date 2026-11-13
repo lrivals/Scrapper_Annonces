@@ -2,7 +2,7 @@
 
 > Document de suivi global des sprints. Mis à jour au fil de l'avancement.
 >
-> **Dernière mise à jour** : 2026-11-13 — Sprint 15 (15.1, 15.2, 15.4, 15.5, 15.6 et 15.7 livrés) ; audit : [AUDIT_2026-11.md](AUDIT_2026-11.md)
+> **Dernière mise à jour** : 2026-11-13 — Sprint 15 (tout livré sauf 15.3) ; audit : [AUDIT_2026-11.md](AUDIT_2026-11.md)
 
 ---
 
@@ -35,7 +35,7 @@ Sprint 12 (Refactor & sécurité)            ✅
     ↓
 Sprint 13 (Alerte & priorisation)          ✅
     ↓
-Sprint 15 (Fiches détaillées & sources)    🔵  15.1 ✅ 15.2 ✅ 15.4 ✅ 15.5 ✅ 15.6 ✅ 15.7 ✅
+Sprint 15 (Fiches détaillées & sources)    🔵  15.1 ✅ 15.2 ✅ 15.4 ✅ 15.5 ✅ 15.6 ✅ 15.7 ✅ 15.8 ✅
     ↓
 Sprint 4 (PAP.fr)  — profite du refactor 12 et du modèle commun 15.7
     ↓
@@ -85,7 +85,7 @@ Sprint 2-bis (API REST & Dashboard)
 | 15.5 | Critères éliminatoires par profil | ✅ | Inconnu = conservé ; recalculé à chaque rescore |
 | 15.6 | Retours ⭐/👎 → poids appris | ✅ | Appliqués sur confirmation ; suivi des favoris |
 | 15.7 | Source Bien'ici (API JSON) + modèle `Listing` | ✅ | `ApiScraper` : sources sans navigateur |
-| 15.8 | Doublons par empreinte photo | 🔲 | |
+| 15.8 | Doublons par empreinte photo | ✅ | dHash Pillow ; `python main.py dedupe` |
 
 ---
 

@@ -357,6 +357,16 @@ LOG_LEVEL = "INFO"
 # Même bien publié sur deux sites : écart de prix toléré (en euros)
 DUPLICATE_PRICE_TOLERANCE = 5
 
+# Sprint 15.8 — doublons par empreinte de la 1ʳᵉ photo (dHash 64 bits, Pillow)
+PHOTO_DEDUP_ENABLED = True
+PHOTO_HASH_MAX_PER_RUN = 150      # photos téléchargées au plus par run
+PHOTO_HASH_MAX_ATTEMPTS = 2       # échecs de téléchargement avant abandon
+PHOTO_HASH_DELAY = 0.3            # pause entre deux téléchargements (s)
+PHOTO_MAX_BYTES = 5_000_000
+PHOTO_HASH_MAX_DISTANCE = 6       # bits différents au plus (sur 64) pour « même photo »
+PHOTO_DUP_PRICE_TOLERANCE = 30    # € : un même bien peut être affiché HC sur un site, CC sur l'autre
+PHOTO_GENERIC_MAX_SAME_SITE = 3   # au-delà, la photo est générique (logo d'agence…) : ignorée
+
 
 # =========================
 # 🕒 PLANIFICATION

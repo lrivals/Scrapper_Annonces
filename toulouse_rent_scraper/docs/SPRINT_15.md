@@ -1,7 +1,7 @@
 # Sprint 15 — Fiches détaillées, tri affiné, nouvelles sources
 
 > **Date** : 2026-11-12
-> **Statut** : 🔵 En cours — 15.1, 15.2, 15.4, 15.5, 15.6 et 15.7 livrés ; 15.3 et 15.8 planifiés
+> **Statut** : 🔵 En cours — 15.1, 15.2, 15.4 à 15.8 livrés ; reste 15.3 (SeLoger, nécessite une capture réelle)
 > **Origine** : réflexion « comment améliorer la récolte, le tri, l'automatisation et la couverture »
 > **Prérequis** : [Sprint 12](SPRINT_12.md) (migrations versionnées, `chrome_session`), [Sprint 13](SPRINT_13.md) (score, notifications), [Sprint 14](SPRINT_14.md) (profils)
 
@@ -33,7 +33,7 @@ Constat de départ :
 | 15.5 | Critères éliminatoires par profil | ✅ | Distincts des poids du score ; à remplir par profil |
 | 15.6 | Retours ⭐ / 👎 dans l'UI → poids appris | ✅ | Régression logistique ; appliqués sur confirmation |
 | 15.7 | Nouvelle source : Bien'ici (API JSON) + modèle `Listing` | ✅ | À valider sur la vraie API (voir bilan) ; puis PAP ([Sprint 4](SPRINT_4.md)) |
-| 15.8 | Doublons inter-sites par empreinte photo | 🔲 | `imagehash` |
+| 15.8 | Doublons inter-sites par empreinte photo | ✅ | dHash avec Pillow (sans `imagehash`) |
 
 Hors sprint, à garder en tête : temps de trajet (13.5, désormais possible grâce au GPS
 exact), suivi des candidatures (contacté → visite → réponse), message de contact
@@ -526,8 +526,59 @@ anti-ban habituel), résultats ajoutés page par page (une erreur en page 3 gard
 - Annonces retirées : `check-links` utilise les marqueurs génériques (« annonce n'est plus
   disponible »…) ; à confirmer sur une annonce Bien'ici expirée.
 
-## 15.8 — Doublons inter-sites par empreinte photo 🔲
+## 15.8 — Doublons inter-sites par empreinte photo ✅
 
-Hash perceptuel (`imagehash.phash`) de la première photo, stocké en base ; deux annonces
-de sites différents avec une distance de Hamming ≤ 6 et un prix proche → `duplicate_of`.
-Complète la détection actuelle (prix + mots de la localisation).
+**Fichiers** : `filters/photo_duplicates.py` (nouveau), `config.py`, `storage/migrations.py`
+(migration 9), `storage/sqlite.py`, `pipeline.py`, `scrapers/enricher.py`, `notify/messages.py`,
+`main.py`, `requirements.txt`, `tests/conftest.py`, `tests/test_photo_duplicates.py` (nouveau)
+
+### Principe
+
+La détection historique (prix ±5 € + 2 mots communs dans la localisation) échoue dès que les sites
+décrivent l'adresse différemment (« Blagnac » sur Bien'ici, « Blagnac 31700 Centre » sur LBC). Les
+photos, elles, sont presque toujours les mêmes, seulement redimensionnées et recompressées.
+
+- **Empreinte** : dHash 64 bits de la 1ʳᵉ photo (image réduite à 9×8 en niveaux de gris, un bit par
+  comparaison de pixels voisins), calculée avec **Pillow seul** — `imagehash` aurait ajouté numpy,
+  scipy et PyWavelets pour le même résultat. Insensible à la taille, à la compression JPEG, à un
+  léger flou (vérifié par les tests). Sans Pillow, l'étape est sautée avec un message.
+- **Migration 9** : `photo_hash` (16 caractères hexa, indexé) et `photo_hash_attempts`.
+- **Téléchargement** : `requests` (pas de navigateur), 150 photos au plus par run, 0,3 s entre deux,
+  5 Mo maximum, `Content-Type` image exigé, des plus récentes aux plus anciennes. Un échec est
+  retenté une fois au run suivant (`PHOTO_HASH_MAX_ATTEMPTS = 2`), puis abandonné.
+
+### Rapprochement
+
+Deux annonces sont le même bien si :
+
+| Règle | Réglage |
+|---|---|
+| Sites différents | — |
+| Empreintes à ≤ 6 bits d'écart sur 64 | `PHOTO_HASH_MAX_DISTANCE` |
+| Prix à ±30 € (un site affiche HC, l'autre CC) | `PHOTO_DUP_PRICE_TOLERANCE` |
+| Photo non générique : même empreinte sur > 3 annonces d'un même site = logo d'agence, ignorée ; image unie ignorée | `PHOTO_GENERIC_MAX_SAME_SITE` |
+
+La plus récente est rattachée (`duplicate_of`) à la **racine** de la plus ancienne : jamais de chaîne
+de doublons, jamais rattachée à une annonce du même site que sa racine. Les rattachements existants
+ne sont pas modifiés.
+
+### Intégration
+
+- Fin de `scrape` (après la collecte, **avant l'analyse LLM** — un doublon réutilise l'analyse de
+  l'original, donc un appel économisé — et avant les notifications) et fin de `enrich`.
+- Notifications : une **nouvelle** annonce qui est un doublon n'est plus signalée (le bien est déjà
+  connu) ; une baisse de prix sur un doublon l'est toujours. Vaut aussi pour les doublons texte.
+- UI : rien de nouveau, le lien « aussi sur … » et le filtre « Doublons » existants s'appliquent.
+- CLI : `python main.py dedupe [--limit N]` (rattrapage des annonces déjà en base).
+- Tests : `PHOTO_DEDUP_ENABLED` est désactivé par défaut (`conftest`) — aucun téléchargement.
+
+### Bilan
+
+- Tests : `tests/test_photo_duplicates.py` (33 tests : robustesse de l'empreinte sur des photos
+  synthétiques redimensionnées / recompressées / floutées, photos différentes, PNG, image illisible,
+  image unie, lecture de `photos`, chaque règle de rapprochement, logo d'agence, racine sans chaîne,
+  trois sites en une passe, téléchargement plafonné, échecs retentés puis abandonnés, limite par run,
+  bout en bout LBC ↔ Bien'ici avec adresses différentes, notifications, CLI). Suite complète verte.
+- ⚠️ **À valider en réel** : `python main.py dedupe`, puis dans l'UI filtrer un profil et vérifier
+  2–3 liens « aussi sur … » créés par la photo (log `📷 Doublon par photo`). Si les CDN d'images
+  répondent 403 (log en DEBUG), il faudra ajouter un en-tête `Referer` du site.

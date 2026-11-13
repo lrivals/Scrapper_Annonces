@@ -275,6 +275,16 @@ def _m8_feedback(cur: sqlite3.Cursor):
     cur.execute("CREATE INDEX IF NOT EXISTS idx_feedback_profile ON annonce_feedback(profile, feedback)")
 
 
+def _m9_photo_hash(cur: sqlite3.Cursor):
+    """Sprint 15.8 — empreinte perceptuelle de la première photo (doublons inter-sites)."""
+    a_cols = {r[1] for r in cur.execute("PRAGMA table_info(annonces)")}
+    if "photo_hash" not in a_cols:
+        cur.execute("ALTER TABLE annonces ADD COLUMN photo_hash TEXT")    # 16 caractères hexa
+    if "photo_hash_attempts" not in a_cols:
+        cur.execute("ALTER TABLE annonces ADD COLUMN photo_hash_attempts INTEGER DEFAULT 0")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_annonces_photo_hash ON annonces(photo_hash)")
+
+
 MIGRATIONS = [
     _m1_base_schema,
     _m2_indexes_and_price_history,
@@ -284,6 +294,7 @@ MIGRATIONS = [
     _m6_llm_registry,
     _m7_profile_requirements,
     _m8_feedback,
+    _m9_photo_hash,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)
