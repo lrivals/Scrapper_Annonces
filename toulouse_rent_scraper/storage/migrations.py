@@ -252,6 +252,14 @@ def _m6_llm_registry(cur: sqlite3.Cursor):
         cur.execute("UPDATE annonces SET llm_input_hash = ? WHERE id = ?", (h, annonce_id))
 
 
+def _m7_profile_requirements(cur: sqlite3.Cursor):
+    """Sprint 15.5 — exclusion d'une annonce par les critères éliminatoires d'un profil."""
+    ap_cols = {r[1] for r in cur.execute("PRAGMA table_info(annonce_profiles)")}
+    if "excluded_reasons" not in ap_cols:
+        # NULL = conservée ; JSON [raison, …] = exclue (recalculé à chaque rescore)
+        cur.execute("ALTER TABLE annonce_profiles ADD COLUMN excluded_reasons TEXT")
+
+
 MIGRATIONS = [
     _m1_base_schema,
     _m2_indexes_and_price_history,
@@ -259,6 +267,7 @@ MIGRATIONS = [
     _m4_structured_extraction,
     _m5_llm_analysis,
     _m6_llm_registry,
+    _m7_profile_requirements,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)

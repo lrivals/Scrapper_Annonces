@@ -126,6 +126,28 @@ LEBONCOIN_SEARCH_URL = build_leboncoin_search_url(
 # =========================
 
 @dataclass(frozen=True)
+class Requirements:
+    """
+    Critères éliminatoires d'un profil (Sprint 15.5), distincts des poids du score :
+    une annonce qui en viole un est exclue du profil (masquée par défaut dans l'UI,
+    jamais notifiée). Une information inconnue ne fait JAMAIS exclure l'annonce.
+    L'exclusion est recalculée à chaque `rescore` : modifier un critère ici puis
+    `python main.py rescore` la lève ou l'applique, sans rien perdre.
+    """
+    available_before: Optional[str] = None      # AAAA-MM-JJ : libre au plus tard ce jour-là
+    apl_required: bool = False                  # exclut si l'annonce refuse les APL
+    no_ground_floor: bool = False               # exclut le rez-de-chaussée
+    min_surface_m2: Optional[float] = None
+    furnished: Optional[bool] = None            # True = meublé exigé, False = vide exigé
+    no_colocation: bool = False
+    excluded_lease_types: Tuple[str, ...] = ()  # ex. ("saisonnier", "mobilite")
+    max_dpe: Optional[str] = None               # ex. "E" : exclut F et G
+
+    def is_empty(self) -> bool:
+        return self == Requirements()
+
+
+@dataclass(frozen=True)
 class SearchProfile:
     """Un cas d'usage : une cible, un budget, un rayon, et les recherches associées."""
     key: str
@@ -150,6 +172,8 @@ class SearchProfile:
     bienici_places: Tuple[str, ...] = ()
     bienici_zone_ids: Tuple[str, ...] = ()
     bienici_property_types: Tuple[str, ...] = ("flat",)   # flat, house, loft, castle, townhouse
+    # Critères éliminatoires (15.5) — ex. Requirements(apl_required=True, min_surface_m2=18)
+    requirements: Requirements = Requirements()
     enabled: bool = True
 
     @property

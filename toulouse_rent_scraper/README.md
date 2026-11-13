@@ -131,6 +131,16 @@ Chaque annonce reçoit, pour chaque profil, un score sur 100 (pastille ★ dans 
 Un critère inconnu (annonce pas encore enrichie) vaut 0.5 : il ne pénalise pas. Poids réglables via
 `SCORE_WEIGHTS` dans `config.py`, puis `python main.py rescore`.
 
+### Critères éliminatoires
+
+Distincts du score : `requirements=Requirements(...)` dans le profil (`config.py`), par exemple
+`Requirements(apl_required=True, no_ground_floor=True, min_surface_m2=18, available_before="2027-01-15")`.
+Une annonce qui en viole un est **exclue du profil** : masquée par défaut dans l'interface (filtre
+« Critères » pour les revoir, motif ⛔ sur la carte), absente des notifications et des rapports.
+Une information inconnue n'exclut jamais. Recalculé à chaque `rescore` : rien n'est perdu en
+modifiant un critère. Critères : `available_before`, `apl_required`, `no_ground_floor`,
+`min_surface_m2`, `furnished`, `no_colocation`, `excluded_lease_types`, `max_dpe`.
+
 ### Notifications
 
 Nouvelles annonces et baisses de loyer (≥ 20 €) au-dessus du score minimal (`NOTIFY_MIN_SCORE`, 55)

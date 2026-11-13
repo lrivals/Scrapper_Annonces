@@ -117,6 +117,7 @@ _PROFILE_QUERY = """
     FROM annonces a
     JOIN annonce_profiles ap ON ap.annonce_id = a.id AND ap.profile = ?
     WHERE COALESCE(a.status, 'active') = 'active'
+      AND ap.excluded_reasons IS NULL   -- critères éliminatoires du profil (15.5)
 """
 
 

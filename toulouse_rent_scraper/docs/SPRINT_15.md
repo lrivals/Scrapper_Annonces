@@ -1,7 +1,7 @@
 # Sprint 15 — Fiches détaillées, tri affiné, nouvelles sources
 
 > **Date** : 2026-11-12
-> **Statut** : 🔵 En cours — 15.1, 15.2, 15.4 et 15.7 livrés ; 15.3, 15.5, 15.6 et 15.8 planifiés
+> **Statut** : 🔵 En cours — 15.1, 15.2, 15.4, 15.5 et 15.7 livrés ; 15.3, 15.6 et 15.8 planifiés
 > **Origine** : réflexion « comment améliorer la récolte, le tri, l'automatisation et la couverture »
 > **Prérequis** : [Sprint 12](SPRINT_12.md) (migrations versionnées, `chrome_session`), [Sprint 13](SPRINT_13.md) (score, notifications), [Sprint 14](SPRINT_14.md) (profils)
 
@@ -30,7 +30,7 @@ Constat de départ :
 | 15.2 | LBC : annonces complètes dès la page de recherche | ✅ | À valider sur une vraie page (voir bilan) |
 | 15.3 | SeLoger : extraction depuis l'état JSON embarqué | 🔲 | Même principe que 15.1 |
 | 15.4 | Analyse de la description par LLM | ✅ | Optionnelle ; LLM et clé de l'utilisateur ; une seule lecture par texte (15.4-bis) |
-| 15.5 | Critères éliminatoires par profil | 🔲 | Distincts des poids du score |
+| 15.5 | Critères éliminatoires par profil | ✅ | Distincts des poids du score ; à remplir par profil |
 | 15.6 | Retours ⭐ / 👎 dans l'UI → poids appris | 🔲 | Régression logistique simple |
 | 15.7 | Nouvelle source : Bien'ici (API JSON) + modèle `Listing` | ✅ | À valider sur la vraie API (voir bilan) ; puis PAP ([Sprint 4](SPRINT_4.md)) |
 | 15.8 | Doublons inter-sites par empreinte photo | 🔲 | `imagehash` |
@@ -343,11 +343,56 @@ normalisé — espaces et casse ignorés), avec le résultat, le nombre d'appels
 - ⚠️ À valider en réel : une connexion par famille (Claude et, par exemple, Ollama local) avec
   « Tester la connexion », puis `analyze --limit 5` et `analyze --stats`.
 
-## 15.5 — Critères éliminatoires par profil 🔲
+## 15.5 — Critères éliminatoires par profil ✅
 
-`SearchProfile.requirements` : ex. `available_before`, `apl_required`, `no_ground_floor`,
-`min_surface_m2`. Une annonce qui ne les respecte pas est masquée du profil (statut par
-profil, réversible) au lieu d'être seulement moins bien notée. Inconnu = conservé.
+**Fichiers** : `filters/requirements.py` (nouveau), `config.py`, `storage/migrations.py`
+(migration 7), `storage/sqlite.py`, `storage/queries.py`, `scoring.py`, `reporting/generator.py`,
+`ui/routes.py`, `ui/templates/index.html`, `ui/static/app.css`, `tests/test_requirements.py` (nouveau)
+
+### Principe
+
+Le score classe ; les critères **trient**. `SearchProfile.requirements` (`config.Requirements`) :
+
+| Critère | Exclut si… | Source de la donnée |
+|---|---|---|
+| `available_before="AAAA-MM-JJ"` | disponible après cette date (« immédiate » passe) | LLM (15.4) |
+| `apl_required=True` | l'annonce refuse les APL | LLM |
+| `no_ground_floor=True` | étage = 0 | JSON / DOM |
+| `min_surface_m2` | surface inférieure | JSON / DOM |
+| `furnished=True / False` | meublé ≠ exigé (seulement après enrichissement) | JSON / DOM |
+| `no_colocation=True` | colocation | LLM |
+| `excluded_lease_types=(…)` | type de bail listé (`saisonnier`, `mobilite`…) | LLM |
+| `max_dpe="E"` | DPE plus mauvais | JSON / DOM |
+
+**Inconnu = conservé** : une valeur absente (pas encore enrichie, pas analysée, « NS ») n'exclut
+jamais. Le « meublé » d'une annonce non enrichie est ignoré (valeur par défaut des cartes).
+
+### Stockage et calcul
+
+- Migration 7 : `annonce_profiles.excluded_reasons` (NULL = conservée, JSON des motifs sinon) —
+  **par profil** : un rez-de-chaussée peut être exclu d'ENAC et rester dans Blagnac.
+- Calculé dans `rescore`, donc après l'enrichissement et l'analyse LLM, et **réversible** :
+  assouplir un critère puis `python main.py rescore` réintègre les annonces. Le masquage manuel
+  (`status = 'hidden'`) reste indépendant.
+- Exclues : pas de notification (`annonces_for_notification`), pas dans les rapports Markdown.
+  Le score reste calculé (utile pour 15.6).
+
+### UI
+
+- Bandeau « Critères ENAC : APL acceptées · pas de rez-de-chaussée — **N annonces exclues** » (lien).
+- Filtre « Critères » : Respectés (défaut) / Tout afficher / Exclues seulement ; aussi sur la carte.
+- Motif sur la carte d'une annonce exclue : pastille ⛔ « rez-de-chaussée · APL refusées ».
+- Profil sans critère : ni bandeau ni filtre.
+
+### Bilan
+
+- Tests : `tests/test_requirements.py` (33 tests : chaque règle, valeurs inconnues, meublé avant
+  enrichissement, migration, exclusion par profil, réversibilité, champs LLM, notifications, UI,
+  carte). Suite complète verte.
+- **À faire par l'utilisateur** : les profils ENAC et Blagnac n'ont pas encore de critères
+  (`Requirements()` vide, aucun effet). Les renseigner dans `config.py`, puis `python main.py rescore`.
+- Les critères issus de la description (disponibilité, APL, colocation, bail) ne jouent que si
+  l'analyse LLM (15.4) est activée.
 
 ## 15.6 — Retours ⭐ / 👎 et poids appris 🔲
 

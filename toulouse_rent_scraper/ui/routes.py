@@ -13,8 +13,10 @@ from flask import Blueprint, jsonify, make_response, redirect, render_template, 
 
 from config import BASE_DIR, DEFAULT_PROFILE, LOG_DIR, SEARCH_PROFILES
 from storage.queries import (
-    SORT_COLUMNS, ListingFilters, annonces_by_ids, list_annonces, list_sites, map_listings,
+    SORT_COLUMNS, ListingFilters, annonces_by_ids, count_excluded, list_annonces, list_sites,
+    map_listings,
 )
+from filters.requirements import describe_requirements
 from storage.sqlite import clear_db, set_annonce_status
 from ui.export import build_candidature_markdown, candidature_filename
 from scoring import describe as describe_score
@@ -41,6 +43,22 @@ def _thumbnail(photos_json):
     except (json.JSONDecodeError, TypeError):
         return None
     return photos[0] if photos else None
+
+
+def _json_list(value):
+    try:
+        items = json.loads(value) if value else []
+    except (json.JSONDecodeError, TypeError):
+        return []
+    return items if isinstance(items, list) else []
+
+
+def _with_param(url: str, key: str, value: str) -> str:
+    """Même URL avec un paramètre remplacé (lien « N annonces exclues »)."""
+    parsed = urlparse(url)
+    params = {k: v[0] for k, v in parse_qs(parsed.query, keep_blank_values=True).items()}
+    params[key] = value
+    return urlunparse(parsed._replace(query=urlencode(params)))
 
 
 def _add_flash(url: str, ftype: str, msg: str) -> str:
@@ -75,6 +93,7 @@ def index():
     for a in annonces:
         a["thumbnail"] = _thumbnail(a.get("photos"))
         a["score_text"] = describe_score(a.get("score_detail"))
+        a["excluded"] = _json_list(a.get("excluded_reasons"))
 
     shown = filters.cleaned()
     flash = None
@@ -93,6 +112,10 @@ def index():
         current_site=shown.site,
         current_status=shown.status,
         current_dups=shown.dups,
+        current_excl=shown.excl,
+        requirements=describe_requirements(profile.requirements),
+        excluded_url=_with_param(request.full_path, "excl", "only"),
+        excluded_count=count_excluded(profile.key, shown) if shown.excl != "only" else len(annonces),
         current_prix_min=shown.prix_min,
         current_prix_max=shown.prix_max,
         current_sort=sort,

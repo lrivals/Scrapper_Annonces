@@ -214,7 +214,8 @@ def annonces_for_scoring(profile: str) -> List[Dict]:
         rows = conn.execute(
             """
             SELECT a.id, a.price, a.charges, a.charges_included, a.surface_m2, a.furnished, a.dpe_rating,
-                   a.scam_risk,
+                   a.scam_risk, a.floor, a.available_from, a.apl_ok, a.colocation, a.lease_type,
+                   a.enrichment_status,
                    COALESCE(a.status, 'active') AS status, ap.distance_km
             FROM annonces a
             JOIN annonce_profiles ap ON ap.annonce_id = a.id AND ap.profile = ?
@@ -232,7 +233,10 @@ def get_price(url: str) -> Optional[int]:
 
 
 def annonces_for_notification(profile: str, urls: List[str]) -> Dict[str, Dict]:
-    """Titre, prix, distance et score des annonces d'un profil, indexés par URL (actives seulement)."""
+    """
+    Titre, prix, distance et score des annonces d'un profil, indexés par URL
+    (actives et non exclues par les critères du profil — 15.5).
+    """
     if not urls:
         return {}
     placeholders = ",".join("?" * len(urls))
@@ -244,6 +248,7 @@ def annonces_for_notification(profile: str, urls: List[str]) -> Dict[str, Dict]:
             FROM annonces a
             JOIN annonce_profiles ap ON ap.annonce_id = a.id AND ap.profile = ?
             WHERE a.url IN ({placeholders}) AND COALESCE(a.status, 'active') = 'active'
+              AND ap.excluded_reasons IS NULL
             """,
             [profile] + list(urls),
         ).fetchall()
@@ -251,11 +256,20 @@ def annonces_for_notification(profile: str, urls: List[str]) -> Dict[str, Dict]:
 
 
 def save_scores(profile: str, updates) -> None:
-    """updates : itérable de (annonce_id, score, detail_json)."""
+    """
+    updates : itérable de (annonce_id, score, detail_json[, excluded_reasons_json]).
+    Sans 4ᵉ élément, l'annonce est considérée comme conservée (exclusion levée).
+    """
+    rows = []
+    for update in updates:
+        annonce_id, score, detail = update[:3]
+        excluded = update[3] if len(update) > 3 else None
+        rows.append((score, detail, excluded, annonce_id, profile))
     with connect() as conn:
         conn.executemany(
-            "UPDATE annonce_profiles SET score = ?, score_detail = ? WHERE annonce_id = ? AND profile = ?",
-            [(score, detail, annonce_id, profile) for annonce_id, score, detail in updates],
+            "UPDATE annonce_profiles SET score = ?, score_detail = ?, excluded_reasons = ? "
+            "WHERE annonce_id = ? AND profile = ?",
+            rows,
         )
 
 
