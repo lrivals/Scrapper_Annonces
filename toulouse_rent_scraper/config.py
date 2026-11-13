@@ -446,3 +446,21 @@ NOTIFY_PRICE_DROP_EUR = 20     # alerte si le loyer baisse d'au moins ce montant
 NOTIFY_GROUP_THRESHOLD = 3     # au-delà, un seul message récapitulatif par profil
 NOTIFY_GROUP_MAX_ITEMS = 8     # nombre d'annonces listées dans un récapitulatif
 
+
+
+# =========================
+# 🧠 ANALYSE DES DESCRIPTIONS PAR LLM (Sprint 15.4)
+# =========================
+# Désactivée par défaut. Activer avec LLM_ANALYSIS=1 dans .env ; la clé d'API est lue
+# par le SDK Anthropic (ANTHROPIC_API_KEY dans .env, ou profil `ant auth login`).
+LLM_ANALYSIS_ENABLED = os.environ.get("LLM_ANALYSIS", "").strip().lower() in ("1", "true", "oui", "yes")
+LLM_MODEL = os.environ.get("LLM_MODEL", "claude-opus-5-5")
+LLM_EFFORT = os.environ.get("LLM_EFFORT", "low")    # extraction simple : effort bas suffit
+LLM_MAX_TOKENS = 4000
+LLM_MAX_PER_RUN = 60          # annonces analysées au plus par run (coût borné)
+LLM_DESCRIPTION_MAX_CHARS = 6000
+
+# Malus de score selon le risque d'arnaque (multiplicateur du score final)
+SCAM_RISK_PENALTY = {"moyen": 0.8, "eleve": 0.5}
+# Prix au m² sous cette fraction de la médiane du profil → signal « prix anormalement bas »
+SCAM_LOW_PRICE_RATIO = 0.5

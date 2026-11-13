@@ -188,11 +188,38 @@ def _m4_structured_extraction(cur: sqlite3.Cursor):
     cur.execute("CREATE INDEX IF NOT EXISTS idx_annonces_enrichment ON annonces(site, enrichment_status)")
 
 
+def _m5_llm_analysis(cur: sqlite3.Cursor):
+    """Sprint 15.4 — analyse des descriptions par LLM (champs extraits + suivi)."""
+    a_cols = {r[1] for r in cur.execute("PRAGMA table_info(annonces)")}
+    new_columns = {
+        "llm_status": "TEXT",           # NULL (à faire) | 'done' | 'error' | 'refused'
+        "llm_input_hash": "TEXT",       # empreinte du texte analysé : ré-analyse s'il change
+        "llm_model": "TEXT",
+        "llm_analyzed_at": "TIMESTAMP",
+        "llm_error": "TEXT",
+        "llm_data": "TEXT",             # JSON complet renvoyé par le modèle
+        "summary": "TEXT",
+        "available_from": "TEXT",       # AAAA-MM-JJ ou 'immediate'
+        "lease_type": "TEXT",
+        "colocation": "BOOLEAN",
+        "apl_ok": "BOOLEAN",
+        "visale_ok": "BOOLEAN",
+        "agency_fees": "INTEGER",
+        "scam_risk": "TEXT",            # 'faible' | 'moyen' | 'eleve'
+        "scam_flags": "TEXT",           # JSON [str]
+    }
+    for col, col_type in new_columns.items():
+        if col not in a_cols:
+            cur.execute(f"ALTER TABLE annonces ADD COLUMN {col} {col_type}")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_annonces_llm ON annonces(llm_status)")
+
+
 MIGRATIONS = [
     _m1_base_schema,
     _m2_indexes_and_price_history,
     _m3_scores_and_enrichment_retry,
     _m4_structured_extraction,
+    _m5_llm_analysis,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)

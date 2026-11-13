@@ -269,6 +269,11 @@ def run_scraping(
     from scrapers.enricher import report_extraction_health
     report_extraction_health({site: rows for site, rows in health_rows.items() if rows})
 
+    # Analyse LLM des nouvelles descriptions (15.4, si activée) : avant le score et les
+    # notifications, pour que le malus « risque d'arnaque » filtre les alertes
+    from analysis.llm import maybe_analyze
+    maybe_analyze("scraping")
+
     from scoring import rescore
     from notify import notify_events
     rescore()

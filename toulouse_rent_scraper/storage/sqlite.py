@@ -214,6 +214,7 @@ def annonces_for_scoring(profile: str) -> List[Dict]:
         rows = conn.execute(
             """
             SELECT a.id, a.price, a.charges, a.charges_included, a.surface_m2, a.furnished, a.dpe_rating,
+                   a.scam_risk,
                    COALESCE(a.status, 'active') AS status, ap.distance_km
             FROM annonces a
             JOIN annonce_profiles ap ON ap.annonce_id = a.id AND ap.profile = ?
@@ -239,7 +240,7 @@ def annonces_for_notification(profile: str, urls: List[str]) -> Dict[str, Dict]:
         rows = conn.execute(
             f"""
             SELECT a.url, a.title, a.price, a.location_raw, a.surface_m2, a.nb_rooms, a.dpe_rating,
-                   ap.distance_km, ap.score
+                   a.scam_risk, a.available_from, ap.distance_km, ap.score
             FROM annonces a
             JOIN annonce_profiles ap ON ap.annonce_id = a.id AND ap.profile = ?
             WHERE a.url IN ({placeholders}) AND COALESCE(a.status, 'active') = 'active'
@@ -496,3 +497,52 @@ def set_distances(annonce_id: int, distance_enac_km: Optional[float], by_profile
     conn.commit()
     conn.close()
     return count
+
+
+# ---------------------------------------------------------------------------
+# Analyse LLM (Sprint 15.4)
+# ---------------------------------------------------------------------------
+
+def annonces_for_llm() -> List[Dict]:
+    """Annonces actives avec une description, des plus récentes aux plus anciennes."""
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, url, site, title, price, surface_m2, location_raw, publisher_type,
+                   description, COALESCE(status, 'active') AS status,
+                   llm_status, llm_input_hash
+            FROM annonces
+            WHERE COALESCE(status, 'active') = 'active'
+              AND description IS NOT NULL AND length(description) > 20
+            ORDER BY created_at DESC, id DESC
+            """
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+_LLM_COLUMNS = (
+    "llm_status", "llm_input_hash", "llm_model", "llm_analyzed_at", "llm_error", "llm_data",
+    "summary", "available_from", "lease_type", "colocation", "apl_ok", "visale_ok",
+    "agency_fees", "scam_risk", "scam_flags",
+)
+
+
+def save_llm_analysis(annonce_id: int, result: Dict) -> None:
+    """
+    Enregistre le résultat d'une analyse. Charges et dépôt de garantie trouvés dans le texte
+    complètent les colonnes d'enrichissement seulement si elles sont vides.
+    """
+    data = {k: result.get(k) for k in _LLM_COLUMNS if k in result}
+    for key in ("llm_data", "scam_flags"):
+        if isinstance(data.get(key), (list, dict)):
+            data[key] = json.dumps(data[key], ensure_ascii=False)
+    sets = [f"{k} = ?" for k in data]
+    values = list(data.values())
+    for key in ("charges", "deposit"):
+        if result.get(key) is not None:
+            sets.append(f"{key} = COALESCE({key}, ?)")
+            values.append(result[key])
+    if not sets:
+        return
+    with connect() as conn:
+        conn.execute(f"UPDATE annonces SET {', '.join(sets)} WHERE id = ?", values + [annonce_id])

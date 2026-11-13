@@ -1,7 +1,7 @@
 # Sprint 15 — Fiches détaillées, tri affiné, nouvelles sources
 
 > **Date** : 2026-11-12
-> **Statut** : 🔵 En cours — 15.1, 15.2 et 15.7 livrés ; 15.3 → 15.6 et 15.8 planifiés
+> **Statut** : 🔵 En cours — 15.1, 15.2, 15.4 et 15.7 livrés ; 15.3, 15.5, 15.6 et 15.8 planifiés
 > **Origine** : réflexion « comment améliorer la récolte, le tri, l'automatisation et la couverture »
 > **Prérequis** : [Sprint 12](SPRINT_12.md) (migrations versionnées, `chrome_session`), [Sprint 13](SPRINT_13.md) (score, notifications), [Sprint 14](SPRINT_14.md) (profils)
 
@@ -29,7 +29,7 @@ Constat de départ :
 | 15.1 | LBC : extraction depuis `__NEXT_DATA__`, GPS exact, santé de l'extraction | ✅ | À valider sur une vraie page (voir bilan) |
 | 15.2 | LBC : annonces complètes dès la page de recherche | ✅ | À valider sur une vraie page (voir bilan) |
 | 15.3 | SeLoger : extraction depuis l'état JSON embarqué | 🔲 | Même principe que 15.1 |
-| 15.4 | Analyse de la description par LLM | 🔲 | Disponibilité, APL/Visale, bail, arnaques, résumé |
+| 15.4 | Analyse de la description par LLM | ✅ | Optionnelle (`LLM_ANALYSIS=1`) ; à tester avec une clé d'API |
 | 15.5 | Critères éliminatoires par profil | 🔲 | Distincts des poids du score |
 | 15.6 | Retours ⭐ / 👎 dans l'UI → poids appris | 🔲 | Régression logistique simple |
 | 15.7 | Nouvelle source : Bien'ici (API JSON) + modèle `Listing` | ✅ | À valider sur la vraie API (voir bilan) ; puis PAP ([Sprint 4](SPRINT_4.md)) |
@@ -213,23 +213,99 @@ SeLoger embarque aussi l'état de la page dans un `<script>` (à identifier avec
 `seloger_json.py` + repli DOM + `extraction_source`. Seuil `QUALITY_MIN_JSON_RATE["SeLoger"]`
 à ajouter une fois validé.
 
-## 15.4 — Analyse de la description par LLM 🔲
+## 15.4 — Analyse de la description par LLM ✅
 
-Extraction structurée (sortie JSON imposée) sur la description, pendant l'enrichissement,
-avec un petit modèle peu coûteux (≈ quelques centimes pour quelques centaines d'annonces) :
+**Fichiers** : `analysis/llm.py` (nouveau), `storage/migrations.py`, `storage/sqlite.py`,
+`scoring.py`, `pipeline.py`, `scrapers/enricher.py`, `notify/messages.py`, `main.py`,
+`ui/__init__.py`, `ui/templates/index.html`, `ui/static/app.css`, `config.py`,
+`requirements.txt`, `.env.example`, `tests/test_llm.py` (nouveau)
 
-| Champ | Exemple dans le texte |
+### Principe
+
+Chaque description est envoyée **une seule fois** à Claude (SDK officiel `anthropic`) avec une
+**sortie JSON imposée** (structured outputs, `output_config.format`) : tous les champs sont
+présents, `null` quand l'annonce ne dit rien. Le résultat est stocké en base ; il n'est
+recalculé que si le titre, le prix ou la description changent (empreinte `llm_input_hash`,
+qui inclut `PROMPT_VERSION` : changer le prompt force la ré-analyse).
+
+| Champ extrait | Colonne | Utilisation |
+|---|---|---|
+| Résumé (2 phrases) | `summary` | Sous le titre de la carte |
+| Disponibilité (date ou « immédiate ») | `available_from` | Pastille, notification ; base de 15.5 |
+| Type de bail (classique, meublé, mobilité, étudiant, colocation, saisonnier), colocation | `lease_type`, `colocation` | Pastille |
+| APL / Visale acceptées ou refusées | `apl_ok`, `visale_ok` | Pastilles ✓ / ✗ |
+| Honoraires d'agence | `agency_fees` | Pastille |
+| Charges, dépôt de garantie | `charges`, `deposit` | **Complètent** les colonnes vides (jamais d'écrasement) |
+| Parking, extérieur, chauffage, garant exigé | `llm_data` (JSON complet) | Pour 15.5 / 15.6 |
+| Signaux d'arnaque + niveau (faible / moyen / élevé) | `scam_flags`, `scam_risk` | Pastille ⚠️, malus de score |
+
+### Arnaques
+
+- Le prompt décrit les arnaques courantes à la location (propriétaire à l'étranger, paiement
+  avant visite, Western Union / mandat cash, clés par courrier, plateforme « de réservation »
+  tierce, pièces d'identité dès le premier contact, urgence artificielle).
+- **Signal local, sans LLM** : prix au m² < 50 % de la médiane des annonces actives
+  (`SCAM_LOW_PRICE_RATIO`, médiane calculée sur ≥ 5 annonces) → signal « prix très bas » et
+  risque relevé à « moyen » au minimum.
+- **Score** : risque moyen × 0,8, élevé × 0,5 (`SCAM_RISK_PENALTY`) ; le malus apparaît dans
+  l'infobulle du score. L'analyse tourne avant le recalcul des scores et les notifications, donc
+  une annonce suspecte passe sous `NOTIFY_MIN_SCORE` et ne déclenche plus d'alerte.
+- UI : pastille « ⚠️ À vérifier » (moyen) ou « ⚠️ Arnaque ? » (élevé), signaux en infobulle ;
+  notifications préfixées ⚠️ pour un risque élevé.
+
+### Requête
+
+- Modèle `LLM_MODEL` (défaut `claude-opus-5-5`), effort `LLM_EFFORT = "low"` (extraction simple),
+  `max_tokens` 4000.
+- Prompt système fixe + `cache_control` : identique pour toutes les annonces, il peut être mis en
+  cache entre deux requêtes rapprochées. La date du jour (pour résoudre « libre au 1er décembre »)
+  est dans le message utilisateur.
+- Le texte de l'annonce est encadré par `<annonce>` et le prompt précise que c'est une donnée à
+  analyser : une description qui contient des consignes ne les fait pas suivre.
+- Repli serveur en cas de refus des filtres de sécurité (`fallbacks: "default"`, beta
+  `server-side-fallback-2026-07-01`) pour les modèles qui l'acceptent ; un refus définitif est
+  marqué `refused` et n'est pas retenté.
+
+### Erreurs
+
+| Cas | Effet |
 |---|---|
-| `available_from` | « libre au 1er décembre » |
-| `lease_type` | bail mobilité / étudiant / colocation / classique |
-| `apl_ok`, `visale_ok` | « APL possible », « garant Visale accepté » |
-| `parking`, `outdoor`, `heating` | « place de parking en sus 50 € », « balcon », « chauffage collectif gaz » |
-| `agency_fees` | « honoraires 350 € » |
-| `summary` | résumé en 2 lignes pour la carte |
-| `scam_flags` | « je suis à l'étranger », paiement avant visite, prix ≪ médiane €/m² |
+| Clé absente/invalide, accès refusé, limite de débit, panne serveur ou réseau | Run d'analyse **arrêté**, rien n'est marqué : reprise au run suivant |
+| Requête rejetée (400), réponse tronquée ou JSON illisible | Annonce en `error`, retentée au run suivant |
+| Refus du modèle | Annonce en `refused`, pas retentée (sauf si le texte change ou `--force`) |
+| Exception imprévue pendant un scraping | Loggée, le scraping continue (`maybe_analyze` n'est jamais bloquant) |
 
-Clé d'API dans `.env` ; désactivé par défaut ; résultat mis en cache par annonce (le texte
-ne change pas). Les signaux d'arnaque donnent un malus de score et une pastille ⚠️.
+### Utilisation
+
+```bash
+# .env
+LLM_ANALYSIS=1                  # analyse automatique après chaque scraping / enrichissement
+ANTHROPIC_API_KEY=sk-ant-…      # ou un profil `ant auth login`
+
+python main.py analyze                 # à la demande (même sans LLM_ANALYSIS), 60 annonces max
+python main.py analyze --limit 10      # pour un premier essai
+python main.py analyze --force         # tout ré-analyser (après un changement de prompt)
+```
+
+Coût estimé : ≈ 2 000 jetons en entrée et quelques centaines en sortie par annonce, soit de
+l'ordre de **1 à 2 centimes par annonce** avec `claude-opus-5-5` (≈ 1 € pour 60 annonces) ; chaque
+annonce n'est analysée qu'une fois. `LLM_MODEL=claude-haiku-5-5` divise ce coût par ≈ 40, au prix
+d'une analyse moins fine : à comparer sur quelques annonces avant de changer. Le log de fin de run
+affiche les jetons consommés.
+
+### Bilan
+
+- Tests : `tests/test_llm.py` (30 tests, client simulé — aucun appel réel : requête et schéma,
+  stabilité du prompt, empreinte, normalisation, refus/troncature, prix anormalement bas, run
+  complet, non-écrasement des charges, ré-analyse sur changement, statuts d'erreur, arrêt sur
+  service indisponible, limite/force, activation, malus de score, notification, UI, CLI).
+  Le test d'une requête rejetée a révélé un bug corrigé avant livraison (une erreur 400 arrêtait
+  tout le run au lieu de la seule annonce).
+- ⚠️ **À valider avec une vraie clé** :
+  1. `python main.py analyze --limit 5` puis relire les 5 fiches dans l'UI (résumé, disponibilité,
+     APL/Visale) contre le texte des annonces ;
+  2. vérifier qu'une annonce d'agence ordinaire reste en risque « faible » (pas de faux positifs) ;
+  3. regarder le nombre de jetons dans le log pour confirmer l'ordre de grandeur du coût.
 
 ## 15.5 — Critères éliminatoires par profil 🔲
 

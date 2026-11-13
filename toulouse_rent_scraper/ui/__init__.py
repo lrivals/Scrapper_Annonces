@@ -20,6 +20,10 @@ def create_app() -> Flask:
     app = Flask(__name__)
     init_security(app)
     app.register_blueprint(bp)
+
+    # Signaux d'arnaque (colonne JSON) → liste, pour l'infobulle de la pastille ⚠️ (15.4)
+    from analysis.llm import describe_flags
+    app.jinja_env.filters["flags"] = describe_flags
     # Requêtes HTTP de Werkzeug : seulement les avertissements
     logging.getLogger("werkzeug").setLevel(logging.WARNING)
     return app

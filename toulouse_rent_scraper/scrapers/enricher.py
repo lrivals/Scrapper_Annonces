@@ -220,6 +220,11 @@ def enrich_annonces(
 
     report_extraction_health(done_by_site)
 
+    # Nouvelles descriptions : analyse LLM (15.4, si activée) avant le recalcul des scores
+    if enriched_count:
+        from analysis.llm import maybe_analyze
+        maybe_analyze("enrichissement")
+
     # Surface, charges, DPE, position… ont changé : les scores aussi
     if enriched_count:
         from scoring import rescore

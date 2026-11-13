@@ -92,6 +92,7 @@ python main.py export csv|json                     # export des annonces actives
 python main.py rescore                             # recalculer les scores (après un changement de poids)
 python main.py notify-test                         # vérifier la configuration des notifications
 python main.py quality [--days 7]                  # taux de remplissage des champs par site (santé de l’extraction)
+python main.py analyze [--limit 20] [--force]       # analyse LLM des descriptions (dispo, APL/Visale, arnaques) — voir SPRINT_15
 python main.py scrape --unattended                 # mode planifié (captcha notifié, sites bloqués sautés)
 python main.py ui [--port 8080] [--no-browser]     # interface web
 ```

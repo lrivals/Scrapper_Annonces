@@ -9,7 +9,7 @@ import json
 from statistics import median
 from typing import Dict, Iterable, List, Optional, Tuple
 
-from config import DPE_SCORES, SCORE_WEIGHTS, SEARCH_PROFILES, SearchProfile
+from config import DPE_SCORES, SCAM_RISK_PENALTY, SCORE_WEIGHTS, SEARCH_PROFILES, SearchProfile
 from utils.logger import setup_logger
 
 logger = setup_logger("scoring")
@@ -90,6 +90,7 @@ _LABELS = {
     "prix_m2": "€/m²",
     "meuble": "Meublé",
     "dpe": "DPE",
+    "risque": "Risque d'arnaque",
 }
 
 
@@ -116,6 +117,11 @@ def compute_score(
     if not total_weight:
         return 0.0, detail
     score = sum(detail[k] * weights.get(k, 0) for k in detail) / total_weight * 100
+    # Sprint 15.4 — malus si l'analyse de la description signale un risque d'arnaque
+    penalty = SCAM_RISK_PENALTY.get(annonce.get("scam_risk") or "")
+    if penalty is not None:
+        score *= penalty
+        detail["risque"] = penalty
     return round(score, 1), {k: round(v, 2) for k, v in detail.items()}
 
 

@@ -323,6 +323,29 @@ h1 {
   white-space: nowrap;
 }
 
+.feat-warn {
+  color: #92400e;
+  border-color: #f59e0b;
+  background: #fffbeb;
+}
+
+.feat-danger {
+  color: #991b1b;
+  border-color: #ef4444;
+  background: #fef2f2;
+}
+
+.card-summary {
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  color: var(--text-muted);
+  margin: 6px 0 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 .dup-tag {
   font-size: 0.7rem;
   font-weight: 600;

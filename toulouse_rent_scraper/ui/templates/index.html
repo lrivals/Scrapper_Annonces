@@ -149,6 +149,7 @@
           <a href="{{ a.url }}" target="_blank" class="card-title">
             {{ a.title or 'Annonce sans titre' }}
           </a>
+          {% if a.summary %}<p class="card-summary" title="Résumé de la description (analyse automatique)">{{ a.summary }}</p>{% endif %}
 
           <div class="card-meta">
             <div class="meta-item" title="Distance de {{ profile.target_address }}">
@@ -186,8 +187,20 @@
           {% if a.floor is not none %}{% set _ = feats.append(('RDC' if a.floor == 0 else 'Ét. ' ~ a.floor, 'Étage')) %}{% endif %}
           {% if a.elevator %}{% set _ = feats.append(('Ascenseur', 'Ascenseur')) %}{% endif %}
           {% if a.geo_precision == 'exact' %}{% set _ = feats.append(('📍 GPS', 'Position exacte fournie par l’annonce')) %}{% endif %}
-          {% if feats %}
+          {# Sprint 15.4 — informations tirées de la description par l'analyse LLM #}
+          {% if a.available_from == 'immediate' %}{% set _ = feats.append(('Dispo immédiate', 'Disponibilité')) %}
+          {% elif a.available_from %}{% set _ = feats.append(('Dispo ' ~ a.available_from[8:10] ~ '/' ~ a.available_from[5:7], 'Disponible le ' ~ a.available_from)) %}{% endif %}
+          {% if a.lease_type in ('mobilite', 'etudiant', 'colocation', 'saisonnier') %}{% set _ = feats.append(({'mobilite': 'Bail mobilité', 'etudiant': 'Bail étudiant', 'colocation': 'Colocation', 'saisonnier': 'Saisonnier'}[a.lease_type], 'Type de bail')) %}
+          {% elif a.colocation %}{% set _ = feats.append(('Colocation', 'Logement en colocation')) %}{% endif %}
+          {% if a.apl_ok %}{% set _ = feats.append(('APL ✓', 'APL acceptées')) %}{% elif a.apl_ok == false %}{% set _ = feats.append(('APL ✗', 'APL refusées')) %}{% endif %}
+          {% if a.visale_ok %}{% set _ = feats.append(('Visale ✓', 'Garantie Visale acceptée')) %}{% elif a.visale_ok == false %}{% set _ = feats.append(('Visale ✗', 'Garantie Visale refusée')) %}{% endif %}
+          {% if a.agency_fees %}{% set _ = feats.append(('Frais ' ~ a.agency_fees ~ ' €', 'Honoraires d’agence à la charge du locataire')) %}{% endif %}
+          {% if feats or a.scam_risk in ('moyen', 'eleve') %}
           <div class="card-feats">
+            {% if a.scam_risk in ('moyen', 'eleve') %}
+            <span class="feat feat-warn {{ 'feat-danger' if a.scam_risk == 'eleve' else '' }}"
+                  title="Risque d’arnaque {{ 'élevé' if a.scam_risk == 'eleve' else 'moyen' }} : {{ (a.scam_flags | flags) | join(' · ') }}">⚠️ {{ 'Arnaque ?' if a.scam_risk == 'eleve' else 'À vérifier' }}</span>
+            {% endif %}
             {% for label, title in feats %}<span class="feat" title="{{ title }}">{{ label }}</span>{% endfor %}
           </div>
           {% endif %}

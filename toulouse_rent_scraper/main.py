@@ -26,7 +26,7 @@ from utils.logger import setup_logger
 
 logger = setup_logger("main")
 
-COMMANDS = ("scrape", "enrich", "check-links", "purge", "export", "rescore", "notify-test", "quality", "ui")
+COMMANDS = ("scrape", "enrich", "check-links", "purge", "export", "rescore", "notify-test", "quality", "analyze", "ui")
 
 # Code de sortie quand un autre run tient le verrou (EX_TEMPFAIL)
 EXIT_ALREADY_RUNNING = 75
@@ -65,6 +65,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("rescore", help="Recalculer les scores d'intérêt (après un changement de poids)")
     sub.add_parser("notify-test", help="Envoyer une notification de test (vérifier .env)")
+
+    analyze = sub.add_parser("analyze", help="Analyser les descriptions par LLM (disponibilité, APL, arnaques…)")
+    analyze.add_argument("--limit", type=int, help="Nombre max d'annonces (défaut LLM_MAX_PER_RUN)")
+    analyze.add_argument("--force", action="store_true", help="Ré-analyser aussi les annonces déjà analysées")
 
     quality = sub.add_parser("quality", help="Taux de remplissage des champs par site (santé de l'extraction)")
     quality.add_argument("--days", type=int, help="Seulement les annonces enrichies ces N derniers jours")
@@ -213,6 +217,19 @@ def cmd_notify_test() -> bool:
     return ok
 
 
+def cmd_analyze(limit: Optional[int] = None, force: bool = False) -> dict:
+    """Analyse LLM à la demande (ne dépend pas de LLM_ANALYSIS, qui ne règle que l'automatique)."""
+    from analysis.llm import analyze_pending
+    from scoring import rescore
+    from storage.sqlite import init_db
+
+    init_db()
+    summary = analyze_pending(limit=limit, force=force)
+    if summary["done"]:
+        rescore()
+    return summary
+
+
 def cmd_quality(days: Optional[int] = None) -> List[str]:
     from storage.quality import check_fill_rates, enriched_rows, format_report, group_by_site
     from storage.sqlite import init_db
@@ -273,6 +290,8 @@ def main(argv: Optional[List[str]] = None):
         cmd_export(args.format)
     elif args.command == "rescore":
         cmd_rescore()
+    elif args.command == "analyze":
+        cmd_analyze(args.limit, args.force)
     elif args.command == "quality":
         cmd_quality(args.days)
     elif args.command == "notify-test":
