@@ -81,7 +81,7 @@ Sprint 2-bis (API REST & Dashboard)
 | 15.1 | LBC : JSON `__NEXT_DATA__`, GPS exact, santé de l'extraction | ✅ | `main.py quality` ; valider les clés JSON sur une vraie page |
 | 15.2 | LBC : annonces complètes dès la recherche | ✅ | Moins de visites de détail ; JSON périmé détecté |
 | 15.3 | SeLoger : état JSON embarqué | 🔲 | |
-| 15.4 | Analyse de la description par LLM | ✅ | Optionnelle ; `main.py analyze` ; malus arnaque |
+| 15.4 | Analyse de la description par LLM | ✅ | LLM et clé de l’utilisateur (page « Connexion LLM ») ; une seule lecture par texte ; malus arnaque |
 | 15.5 | Critères éliminatoires par profil | 🔲 | |
 | 15.6 | Retours ⭐/👎 → poids appris | 🔲 | |
 | 15.7 | Source Bien'ici (API JSON) + modèle `Listing` | ✅ | `ApiScraper` : sources sans navigateur |

@@ -29,7 +29,7 @@ Constat de départ :
 | 15.1 | LBC : extraction depuis `__NEXT_DATA__`, GPS exact, santé de l'extraction | ✅ | À valider sur une vraie page (voir bilan) |
 | 15.2 | LBC : annonces complètes dès la page de recherche | ✅ | À valider sur une vraie page (voir bilan) |
 | 15.3 | SeLoger : extraction depuis l'état JSON embarqué | 🔲 | Même principe que 15.1 |
-| 15.4 | Analyse de la description par LLM | ✅ | Optionnelle (`LLM_ANALYSIS=1`) ; à tester avec une clé d'API |
+| 15.4 | Analyse de la description par LLM | ✅ | Optionnelle ; LLM et clé de l'utilisateur ; une seule lecture par texte (15.4-bis) |
 | 15.5 | Critères éliminatoires par profil | 🔲 | Distincts des poids du score |
 | 15.6 | Retours ⭐ / 👎 dans l'UI → poids appris | 🔲 | Régression logistique simple |
 | 15.7 | Nouvelle source : Bien'ici (API JSON) + modèle `Listing` | ✅ | À valider sur la vraie API (voir bilan) ; puis PAP ([Sprint 4](SPRINT_4.md)) |
@@ -253,59 +253,95 @@ qui inclut `PROMPT_VERSION` : changer le prompt force la ré-analyse).
 - UI : pastille « ⚠️ À vérifier » (moyen) ou « ⚠️ Arnaque ? » (élevé), signaux en infobulle ;
   notifications préfixées ⚠️ pour un risque élevé.
 
-### Requête
+### Requête (Claude)
 
-- Modèle `LLM_MODEL` (défaut `claude-opus-5-5`), effort `LLM_EFFORT = "low"` (extraction simple),
-  `max_tokens` 4000.
-- Prompt système fixe + `cache_control` : identique pour toutes les annonces, il peut être mis en
-  cache entre deux requêtes rapprochées. La date du jour (pour résoudre « libre au 1er décembre »)
-  est dans le message utilisateur.
+- Effort `LLM_EFFORT = "low"` (extraction simple), `max_tokens` 4000, sortie JSON imposée.
+- Prompt système fixe + `cache_control` : identique pour toutes les annonces. La date du jour
+  (pour résoudre « libre au 1er décembre ») est dans le message utilisateur.
 - Le texte de l'annonce est encadré par `<annonce>` et le prompt précise que c'est une donnée à
   analyser : une description qui contient des consignes ne les fait pas suivre.
-- Repli serveur en cas de refus des filtres de sécurité (`fallbacks: "default"`, beta
-  `server-side-fallback-2026-07-01`) pour les modèles qui l'acceptent ; un refus définitif est
-  marqué `refused` et n'est pas retenté.
+- Repli serveur en cas de refus à tort des filtres de sécurité (`fallbacks: "default"`) pour les
+  modèles Claude qui l'acceptent.
 
-### Erreurs
-
-| Cas | Effet |
-|---|---|
-| Clé absente/invalide, accès refusé, limite de débit, panne serveur ou réseau | Run d'analyse **arrêté**, rien n'est marqué : reprise au run suivant |
-| Requête rejetée (400), réponse tronquée ou JSON illisible | Annonce en `error`, retentée au run suivant |
-| Refus du modèle | Annonce en `refused`, pas retentée (sauf si le texte change ou `--force`) |
-| Exception imprévue pendant un scraping | Loggée, le scraping continue (`maybe_analyze` n'est jamais bloquant) |
-
-### Utilisation
-
-```bash
-# .env
-LLM_ANALYSIS=1                  # analyse automatique après chaque scraping / enrichissement
-ANTHROPIC_API_KEY=sk-ant-…      # ou un profil `ant auth login`
-
-python main.py analyze                 # à la demande (même sans LLM_ANALYSIS), 60 annonces max
-python main.py analyze --limit 10      # pour un premier essai
-python main.py analyze --force         # tout ré-analyser (après un changement de prompt)
-```
-
-Coût estimé : ≈ 2 000 jetons en entrée et quelques centaines en sortie par annonce, soit de
-l'ordre de **1 à 2 centimes par annonce** avec `claude-opus-5-5` (≈ 1 € pour 60 annonces) ; chaque
-annonce n'est analysée qu'une fois. `LLM_MODEL=claude-haiku-5-5` divise ce coût par ≈ 40, au prix
-d'une analyse moins fine : à comparer sur quelques annonces avant de changer. Le log de fin de run
-affiche les jetons consommés.
+Fournisseurs, garde-fous de dépense et erreurs : voir **15.4-bis** ci-dessous.
 
 ### Bilan
 
-- Tests : `tests/test_llm.py` (30 tests, client simulé — aucun appel réel : requête et schéma,
-  stabilité du prompt, empreinte, normalisation, refus/troncature, prix anormalement bas, run
-  complet, non-écrasement des charges, ré-analyse sur changement, statuts d'erreur, arrêt sur
-  service indisponible, limite/force, activation, malus de score, notification, UI, CLI).
-  Le test d'une requête rejetée a révélé un bug corrigé avant livraison (une erreur 400 arrêtait
-  tout le run au lieu de la seule annonce).
-- ⚠️ **À valider avec une vraie clé** :
-  1. `python main.py analyze --limit 5` puis relire les 5 fiches dans l'UI (résumé, disponibilité,
-     APL/Visale) contre le texte des annonces ;
-  2. vérifier qu'une annonce d'agence ordinaire reste en risque « faible » (pas de faux positifs) ;
-  3. regarder le nombre de jetons dans le log pour confirmer l'ordre de grandeur du coût.
+- Tests : `tests/test_llm.py` (backends simulés, aucun appel réel). Un bug trouvé par les tests
+  a été corrigé avant livraison (une erreur 400 arrêtait tout le run au lieu de la seule annonce).
+- ⚠️ **À valider avec une vraie clé** : `python main.py analyze --limit 5`, relire les 5 fiches dans
+  l'UI contre le texte des annonces, vérifier qu'une annonce d'agence ordinaire reste en risque
+  « faible », puis `python main.py analyze --stats` pour le coût réel en jetons.
+
+## 15.4-bis — Une seule lecture par texte, LLM au choix de l'utilisateur ✅
+
+**Fichiers** : `analysis/providers.py`, `ui/llm_settings.py`, `ui/templates/llm_settings.html`
+(nouveaux), `analysis/llm.py`, `storage/migrations.py` (migration 6), `storage/sqlite.py`,
+`main.py`, `config.py`, `ui/__init__.py`, `ui/templates/index.html`, `ui/static/app.css`,
+`.env.example`, `tests/test_llm.py`
+
+### Une seule lecture par texte
+
+Registre `llm_analyses` : **une ligne par texte de description** (empreinte SHA-256 du texte
+normalisé — espaces et casse ignorés), avec le résultat, le nombre d'appels et les jetons.
+
+| Situation | Avant (15.4) | Maintenant |
+|---|---|---|
+| Prix ou description modifiés | Relecture | **Pas de relecture** (résultat conservé) |
+| Même texte sur une autre URL (republication LBC, autre site) | Relecture | Résultat **réutilisé**, sans appel |
+| Doublon inter-sites (`duplicate_of`) au texte différent | Relecture | Analyse de l'original **réutilisée** ; le doublon attend si l'original n'est pas encore lu |
+| Analyse en erreur | Retentée à chaque run | **Jamais** automatiquement ; `analyze --retry-errors` la relance **une fois** (`LLM_MAX_CALLS_PER_TEXT = 2`) |
+| Refus du modèle | Pas retenté | Pas retenté, même avec `--retry-errors` |
+| Changement de prompt, de modèle ou de fournisseur | Relecture (`PROMPT_VERSION`) | **Pas de relecture** |
+| `--force` (tout relire) | Disponible | **Supprimé** |
+| Deux runs simultanés (UI + timer) | Double lecture possible | Texte **réservé avant l'appel** (insertion atomique) : un seul paie |
+| Service indisponible (clé, quota, panne) | Rien marqué | Réservation annulée (rien n'a été facturé), reprise au run suivant |
+| Bug ou runs rapprochés | Plafond par run seulement | + **plafond quotidien** `LLM_MAX_CALLS_PER_DAY = 150` |
+
+- Les analyses déjà faites en 15.4 sont reprises dans le registre par la migration 6 : elles ne
+  seront jamais relues.
+- `python main.py analyze --stats` (et la page « Connexion LLM ») : textes lus, appels
+  facturables, relances, annonces couvertes, jetons consommés.
+- Conséquence assumée : si une annonce change vraiment de texte, l'analyse reste celle du premier
+  texte. Une description tronquée d'abord (recherche LBC), complète ensuite (page de détail) n'est
+  donc pas relue — `LBC_SEARCH_JSON_SKIPS_DETAIL` limite ce cas aux fiches jugées complètes.
+
+### LLM et clé de l'utilisateur
+
+- `analysis/providers.py` : deux familles d'API.
+  - **Claude** (SDK officiel `anthropic`) — modèle par défaut `claude-opus-5-5`.
+  - **Compatibles OpenAI** (`/chat/completions`, appelées en HTTP) : OpenAI, Mistral, OpenRouter,
+    Groq, **Ollama** et **LM Studio en local (gratuits, sans clé)**, ou toute autre URL compatible.
+    Le modèle est à renseigner (les catalogues changent trop vite pour figer un défaut). Sortie
+    `json_schema` stricte ; si le serveur ne la gère pas (400 sur `response_format`, non facturé),
+    bascule en `json_object` avec le schéma dans le prompt.
+- **Page « Connexion LLM »** (`/settings/llm`, lien dans l'en-tête) : fournisseur, modèle, URL,
+  clé, analyse automatique ; bouton « Tester la connexion » (un appel d'essai sur une annonce
+  fictive, sur la clé de l'utilisateur) ; « Supprimer la clé » ; statistiques du registre.
+- Stockage : `data/llm_settings.json` (dossier ignoré par git), **permissions 600**, prioritaire sur
+  le `.env` (`LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_KEY`, `LLM_BASE_URL`, `LLM_ANALYSIS`).
+- **Aucune clé implicite** : la clé est toujours passée explicitement au SDK, qui ne lit donc ni
+  `ANTHROPIC_API_KEY` ni un profil `ant` de la machine. Sans fournisseur configuré, aucune
+  analyse — même la commande `analyze` s'arrête sans appel.
+- Sécurité de la clé : jamais réaffichée (`••••ABCD`), jamais écrite dans les logs ; un champ laissé
+  vide garde la clé enregistrée **seulement pour le même fournisseur et la même URL** — elle n'est
+  jamais envoyée à un autre service ; formulaires protégés par le jeton CSRF existant ; URL
+  limitée à `http(s)://`.
+- Limite : l'interface n'a pas de comptes utilisateurs. Une installation = une configuration ; si
+  plusieurs personnes partagent la même instance, elles partagent la clé enregistrée.
+
+### Bilan
+
+- Tests : `tests/test_llm.py` (61 tests) — garanties de lecture unique (second run sans appel,
+  changement de prix/texte, republication, doublon, erreur non retentée, relance unique, refus,
+  service indisponible, réservation concurrente sur 5 threads, texte en cours ailleurs, plafonds
+  par run et par jour, aucun fournisseur), migration des analyses existantes, réglages (aucune clé
+  implicite, priorité UI/.env, fichier 600), backends Claude et compatibles OpenAI (requête,
+  erreurs HTTP, repli `json_object`, refus, troncature, JSON entouré de ```), page de réglages
+  (clé jamais affichée, clé non transmise à un autre fournisseur, CSRF, test, suppression, URL
+  invalide), CLI `--stats`. Suite complète verte.
+- ⚠️ À valider en réel : une connexion par famille (Claude et, par exemple, Ollama local) avec
+  « Tester la connexion », puis `analyze --limit 5` et `analyze --stats`.
 
 ## 15.5 — Critères éliminatoires par profil 🔲
 

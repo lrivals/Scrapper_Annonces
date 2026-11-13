@@ -214,12 +214,51 @@ def _m5_llm_analysis(cur: sqlite3.Cursor):
     cur.execute("CREATE INDEX IF NOT EXISTS idx_annonces_llm ON annonces(llm_status)")
 
 
+def _m6_llm_registry(cur: sqlite3.Cursor):
+    """
+    Sprint 15.4-bis — registre des lectures LLM : une ligne par texte de description
+    (empreinte du texte normalisé). Garantit qu'un même texte n'est jamais relu
+    automatiquement, quelle que soit l'annonce (republication, doublon inter-sites).
+    """
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS llm_analyses (
+            content_hash  TEXT PRIMARY KEY,
+            status        TEXT NOT NULL,         -- running | done | error | refused | retry
+            model         TEXT,
+            data          TEXT,                  -- JSON renvoyé par le modèle
+            error         TEXT,
+            calls         INTEGER NOT NULL DEFAULT 0,   -- appels facturables effectués
+            input_tokens  INTEGER NOT NULL DEFAULT 0,
+            output_tokens INTEGER NOT NULL DEFAULT 0,
+            first_call_at TIMESTAMP,
+            last_call_at  TIMESTAMP
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_llm_analyses_last_call ON llm_analyses(last_call_at)")
+
+    # Analyses déjà faites (15.4) : reprises dans le registre, rattachées à l'empreinte du texte
+    from analysis.llm import content_hash
+    rows = cur.execute(
+        "SELECT id, description, llm_status, llm_model, llm_data, llm_error, llm_analyzed_at "
+        "FROM annonces WHERE llm_status IS NOT NULL AND description IS NOT NULL"
+    ).fetchall()
+    for annonce_id, description, status, model, data, error, analyzed_at in rows:
+        h = content_hash(description)
+        cur.execute(
+            "INSERT OR IGNORE INTO llm_analyses (content_hash, status, model, data, error, calls, "
+            "first_call_at, last_call_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
+            (h, status, model, data, error, analyzed_at, analyzed_at),
+        )
+        cur.execute("UPDATE annonces SET llm_input_hash = ? WHERE id = ?", (h, annonce_id))
+
+
 MIGRATIONS = [
     _m1_base_schema,
     _m2_indexes_and_price_history,
     _m3_scores_and_enrichment_retry,
     _m4_structured_extraction,
     _m5_llm_analysis,
+    _m6_llm_registry,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)

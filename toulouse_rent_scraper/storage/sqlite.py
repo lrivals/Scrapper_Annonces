@@ -503,21 +503,134 @@ def set_distances(annonce_id: int, distance_enac_km: Optional[float], by_profile
 # Analyse LLM (Sprint 15.4)
 # ---------------------------------------------------------------------------
 
-def annonces_for_llm() -> List[Dict]:
-    """Annonces actives avec une description, des plus récentes aux plus anciennes."""
+def annonces_for_llm(include_errors: bool = False) -> List[Dict]:
+    """
+    Annonces actives avec une description et JAMAIS passées par l'analyse (llm_status NULL),
+    des plus récentes aux plus anciennes. `include_errors` : aussi celles en erreur
+    (relance explicite, `analyze --retry-errors`). Avec le texte de l'annonce d'origine
+    pour les doublons inter-sites (réutilisation de son analyse).
+    """
+    statuses = "a.llm_status IS NULL" + (" OR a.llm_status = 'error'" if include_errors else "")
     with connect() as conn:
         rows = conn.execute(
-            """
-            SELECT id, url, site, title, price, surface_m2, location_raw, publisher_type,
-                   description, COALESCE(status, 'active') AS status,
-                   llm_status, llm_input_hash
-            FROM annonces
-            WHERE COALESCE(status, 'active') = 'active'
-              AND description IS NOT NULL AND length(description) > 20
-            ORDER BY created_at DESC, id DESC
+            f"""
+            SELECT a.id, a.url, a.site, a.title, a.price, a.surface_m2, a.location_raw,
+                   a.publisher_type, a.description, a.duplicate_of, a.llm_status,
+                   o.description AS original_description,
+                   COALESCE(o.status, 'active') AS original_status
+            FROM annonces a
+            LEFT JOIN annonces o ON o.id = a.duplicate_of
+            WHERE COALESCE(a.status, 'active') = 'active'
+              AND a.description IS NOT NULL AND length(a.description) > 20
+              AND ({statuses})
+            ORDER BY (a.duplicate_of IS NOT NULL), a.created_at DESC, a.id DESC
             """
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def active_price_rows() -> List[Dict]:
+    """Prix et surface des annonces actives (médiane €/m² du signal « prix très bas »)."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT price, surface_m2 FROM annonces WHERE COALESCE(status, 'active') = 'active'"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+# --- Registre des lectures LLM (un texte = une lecture) ---
+
+def get_llm_entry(content_hash: str) -> Optional[Dict]:
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM llm_analyses WHERE content_hash = ?", (content_hash,)).fetchone()
+    return dict(row) if row else None
+
+
+def claim_llm_entry(content_hash: str, model: str, max_calls: int) -> bool:
+    """
+    Réserve le texte AVANT l'appel (atomique) : True si ce process peut appeler le modèle.
+    Nouveau texte → insertion ; texte rouvert par `--retry-errors` → seulement s'il reste un
+    appel autorisé. Un autre process (bouton de l'UI + run planifié) ne peut pas le réserver aussi.
+    """
+    now = datetime.now().isoformat(timespec="seconds")
+    with connect() as conn:
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO llm_analyses (content_hash, status, model, calls, first_call_at, last_call_at) "
+            "VALUES (?, 'running', ?, 1, ?, ?)",
+            (content_hash, model, now, now),
+        )
+        if cur.rowcount:
+            return True
+        cur = conn.execute(
+            "UPDATE llm_analyses SET status = 'running', model = ?, calls = calls + 1, last_call_at = ? "
+            "WHERE content_hash = ? AND status = 'retry' AND calls < ?",
+            (model, now, content_hash, max_calls),
+        )
+        return cur.rowcount > 0
+
+
+def release_llm_entry(content_hash: str) -> None:
+    """Appel non effectué (service indisponible, rien de facturé) : la réservation est annulée."""
+    with connect() as conn:
+        conn.execute("DELETE FROM llm_analyses WHERE content_hash = ? AND status = 'running' AND calls = 1",
+                     (content_hash,))
+        conn.execute("UPDATE llm_analyses SET status = 'error', calls = calls - 1 "
+                     "WHERE content_hash = ? AND status = 'running'", (content_hash,))
+
+
+def finish_llm_entry(content_hash: str, status: str, model: Optional[str], data: Optional[Dict],
+                     error: Optional[str], input_tokens: int, output_tokens: int) -> None:
+    with connect() as conn:
+        conn.execute(
+            "UPDATE llm_analyses SET status = ?, model = COALESCE(?, model), data = ?, error = ?, "
+            "input_tokens = input_tokens + ?, output_tokens = output_tokens + ? WHERE content_hash = ?",
+            (status, model, json.dumps(data, ensure_ascii=False) if data is not None else None,
+             error, input_tokens, output_tokens, content_hash),
+        )
+
+
+def llm_calls_since(since: str) -> int:
+    """Textes envoyés au modèle depuis `since` (ISO) — plafond journalier."""
+    with connect() as conn:
+        return conn.execute(
+            "SELECT COUNT(*) FROM llm_analyses WHERE last_call_at >= ? AND calls > 0", (since,)
+        ).fetchone()[0]
+
+
+def reopen_llm_errors(max_calls: int, stale_before: str) -> int:
+    """
+    `--retry-errors` : rouvre les textes en erreur (et les réservations orphelines d'un run
+    interrompu, plus anciennes que `stale_before`) qui n'ont pas atteint `max_calls`.
+    Les annonces concernées repassent à analyser.
+    """
+    with connect() as conn:
+        cur = conn.execute(
+            "UPDATE llm_analyses SET status = 'retry' WHERE calls < ? AND "
+            "(status = 'error' OR (status = 'running' AND last_call_at < ?))",
+            (max_calls, stale_before),
+        )
+        reopened = cur.rowcount
+        conn.execute(
+            "UPDATE annonces SET llm_status = NULL WHERE llm_status IN ('error', 'running') "
+            "AND llm_input_hash IN (SELECT content_hash FROM llm_analyses WHERE status = 'retry')"
+        )
+    return reopened
+
+
+def llm_stats() -> Dict:
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS texts, COALESCE(SUM(calls), 0) AS calls, "
+            "COALESCE(SUM(input_tokens), 0) AS input_tokens, COALESCE(SUM(output_tokens), 0) AS output_tokens, "
+            "SUM(status = 'done') AS done, SUM(status = 'error') AS errors, SUM(status = 'refused') AS refused, "
+            "SUM(calls > 1) AS retried FROM llm_analyses"
+        ).fetchone()
+        annonces = conn.execute(
+            "SELECT COUNT(*) FROM annonces WHERE llm_input_hash IS NOT NULL"
+        ).fetchone()[0]
+    stats = {k: (row[k] or 0) for k in row.keys()}
+    stats["annonces"] = annonces
+    return stats
 
 
 _LLM_COLUMNS = (

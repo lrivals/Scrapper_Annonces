@@ -25,6 +25,7 @@
       <div class="count" id="annonce-count">{{ total }} annonce{{ 's' if total != 1 else '' }}</div>
       <div class="action-bar">
         <button class="btn-scrape" id="btn-scrape" onclick="startScraping()">Lancer le scraping</button>
+        <a href="/settings/llm" class="btn-view" title="Brancher votre propre LLM pour analyser les descriptions">Connexion LLM</a>
         <form method="POST" action="/clear-db" onsubmit="return confirmClear(this)">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="confirm" value="">

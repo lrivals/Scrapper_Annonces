@@ -451,14 +451,17 @@ NOTIFY_GROUP_MAX_ITEMS = 8     # nombre d'annonces listées dans un récapitulat
 # =========================
 # 🧠 ANALYSE DES DESCRIPTIONS PAR LLM (Sprint 15.4)
 # =========================
-# Désactivée par défaut. Activer avec LLM_ANALYSIS=1 dans .env ; la clé d'API est lue
-# par le SDK Anthropic (ANTHROPIC_API_KEY dans .env, ou profil `ant auth login`).
-LLM_ANALYSIS_ENABLED = os.environ.get("LLM_ANALYSIS", "").strip().lower() in ("1", "true", "oui", "yes")
-LLM_MODEL = os.environ.get("LLM_MODEL", "claude-opus-5-5")
-LLM_EFFORT = os.environ.get("LLM_EFFORT", "low")    # extraction simple : effort bas suffit
+# Fournisseur, modèle et clé : choisis par l'utilisateur (page « Connexion LLM » de l'UI,
+# ou LLM_PROVIDER / LLM_MODEL / LLM_API_KEY / LLM_BASE_URL / LLM_ANALYSIS dans .env).
+# Voir analysis/providers.py. Sans fournisseur configuré, aucune analyse.
+LLM_EFFORT = os.environ.get("LLM_EFFORT", "low")    # Claude : extraction simple, effort bas
 LLM_MAX_TOKENS = 4000
-LLM_MAX_PER_RUN = 60          # annonces analysées au plus par run (coût borné)
 LLM_DESCRIPTION_MAX_CHARS = 6000
+
+# Garde-fous de dépense — chaque texte n'est lu qu'UNE fois (registre llm_analyses) :
+LLM_MAX_PER_RUN = 60           # appels au modèle au plus par run
+LLM_MAX_CALLS_PER_DAY = 150    # plafond quotidien, tous runs confondus (bug, boucle, runs rapprochés)
+LLM_MAX_CALLS_PER_TEXT = 2     # 1 lecture + 1 relance explicite (`analyze --retry-errors`) au plus
 
 # Malus de score selon le risque d'arnaque (multiplicateur du score final)
 SCAM_RISK_PENALTY = {"moyen": 0.8, "eleve": 0.5}

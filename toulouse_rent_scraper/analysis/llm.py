@@ -1,49 +1,49 @@
 # analysis/llm.py
 # =========================
-# Analyse des descriptions par LLM (Sprint 15.4)
+# Analyse des descriptions par LLM (Sprint 15.4, 15.4-bis)
 #
 # Beaucoup d'informations utiles ne sont que dans le texte libre de l'annonce :
 # disponibilité, type de bail, APL / Visale, honoraires, parking, signaux d'arnaque…
-# Chaque description est envoyée une fois à Claude avec une sortie JSON imposée
-# (structured outputs) ; le résultat est stocké en base et n'est recalculé que si le
-# texte de l'annonce change (empreinte `llm_input_hash`).
+# Chaque description est envoyée au LLM choisi par l'utilisateur (analysis/providers.py)
+# avec une sortie JSON imposée, et le résultat est stocké en base.
 #
-# Désactivé par défaut (LLM_ANALYSIS=1 dans .env). Le SDK lit la clé d'API dans
-# l'environnement (ANTHROPIC_API_KEY) ou dans un profil `ant auth login`.
+# UNE SEULE LECTURE PAR TEXTE (15.4-bis) — registre `llm_analyses`, clé = empreinte du
+# texte normalisé :
+#   - le texte est réservé AVANT l'appel (atomique) : deux runs simultanés ne paient pas deux fois ;
+#   - un texte déjà lu n'est jamais renvoyé : même description sur une autre URL
+#     (republication), doublon inter-sites, changement de prix → résultat réutilisé ;
+#   - une annonce analysée (ou en erreur, ou refusée) n'est plus jamais reprise
+#     automatiquement ; seule `analyze --retry-errors` relance une erreur, une fois ;
+#   - plafonds par run et par jour ; le prompt, le modèle ou le fournisseur peuvent changer
+#     sans déclencher de relecture.
 # =========================
 
 import hashlib
 import json
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from statistics import median
 from typing import Any, Dict, Iterable, List, Optional
 
+from analysis.providers import LlmCallError, LlmRefused, LlmUnavailable, load_settings, make_backend
 from config import (
     LLM_DESCRIPTION_MAX_CHARS,
-    LLM_EFFORT,
+    LLM_MAX_CALLS_PER_DAY,
+    LLM_MAX_CALLS_PER_TEXT,
     LLM_MAX_PER_RUN,
-    LLM_MAX_TOKENS,
-    LLM_MODEL,
     SCAM_LOW_PRICE_RATIO,
 )
 from utils.logger import setup_logger
 
 logger = setup_logger("llm")
 
-# Version du prompt et du schéma : la changer force la ré-analyse de toutes les annonces
-PROMPT_VERSION = "15.4-v1"
-
-# Modèles qui acceptent le repli serveur en cas de refus (paramètre `fallbacks`)
-_FALLBACK_MODELS = {"claude-opus-5-5", "claude-opus-5", "claude-fable-5-1", "claude-fable-5-2", "claude-sonnet-5-5"}
-_FALLBACK_BETA = "server-side-fallback-2026-07-01"
-
-RISK_LEVELS = ("faible", "moyen", "eleve")
-LEASE_TYPES = ("classique", "meuble", "mobilite", "etudiant", "colocation", "saisonnier")
-
 
 def _nullable(schema: Dict) -> Dict:
     return {"anyOf": [schema, {"type": "null"}]}
+
+
+RISK_LEVELS = ("faible", "moyen", "eleve")
+LEASE_TYPES = ("classique", "meuble", "mobilite", "etudiant", "colocation", "saisonnier")
 
 
 # Sortie imposée : tous les champs présents, null quand l'annonce ne dit rien
@@ -118,12 +118,8 @@ plus faibles ; 'faible' sinon. Une annonce d'agence classique, même peu détail
 au plus, en français."""
 
 
-class LlmUnavailable(Exception):
-    """Le service ne peut pas être appelé pour ce run (clé absente, quota, panne) : on s'arrête."""
-
-
 # ---------------------------------------------------------------------------
-# Construction de la requête
+# Texte envoyé
 # ---------------------------------------------------------------------------
 
 def _description(annonce: Dict) -> str:
@@ -133,13 +129,14 @@ def _description(annonce: Dict) -> str:
     return text
 
 
-def input_hash(annonce: Dict) -> str:
-    """Empreinte de ce qui est envoyé au modèle (hors date du jour) + version du prompt."""
-    payload = json.dumps(
-        [PROMPT_VERSION, annonce.get("title"), annonce.get("price"), _description(annonce)],
-        ensure_ascii=False,
-    )
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
+def content_hash(description: Optional[str]) -> str:
+    """
+    Empreinte du texte de la description, normalisé (espaces, casse) : une annonce
+    republiée avec le même texte a la même empreinte. Ne dépend ni du prix, ni de l'URL,
+    ni du prompt, ni du modèle — ce qui a été lu une fois ne l'est plus.
+    """
+    normalized = " ".join((description or "").split()).lower()
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:32]
 
 
 def user_message(annonce: Dict, today: date) -> str:
@@ -158,43 +155,9 @@ def user_message(annonce: Dict, today: date) -> str:
     )
 
 
-def build_request(annonce: Dict, today: date, model: str = LLM_MODEL) -> Dict[str, Any]:
-    """Arguments de `client.beta.messages.create` pour une annonce."""
-    request: Dict[str, Any] = {
-        "model": model,
-        "max_tokens": LLM_MAX_TOKENS,
-        "system": SYSTEM_PROMPT,
-        "messages": [{"role": "user", "content": user_message(annonce, today)}],
-        "output_config": {"effort": LLM_EFFORT, "format": {"type": "json_schema", "schema": SCHEMA}},
-        # Le prompt système et le schéma sont identiques pour toutes les annonces
-        "cache_control": {"type": "ephemeral"},
-    }
-    if model in _FALLBACK_MODELS:
-        # Refus du modèle (faux positif des filtres de sécurité) : repli automatique côté serveur
-        request["betas"] = [_FALLBACK_BETA]
-        request["fallbacks"] = "default"
-    return request
-
-
 # ---------------------------------------------------------------------------
-# Lecture et normalisation de la réponse
+# Normalisation de la réponse
 # ---------------------------------------------------------------------------
-
-def response_json(response) -> Dict:
-    """JSON de la réponse. ValueError si refus, réponse tronquée ou JSON illisible."""
-    if response.stop_reason == "refusal":
-        category = getattr(getattr(response, "stop_details", None), "category", None)
-        raise ValueError(f"refus du modèle ({category or 'sans catégorie'})")
-    if response.stop_reason == "max_tokens":
-        raise ValueError("réponse tronquée (max_tokens)")
-    text = next((b.text for b in response.content if getattr(b, "type", None) == "text"), None)
-    if text is None:
-        raise ValueError("réponse sans bloc texte")
-    data = json.loads(text)
-    if not isinstance(data, dict):
-        raise ValueError("JSON inattendu")
-    return data
-
 
 def _bool(value) -> Optional[bool]:
     return value if isinstance(value, bool) else None
@@ -266,139 +229,157 @@ def apply_low_price_signal(fields: Dict, annonce: Dict, median_ppm2: Optional[fl
 
 
 # ---------------------------------------------------------------------------
-# Appel du modèle
+# Registre → colonnes de l'annonce
 # ---------------------------------------------------------------------------
 
-def make_client():
-    import anthropic
-    return anthropic.Anthropic()
-
-
-def call_model(client, annonce: Dict, today: date):
-    """
-    Une requête. LlmUnavailable si le service ne peut pas être utilisé pour ce run
-    (authentification, quota, panne réseau ou serveur) ; ValueError pour une erreur
-    propre à cette annonce (requête refusée, réponse inexploitable).
-    """
-    import anthropic
-
-    try:
-        return client.beta.messages.create(**build_request(annonce, today))
-    except anthropic.AuthenticationError as e:
-        raise LlmUnavailable("clé d'API invalide ou absente (ANTHROPIC_API_KEY)") from e
-    except anthropic.PermissionDeniedError as e:
-        raise LlmUnavailable(f"accès refusé : {e.message}") from e
-    except anthropic.RateLimitError as e:
-        raise LlmUnavailable("limite de débit atteinte, reprise au prochain run") from e
-    except anthropic.BadRequestError as e:
-        raise ValueError(f"requête refusée : {e.message}") from e
-    except anthropic.APIStatusError as e:
-        if e.status_code >= 500:
-            raise LlmUnavailable(f"erreur serveur {e.status_code}") from e
-        raise ValueError(f"erreur API {e.status_code} : {e.message}") from e
-    except anthropic.APIConnectionError as e:
-        raise LlmUnavailable("service injoignable") from e
-
-
-def analyze_annonce(client, annonce: Dict, today: date, median_ppm2: Optional[float]) -> Dict:
-    """Analyse une annonce. Retourne les colonnes à enregistrer (statut compris)."""
-    base = {
-        "llm_input_hash": input_hash(annonce),
-        "llm_model": LLM_MODEL,
-        "llm_analyzed_at": datetime.now().isoformat(timespec="seconds"),
+def fields_from_entry(entry: Dict, annonce: Dict, median_ppm2: Optional[float]) -> Dict[str, Any]:
+    """Colonnes de l'annonce à partir d'une ligne du registre (lecture faite ou réutilisée)."""
+    fields: Dict[str, Any] = {
+        "llm_input_hash": entry["content_hash"],
+        "llm_model": entry.get("model"),
+        "llm_analyzed_at": entry.get("last_call_at"),
+        "llm_status": entry["status"],
+        "llm_error": entry.get("error"),
     }
-    try:
-        response = call_model(client, annonce, today)   # LlmUnavailable remonte (arrêt du run)
-        data = response_json(response)
-    except ValueError as e:   # json.JSONDecodeError compris
-        status = "refused" if str(e).startswith("refus") else "error"
-        return {**base, "llm_status": status, "llm_error": str(e)[:200]}
-    fields = apply_low_price_signal(normalize(data), annonce, median_ppm2)
-    usage = getattr(response, "usage", None)
-    return {
-        **base,
-        **fields,
-        "llm_status": "done",
-        "llm_error": None,
-        "llm_model": getattr(response, "model", None) or LLM_MODEL,
-        "llm_data": data,
-        "_tokens": (getattr(usage, "input_tokens", 0) or 0, getattr(usage, "output_tokens", 0) or 0),
-    }
+    if entry["status"] == "done" and entry.get("data"):
+        data = json.loads(entry["data"]) if isinstance(entry["data"], str) else entry["data"]
+        fields.update(apply_low_price_signal(normalize(data), annonce, median_ppm2))
+        fields["llm_data"] = data
+    return fields
 
 
-def needs_analysis(row: Dict, force: bool = False) -> bool:
-    if force:
-        return True
-    if row.get("llm_input_hash") != input_hash(row):
-        return True                       # jamais analysée, ou texte modifié
-    return row.get("llm_status") not in ("done", "refused")
+# ---------------------------------------------------------------------------
+# Run d'analyse
+# ---------------------------------------------------------------------------
+
+def _start_of_day(now: datetime) -> str:
+    return now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat(timespec="seconds")
 
 
 def analyze_pending(
-    limit: Optional[int] = None, force: bool = False, client=None, today: Optional[date] = None,
+    limit: Optional[int] = None,
+    retry_errors: bool = False,
+    backend=None,
+    today: Optional[date] = None,
 ) -> Dict[str, int]:
     """
-    Analyse les annonces actives dont la description n'a pas encore été analysée
-    (ou a changé), des plus récentes aux plus anciennes. Retourne les compteurs du run.
+    Analyse les annonces actives jamais analysées. Un texte déjà présent dans le registre
+    est réutilisé sans appel ; les autres sont réservés puis envoyés au modèle, dans la
+    limite de `limit` appels par run et de LLM_MAX_CALLS_PER_DAY par jour.
     """
-    from storage.sqlite import annonces_for_llm, save_llm_analysis
+    from storage import sqlite as db
 
     limit = LLM_MAX_PER_RUN if limit is None else limit
-    rows = annonces_for_llm()
-    todo = [r for r in rows if needs_analysis(r, force)][:limit]
-    summary = {"candidates": len(todo), "done": 0, "errors": 0, "refused": 0, "risky": 0}
-    if not todo:
-        logger.info("Analyse LLM : aucune annonce à analyser")
+    summary = {"candidates": 0, "calls": 0, "reused": 0, "done": 0, "errors": 0,
+               "refused": 0, "risky": 0, "waiting": 0}
+    now = datetime.now()
+    if retry_errors:
+        stale = (now - timedelta(hours=1)).isoformat(timespec="seconds")
+        reopened = db.reopen_llm_errors(LLM_MAX_CALLS_PER_TEXT, stale)
+        logger.info(f"Relance explicite : {reopened} texte(s) en erreur rouvert(s) (dernier essai autorisé)")
+
+    rows = db.annonces_for_llm()
+    summary["candidates"] = len(rows)
+    if not rows:
+        logger.info("Analyse LLM : aucune nouvelle annonce à analyser")
         return summary
 
-    med = median_price_per_m2(r for r in rows if r.get("status") == "active")
+    med = median_price_per_m2(db.active_price_rows())
     today = today or date.today()
+    calls_today = db.llm_calls_since(_start_of_day(now))
     tokens_in = tokens_out = 0
-    try:
-        client = client or make_client()
-    except Exception as e:
-        logger.error(f"Analyse LLM impossible : {e}")
-        return summary
+    stop_reason = None
 
-    logger.info(f"Analyse LLM de {len(todo)} annonce(s) avec {LLM_MODEL} (effort {LLM_EFFORT})")
-    for row in todo:
-        try:
-            result = analyze_annonce(client, row, today, med)
-        except LlmUnavailable as e:
-            logger.error(f"Analyse LLM interrompue : {e}")
+    for row in rows:
+        own_hash = content_hash(row["description"])
+        entry = db.get_llm_entry(own_hash)
+
+        # Doublon inter-sites : l'analyse du même bien sur l'autre site est réutilisée
+        if not entry and row.get("duplicate_of") and row.get("original_description"):
+            original = db.get_llm_entry(content_hash(row["original_description"]))
+            if original and original["status"] == "done":
+                entry = original
+            elif row.get("original_status") == "active" and not original:
+                summary["waiting"] += 1       # l'original sera lu ; ce doublon le réutilisera
+                continue
+
+        if entry and entry["status"] != "retry":
+            if entry["status"] == "running":
+                summary["waiting"] += 1       # lecture en cours dans un autre run
+                continue
+            db.save_llm_analysis(row["id"], fields_from_entry(entry, row, med))
+            summary["reused"] += 1
+            continue
+
+        # Nouveau texte : appel facturable, sous plafonds
+        if stop_reason is None and summary["calls"] >= limit:
+            stop_reason = f"plafond du run atteint ({limit} appels)"
+        if stop_reason is None and calls_today >= LLM_MAX_CALLS_PER_DAY:
+            stop_reason = f"plafond quotidien atteint ({LLM_MAX_CALLS_PER_DAY} appels)"
+        if stop_reason:
             break
-        t_in, t_out = result.pop("_tokens", (0, 0))
+        if backend is None:
+            try:
+                backend = make_backend()
+            except LlmUnavailable as e:
+                stop_reason = str(e)
+                break
+            logger.info(f"Analyse LLM avec {backend.settings.label()}")
+        if not db.claim_llm_entry(own_hash, backend.model, LLM_MAX_CALLS_PER_TEXT):
+            summary["waiting"] += 1           # réservé entre-temps par un autre run
+            continue
+
+        try:
+            result = backend.complete(SYSTEM_PROMPT, user_message(row, today), SCHEMA)
+        except LlmUnavailable as e:
+            db.release_llm_entry(own_hash)    # rien n'a été facturé : réservation annulée
+            stop_reason = str(e)
+            break
+        except LlmCallError as e:
+            t_in, t_out = getattr(e, "tokens", (0, 0))
+            status = "refused" if isinstance(e, LlmRefused) else "error"
+            db.finish_llm_entry(own_hash, status, None, None, str(e)[:200], t_in, t_out)
+        else:
+            t_in, t_out = result.input_tokens, result.output_tokens
+            db.finish_llm_entry(own_hash, "done", result.model, result.data, None, t_in, t_out)
+        summary["calls"] += 1
+        calls_today += 1
         tokens_in, tokens_out = tokens_in + t_in, tokens_out + t_out
-        save_llm_analysis(row["id"], result)
-        status = result["llm_status"]
-        if status == "done":
+
+        fields = fields_from_entry(db.get_llm_entry(own_hash), row, med)
+        db.save_llm_analysis(row["id"], fields)
+        if fields["llm_status"] == "done":
             summary["done"] += 1
-            if result.get("scam_risk") in ("moyen", "eleve"):
+            if fields.get("scam_risk") in ("moyen", "eleve"):
                 summary["risky"] += 1
-                logger.warning(
-                    f"  ⚠ Risque {result['scam_risk']} : {row.get('title')} — "
-                    + "; ".join(result.get("scam_flags") or [])
-                )
-        elif status == "refused":
+                logger.warning(f"  ⚠ Risque {fields['scam_risk']} : {row.get('title')} — "
+                               + "; ".join(fields.get("scam_flags") or []))
+        elif fields["llm_status"] == "refused":
             summary["refused"] += 1
-            logger.warning(f"  Analyse refusée pour {row.get('url')} : {result.get('llm_error')}")
+            logger.warning(f"  Analyse refusée pour {row.get('url')} : {fields.get('llm_error')}")
         else:
             summary["errors"] += 1
-            logger.warning(f"  Analyse en erreur pour {row.get('url')} : {result.get('llm_error')}")
+            logger.warning(f"  Analyse en erreur pour {row.get('url')} : {fields.get('llm_error')} "
+                           "(relance possible une fois : analyze --retry-errors)")
 
+    if stop_reason:
+        logger.warning(f"Analyse LLM arrêtée : {stop_reason}")
     logger.info(
-        f"Analyse LLM : {summary['done']} analysées, {summary['risky']} à risque, "
-        f"{summary['errors']} erreurs, {summary['refused']} refus — "
+        f"Analyse LLM : {summary['calls']} appel(s) au modèle, {summary['reused']} analyse(s) réutilisée(s) "
+        f"sans appel, {summary['risky']} à risque, {summary['errors']} erreur(s), {summary['refused']} refus — "
         f"{tokens_in} jetons en entrée, {tokens_out} en sortie"
     )
+    summary["stopped"] = stop_reason or ""
     return summary
 
 
 def maybe_analyze(context: str) -> Optional[Dict[str, int]]:
-    """Analyse automatique après un scraping / enrichissement, si activée. Jamais bloquante."""
-    import config
-
-    if not config.LLM_ANALYSIS_ENABLED:
+    """Analyse automatique après un scraping / enrichissement, si l'utilisateur l'a activée. Jamais bloquante."""
+    settings = load_settings()
+    if not settings.auto:
+        return None
+    if not settings.ready:
+        logger.warning(f"Analyse LLM automatique ignorée : {'; '.join(settings.problems())}")
         return None
     try:
         return analyze_pending()
@@ -414,3 +395,25 @@ def describe_flags(flags_json: Optional[str]) -> List[str]:
     except (TypeError, ValueError):
         return []
     return [f for f in flags if isinstance(f, str)]
+
+
+# Texte d'essai pour « Tester la connexion » (un seul petit appel, sur la clé de l'utilisateur)
+SAMPLE_ANNONCE = {
+    "title": "Studio 22 m² Rangueil", "price": 430, "surface_m2": 22, "location_raw": "Toulouse 31400",
+    "description": "Studio meublé au 2e étage avec ascenseur, proche métro. Libre au 1er décembre. "
+                   "APL acceptées. Charges 30 € par mois.",
+}
+
+
+def test_connection(settings=None) -> Dict[str, Any]:
+    """Un appel d'essai (hors registre). Retourne {ok, message}."""
+    try:
+        backend = make_backend(settings)
+        result = backend.complete(SYSTEM_PROMPT, user_message(SAMPLE_ANNONCE, date.today()), SCHEMA)
+    except (LlmUnavailable, LlmCallError) as e:
+        return {"ok": False, "message": str(e)}
+    except Exception as e:  # erreur inattendue d'un serveur exotique
+        return {"ok": False, "message": f"erreur inattendue : {e}"}
+    fields = normalize(result.data)
+    return {"ok": True, "message": f"OK ({result.model}, {result.input_tokens}+{result.output_tokens} jetons) — "
+                                   f"résumé : {fields.get('summary') or '—'}"}

@@ -14,12 +14,14 @@ from storage.sqlite import init_db
 
 
 def create_app() -> Flask:
+    from ui.llm_settings import llm_bp
     from ui.routes import bp
     from ui.security import init_security
 
     app = Flask(__name__)
     init_security(app)
     app.register_blueprint(bp)
+    app.register_blueprint(llm_bp)
 
     # Signaux d'arnaque (colonne JSON) → liste, pour l'infobulle de la pastille ⚠️ (15.4)
     from analysis.llm import describe_flags
