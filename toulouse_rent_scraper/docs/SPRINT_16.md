@@ -214,11 +214,16 @@ doublons écartés). Il devient juste car il s'applique maintenant **après** l'
 
 ## Vérification de fin de sprint
 
+Validation sur le profil **Blagnac** uniquement (ENAC n'est plus prioritaire, 2026-11-13).
+
 1. `pytest` vert.
-2. `python main.py scrape --profile enac --site leboncoin` réel : logs « Ouverture des
-   fiches », fiches `done` en base, notification reçue avec surface / DPE.
-3. `python main.py scrape --no-enrich` : aucune fiche ouverte.
-4. Bouton UI : avancement visible pendant l'ouverture.
+2. `python main.py scrape --profile blagnac --site leboncoin` réel : logs « Ouverture des
+   fiches », fiches `done` en base, notification avec surface / DPE (sans `.env`, message
+   vérifié via `notify.messages.build_messages`, pas d'envoi).
+3. `python main.py scrape --profile blagnac --no-enrich` : aucune fiche ouverte.
+4. Bouton UI (profil Blagnac) : avancement visible pendant l'ouverture.
+5. Timer systemd : non installé sur la machine de dev — `deploy/scraper.service` ne prendra
+   effet qu'une fois installé (`systemctl --user link …`, voir README).
 
 ## Notes de livraison (2026-11-13)
 
