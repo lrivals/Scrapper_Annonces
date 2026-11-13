@@ -436,13 +436,14 @@ QUALITY_MIN_FILL_RATES = {
     "description": 0.6,
     "photos": 0.6,
 }
-# Part minimale d'annonces LBC extraites depuis le JSON : en dessous, `__NEXT_DATA__`
-# a probablement disparu ou changé de forme
-QUALITY_MIN_JSON_RATE = {"LeBonCoin": 0.5}
+# Part minimale d'annonces extraites depuis le JSON embarqué : en dessous, l'état de la page
+# (`__NEXT_DATA__` LBC, `__UFRN_*__` SeLoger) a probablement disparu ou changé de forme
+QUALITY_MIN_JSON_RATE = {"LeBonCoin": 0.5, "SeLoger": 0.5}
 # Champs que le JSON de la page de recherche ne fournit pas : non jugés par le contrôle de
 # santé de la recherche (ils le sont après `enrich`). Constaté le 2026-11-13 : la recherche
 # LBC n'a pas de `body`, donc 0 % de descriptions → fausse alerte à chaque scrape.
-QUALITY_SEARCH_SKIP_FIELDS = {"LeBonCoin": ("description",)}
+# SeLoger (15.3) : la recherche n'a qu'un résumé tronqué, ignoré (description sur le détail).
+QUALITY_SEARCH_SKIP_FIELDS = {"LeBonCoin": ("description",), "SeLoger": ("description",)}
 
 
 # =========================

@@ -1,6 +1,11 @@
 # scrapers/detail_extractors/seloger_detail.py
 # =========================
 # Extraction des détails d'une annonce SeLoger
+#
+# Ordre (Sprint 15.3) :
+#   1. état JSON embarqué `__UFRN_LIFECYCLE_SERVERREQUEST__` (seloger_json.py) — typé, GPS ;
+#   2. DOM + regex sur la page (extraction historique) si le JSON est absent ou inexploitable.
+# `field_sources` indique d'où vient chaque champ rempli.
 # =========================
 
 import re
@@ -8,6 +13,7 @@ from datetime import datetime
 from typing import Optional
 
 from scrapers.browser import PlaywrightTimeoutError
+from scrapers.detail_extractors.seloger_json import extract_from_html
 
 from utils.logger import setup_logger
 
@@ -68,11 +74,10 @@ def _regex_float(pattern: str, text: str) -> Optional[float]:
     return None
 
 
-def extract_detail(page, url: str) -> dict:
+def _extract_from_dom(page, url: str) -> dict:
     """
-    Navigue sur la page SeLoger et extrait les données de détail.
-    Retourne un dict avec les champs enrichis.
-    La navigation est gérée par l'appelant (enricher.py).
+    Extraction historique : sélecteurs CSS puis regex sur le texte de la page.
+    Utilisée en secours quand l'état JSON embarqué est absent ou inexploitable.
     """
     result: dict = {}
 
@@ -228,7 +233,11 @@ def extract_detail(page, url: str) -> dict:
         result["deposit"] = deposit
 
         # --- Meublé ---
-        furnished = bool(re.search(r"meublé", page_text, re.IGNORECASE))
+        # « non meublé » contient « meublé » : à tester en premier
+        if re.search(r"non[\s-]+meubl", page_text, re.IGNORECASE):
+            furnished = False
+        else:
+            furnished = bool(re.search(r"meublé", page_text, re.IGNORECASE))
         result["furnished"] = furnished
 
         # --- Type de contact ---
@@ -288,4 +297,76 @@ def extract_detail(page, url: str) -> dict:
         result["enrichment_status"] = "error"
         result["error_detail"] = str(e)[:200]
 
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Extraction JSON d'abord (Sprint 15.3)
+# ---------------------------------------------------------------------------
+
+# Sans au moins un de ces champs, le JSON est jugé inexploitable → DOM
+_CORE_FIELDS = ("surface_m2", "nb_rooms", "description")
+
+# Champs que le DOM peut compléter quand le JSON est partiel
+_DOM_FIELDS = (
+    "surface_m2", "nb_rooms", "nb_bedrooms", "floor", "description", "charges",
+    "deposit", "furnished", "dpe_rating", "photos", "publisher_type", "published_at",
+)
+
+
+def _from_json(page) -> Optional[dict]:
+    try:
+        html = page.content()
+    except Exception:
+        return None
+    try:
+        return extract_from_html(html)
+    except Exception as e:  # JSON inattendu : on ne casse pas l'enrichissement
+        logger.warning(f"JSON SeLoger illisible : {e}")
+        return None
+
+
+def _sources(result: dict, source: str) -> dict:
+    return {
+        key: source for key, value in result.items()
+        if value is not None and key not in ("enrichment_status", "error_detail", "extra_attributes")
+    }
+
+
+def extract_detail(page, url: str) -> dict:
+    """
+    Extrait les données de détail d'une annonce SeLoger.
+    La navigation est gérée par l'appelant (enricher.py).
+    """
+    parsed = _from_json(page)
+    if parsed is not None:
+        parsed.pop("price", None)  # le prix vient de la recherche (historique des prix)
+
+    if parsed and any(parsed.get(f) is not None for f in _CORE_FIELDS):
+        parsed["field_sources"] = _sources(parsed, "json")
+        parsed["extraction_source"] = "json"
+        parsed["enrichment_status"] = "done"
+        logger.debug(
+            f"SeLoger JSON pour {url}: surface={parsed.get('surface_m2')}, "
+            f"pièces={parsed.get('nb_rooms')}, DPE={parsed.get('dpe_rating')}, "
+            f"GPS={parsed.get('geo_precision')}"
+        )
+        return parsed
+
+    # Secours : extraction DOM, complétée par ce que le JSON partiel aurait apporté
+    result = _extract_from_dom(page, url)
+    if result.get("enrichment_status") != "done":
+        return result
+    sources = _sources({k: result.get(k) for k in _DOM_FIELDS}, "dom")
+    if parsed:
+        for key, value in parsed.items():
+            if value is not None and result.get(key) is None:
+                result[key] = value
+                if key != "extra_attributes":
+                    sources[key] = "json"
+        result["extraction_source"] = "json+dom"
+    else:
+        result["extraction_source"] = "dom"
+        logger.info(f"SeLoger : pas d'état JSON exploitable, extraction DOM pour {url}")
+    result["field_sources"] = sources
     return result
