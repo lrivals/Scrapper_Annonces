@@ -21,8 +21,12 @@ from scrapers.antibot import is_page_blocked, record_block, wait_for_challenge
 from scrapers.browser import chrome_session, BrowserError
 from storage.cleaner import page_shows_expired
 from storage.sqlite import (
+    correct_price,
+    get_annonces_by_ids,
     get_coordinates,
     get_pending_annonces,
+    linked_profiles,
+    unlink_profiles,
     init_db,
     set_annonce_status,
     set_distances,
@@ -75,6 +79,37 @@ def _refresh_distances(url: str) -> bool:
     return True
 
 
+def _browser_gone(page, error: Exception) -> bool:
+    """True si l'onglet ou le navigateur n'existe plus (inutile de continuer)."""
+    try:
+        if page.is_closed() is True:
+            return True
+    except Exception:
+        return True
+    return "has been closed" in str(error) or "Browser closed" in str(error)
+
+
+def _apply_detail_price(annonce: dict, price) -> bool:
+    """
+    Prix lu sur la page de l'annonce (SeLoger) différent de la base : la base est corrigée
+    (historique compris) et l'annonce quitte les profils dont elle dépasse maintenant le budget.
+    Corrige les prix de cartes mal lus (« 1 004 € » enregistré 4 € le 2026-11-04).
+    """
+    from config import SEARCH_PROFILES
+    from filters.price_and_distance import _price_ok
+
+    if not isinstance(price, int) or price <= 0:
+        return False
+    old = correct_price(annonce["id"], price)
+    if old is None:
+        return False
+    out = [k for k in linked_profiles(annonce["id"])
+           if k in SEARCH_PROFILES and not _price_ok(price, SEARCH_PROFILES[k])]
+    unlink_profiles(annonce["id"], out)
+    logger.info(f"  💶 Prix corrigé : {old} € → {price} €" + (f" — retirée de {', '.join(out)} (budget)" if out else ""))
+    return True
+
+
 def report_extraction_health(rows_by_site: dict, skip_fields: Optional[dict] = None) -> list:
     """Alerte (log + notification) si un site renvoie des fiches anormalement vides."""
     from storage.quality import check_fill_rates
@@ -97,6 +132,7 @@ def enrich_annonces(
     site_filter: Optional[str] = None,
     limit: int = ENRICHMENT_DEFAULT_LIMIT,
     unattended: bool = False,
+    ids: Optional[list] = None,
 ) -> dict:
     """
     Enrichit les annonces en attente en naviguant vers chaque URL.
@@ -110,7 +146,8 @@ def enrich_annonces(
     """
     init_db()
 
-    pending = get_pending_annonces(site_filter=site_filter, limit=limit)
+    # ids : annonces précises, revisitées même déjà enrichies (ex. prix à vérifier)
+    pending = get_annonces_by_ids(ids) if ids else get_pending_annonces(site_filter=site_filter, limit=limit)
     if not pending:
         logger.info("Aucune annonce à enrichir.")
         return {"total": 0, "enriched": 0, "errors": 0, "expired": 0}
@@ -121,6 +158,7 @@ def enrich_annonces(
     error_count = 0
     expired_count = 0
     relocated_count = 0
+    repriced_count = 0
     done_by_site: dict = {}
     gone = []   # annonces retirées : favoris ⭐ notifiés (15.6)
 
@@ -142,6 +180,14 @@ def enrich_annonces(
                 try:
                     page.goto(url, wait_until="domcontentloaded", timeout=PAGE_LOAD_TIMEOUT)
                 except Exception as nav_err:
+                    if _browser_gone(page, nav_err):
+                        # Fenêtre fermée ou Chrome planté : toutes les annonces suivantes
+                        # échoueraient et seraient pénalisées à tort (constaté le 2026-11-13)
+                        logger.error(
+                            f"Navigateur fermé — enrichissement interrompu ({idx - 1}/{len(pending)} "
+                            "traitées) ; les annonces restantes ne sont pas comptées en erreur."
+                        )
+                        break
                     logger.warning(f"Erreur navigation {url}: {nav_err}")
                     _mark_error(url, attempts, f"navigation : {nav_err}")
                     error_count += 1
@@ -199,6 +245,8 @@ def enrich_annonces(
 
                 if detail_data.get("enrichment_status") == "done":
                     enriched_count += 1
+                    if _apply_detail_price(annonce, detail_data.get("detail_price")):
+                        repriced_count += 1
                     done_by_site.setdefault(site or "?", []).append(detail_data)
                     if detail_data.get("geo_precision") == "exact" and _refresh_distances(url):
                         relocated_count += 1
@@ -244,9 +292,10 @@ def enrich_annonces(
     total = len(pending)
     logger.info(
         f"Enrichissement terminé : {enriched_count}/{total} enrichis, {error_count} erreurs, "
-        f"{expired_count} annonces retirées, {relocated_count} repositionnées (GPS exact)"
+        f"{expired_count} annonces retirées, {relocated_count} repositionnées (GPS exact), "
+        f"{repriced_count} prix corrigé(s)"
     )
     return {
         "total": total, "enriched": enriched_count, "errors": error_count,
-        "expired": expired_count, "relocated": relocated_count,
+        "expired": expired_count, "relocated": relocated_count, "repriced": repriced_count,
     }

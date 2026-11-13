@@ -287,6 +287,37 @@ des prix, profils, retours, doublons rattachés). Base réelle : 293 URLs nettoy
     caution / meublé / DPE / GES / annonceur / date 100 %, étage et ascenseur 80 %. Aucun champ sous
     son seuil.
 
+### Prix SeLoger aberrants et nettoyage de la base (2026-11-13)
+
+Constat dans l'UI : 19 annonces SeLoger actives à 4–88 € (« 4 € », « 68 € »…), toutes créées le
+2026-11-04 par la lecture des cartes DOM et jamais revues depuis. Cause exacte non reproductible
+(code de l'époque) : les vrais loyers sont de 630 à 930 € et ne correspondent ni à une troncature
+des milliers ni aux charges. Le code actuel lit le bon prix (JSON, et aria-label des cartes vérifié
+sur 32 cartes réelles).
+
+- **Prix de la page d'annonce** : `seloger_detail.extract_detail` renvoie `detail_price` ; à
+  l'enrichissement, un prix différent de la base est corrigé (`storage.sqlite.correct_price`,
+  historique des prix compris) et l'annonce quitte les profils dont elle dépasse maintenant le
+  budget (`unlink_profiles`) — ex. 68 € → 791 € : retirée d'ENAC (≤ 500 €), gardée dans Blagnac.
+- **`python main.py enrich --ids 1035,1126,…`** : revisite des annonces précises, même déjà enrichies.
+- **`python main.py purge --delete-expired`** : supprime définitivement les annonces marquées
+  retirées (`status = 'expired'`, par `enrich` / `check-links`) et leurs lignes liées (profils,
+  historique, retours) ; les doublons qui leur étaient rattachés redeviennent autonomes. Les
+  annonces masquées (`hidden`) sont gardées pour qu'elles ne reviennent pas.
+- **Garde-fou** : si Chrome est fermé en cours d'enrichissement (« Target page, context or browser
+  has been closed »), le run s'arrête net au lieu de compter une erreur pour chaque annonce
+  restante (constaté : 230 annonces pénalisées à tort, remises en `pending` depuis la sauvegarde).
+- Tests : `tests/test_seloger_json.py` (`TestDetailPrice`, navigateur fermé),
+  `tests/test_storage.py::test_delete_expired_annonces`.
+- **Relecture réelle du 2026-11-13** :
+  - les 19 annonces à prix aberrant : 9 prix corrigés (ex. 4 € → 644 €, 68 € → 791 €), dont 8
+    retirées d'ENAC (budget) ; 10 n'étaient plus en ligne ;
+  - les 230 autres annonces SeLoger jamais relues (avril et 4 novembre), `enrich --ids` :
+    0 erreur, 74 enrichies depuis le JSON (35 repositionnées en GPS exact, 1 prix corrigé
+    769 → 770 €), 156 plus en ligne (les 81 d'avril, 75 du 4 novembre) ;
+  - `purge --delete-expired` : 167 annonces retirées supprimées, aucune ligne orpheline, aucun
+    favori concerné. SeLoger : 269 annonces actives, toutes lues au moins une fois depuis le JSON.
+
 ## 15.4 — Analyse de la description par LLM ✅
 
 **Fichiers** : `analysis/llm.py` (nouveau), `storage/migrations.py`, `storage/sqlite.py`,

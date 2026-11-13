@@ -351,7 +351,8 @@ class TestEnrichment:
             d = seloger_detail.extract_detail(_page(_detail_html()), URL)
         dom.assert_not_called()
         assert d["enrichment_status"] == "done" and d["extraction_source"] == "json"
-        assert "price" not in d                                   # le prix vient de la recherche
+        assert "price" not in d and d["detail_price"] == 755      # sert à corriger un prix mal lu
+        assert "detail_price" not in d["field_sources"]
         assert d["field_sources"]["dpe_rating"] == "json"
         assert "extra_attributes" not in d["field_sources"]
 
@@ -425,3 +426,81 @@ def test_migration_canonical_urls_merges_same_listing(temp_db):
     assert con.execute("SELECT annonce_id, feedback FROM annonce_feedback").fetchall() == [(1, "favorite")]
     assert con.execute("SELECT duplicate_of FROM annonces WHERE id = 5").fetchone() == (1,)
     con.close()
+
+
+# ---------------------------------------------------------------------------
+# Prix de la page d'annonce : correction des prix de cartes mal lus
+# ---------------------------------------------------------------------------
+
+class TestDetailPrice:
+
+    def _setup(self, temp_db, price, profiles=("enac", "blagnac")):
+        from storage.sqlite import get_annonces_by_ids, init_db, insert_annonce, upsert_annonce_profile
+
+        init_db()
+        insert_annonce({"site": "SeLoger", "title": "Appartement à louer", "price": price,
+                        "location_raw": "Toulouse (31200)", "url": URL})
+        for p in profiles:
+            upsert_annonce_profile(URL, p, 3.0)
+        return get_annonces_by_ids([1])[0]
+
+    def test_wrong_price_corrected_and_out_of_budget_profile_left(self, temp_db):
+        from scrapers.enricher import _apply_detail_price
+        from storage.sqlite import get_price_history, linked_profiles
+
+        annonce = self._setup(temp_db, 4)                 # « 1 004 € » lu 4 € (2026-11-04)
+        assert _apply_detail_price(annonce, 1004) is True
+        with sqlite3.connect(temp_db) as con:
+            assert con.execute("SELECT price FROM annonces WHERE id = 1").fetchone() == (1004,)
+        assert [h["price"] for h in get_price_history(1)] == [4, 1004]
+        assert linked_profiles(1) == ["blagnac"]          # ENAC : budget ≤ 500 €
+
+    def test_same_or_missing_price_changes_nothing(self, temp_db):
+        from scrapers.enricher import _apply_detail_price
+        from storage.sqlite import linked_profiles
+
+        annonce = self._setup(temp_db, 450)
+        assert _apply_detail_price(annonce, 450) is False
+        assert _apply_detail_price(annonce, None) is False
+        assert _apply_detail_price(annonce, 0) is False
+        assert linked_profiles(1) == ["blagnac", "enac"]
+
+    def test_enrich_ids_revisits_listing(self, temp_db):
+        from scrapers import enricher
+
+        self._setup(temp_db, 4)
+        with sqlite3.connect(temp_db) as con:
+            con.execute("UPDATE annonces SET enrichment_status = 'done'")   # déjà enrichie
+        page = _page(_detail_html())
+        page.inner_text.return_value = ""
+        session = MagicMock()
+        session.__enter__.return_value = (None, page)
+        with patch.object(enricher, "chrome_session", return_value=session), \
+             patch.object(enricher, "is_page_blocked", return_value=False), \
+             patch.object(enricher.time, "sleep"):
+            summary = enricher.enrich_annonces(ids=[1])
+        assert (summary["enriched"], summary["repriced"]) == (1, 1)
+        with sqlite3.connect(temp_db) as con:
+            assert con.execute("SELECT price, dpe_rating FROM annonces WHERE id = 1").fetchone() == (755, "A")
+
+
+def test_enrich_stops_when_browser_closed(temp_db):
+    """Chrome fermé en cours de run : arrêt net, aucune annonce pénalisée (constat du 2026-11-13)."""
+    from scrapers import enricher
+    from storage.sqlite import init_db, insert_annonce
+
+    init_db()
+    for i in range(3):
+        insert_annonce({"site": "SeLoger", "title": "A", "price": 700, "location_raw": "Toulouse",
+                        "url": f"{URL}{i}"})
+    page = MagicMock()
+    page.goto.side_effect = Exception("Page.goto: Target page, context or browser has been closed")
+    page.is_closed.return_value = True
+    session = MagicMock()
+    session.__enter__.return_value = (None, page)
+    with patch.object(enricher, "chrome_session", return_value=session), patch.object(enricher.time, "sleep"):
+        summary = enricher.enrich_annonces(ids=[1, 2, 3])
+    assert summary["errors"] == 0 and page.goto.call_count == 1
+    with sqlite3.connect(temp_db) as con:
+        assert con.execute("SELECT DISTINCT enrichment_status, enrichment_attempts FROM annonces").fetchall() \
+            == [("pending", 0)]

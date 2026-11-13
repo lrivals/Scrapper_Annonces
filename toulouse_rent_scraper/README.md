@@ -86,8 +86,10 @@ python main.py scrape --profile blagnac            # un profil (répétable)
 python main.py scrape --enrich --limit 20          # + enrichissement des nouvelles annonces
 python main.py scrape --export csv                 # + export CSV (ou json)
 python main.py enrich [--site seloger] [--limit 20]  # enrichir les annonces en attente
+python main.py enrich --ids 1035,1126              # revisiter des annonces précises (ex. prix à vérifier)
 python main.py check-links [--limit 50]            # vérifier les liens (Chromium headless)
 python main.py purge                               # vérification HEAD (peu fiable sur SeLoger/LBC)
+python main.py purge --delete-expired              # supprimer de la base les annonces retirées des sites
 python main.py export csv|json                     # export des annonces actives
 python main.py rescore                             # recalculer les scores (après un changement de poids)
 python main.py weights [--apply|--reset]           # poids du score appris de vos ⭐ / 📞 / 👎

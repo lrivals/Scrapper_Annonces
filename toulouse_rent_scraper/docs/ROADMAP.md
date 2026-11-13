@@ -100,7 +100,7 @@ Une fois les liens récoltés, ouvrir les annonces retenues et extraire leur fic
 |---|-------|--------|-------|
 | 15.1 | LBC : JSON `__NEXT_DATA__`, GPS exact, santé de l'extraction | ✅ | `main.py quality` ; valider les clés JSON sur une vraie page |
 | 15.2 | LBC : annonces complètes dès la recherche | ✅ | Moins de visites de détail ; JSON périmé détecté |
-| 15.3 | SeLoger : état JSON embarqué | ✅ | Recherche + détail ; URLs normalisées (migration 10) ; validé en réel |
+| 15.3 | SeLoger : état JSON embarqué | ✅ | Recherche + détail ; URLs normalisées (migration 10) ; validé en réel ; prix corrigés depuis la page, `purge --delete-expired` |
 | 15.4 | Analyse de la description par LLM | ✅ | LLM et clé de l’utilisateur (page « Connexion LLM ») ; une seule lecture par texte ; malus arnaque |
 | 15.5 | Critères éliminatoires par profil | ✅ | Inconnu = conservé ; recalculé à chaque rescore ; saisie dans l’UI (page « Critères ») |
 | 15.6 | Retours ⭐/👎 → poids appris | ✅ | Appliqués sur confirmation ; suivi des favoris |

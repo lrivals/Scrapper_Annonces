@@ -329,7 +329,7 @@ def _from_json(page) -> Optional[dict]:
 def _sources(result: dict, source: str) -> dict:
     return {
         key: source for key, value in result.items()
-        if value is not None and key not in ("enrichment_status", "error_detail", "extra_attributes")
+        if value is not None and key not in ("enrichment_status", "error_detail", "extra_attributes", "detail_price")
     }
 
 
@@ -340,7 +340,8 @@ def extract_detail(page, url: str) -> dict:
     """
     parsed = _from_json(page)
     if parsed is not None:
-        parsed.pop("price", None)  # le prix vient de la recherche (historique des prix)
+        # Prix de la page d'annonce : sert à corriger un prix de carte mal lu (enricher)
+        parsed["detail_price"] = parsed.pop("price", None)
 
     if parsed and any(parsed.get(f) is not None for f in _CORE_FIELDS):
         parsed["field_sources"] = _sources(parsed, "json")
@@ -362,7 +363,7 @@ def extract_detail(page, url: str) -> dict:
         for key, value in parsed.items():
             if value is not None and result.get(key) is None:
                 result[key] = value
-                if key != "extra_attributes":
+                if key not in ("extra_attributes", "detail_price"):
                     sources[key] = "json"
         result["extraction_source"] = "json+dom"
     else:
