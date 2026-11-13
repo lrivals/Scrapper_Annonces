@@ -252,6 +252,39 @@ def _m6_llm_registry(cur: sqlite3.Cursor):
         cur.execute("UPDATE annonces SET llm_input_hash = ? WHERE id = ?", (h, annonce_id))
 
 
+def _m7_profile_requirements(cur: sqlite3.Cursor):
+    """Sprint 15.5 — exclusion d'une annonce par les critères éliminatoires d'un profil."""
+    ap_cols = {r[1] for r in cur.execute("PRAGMA table_info(annonce_profiles)")}
+    if "excluded_reasons" not in ap_cols:
+        # NULL = conservée ; JSON [raison, …] = exclue (recalculé à chaque rescore)
+        cur.execute("ALTER TABLE annonce_profiles ADD COLUMN excluded_reasons TEXT")
+
+
+def _m8_feedback(cur: sqlite3.Cursor):
+    """Sprint 15.6 — retours de l'utilisateur sur une annonce, par profil."""
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS annonce_feedback (
+            annonce_id  INTEGER NOT NULL REFERENCES annonces(id) ON DELETE CASCADE,
+            profile     TEXT    NOT NULL,
+            feedback    TEXT    NOT NULL,      -- 'favorite' | 'contacted' | 'dislike'
+            price       INTEGER,               -- prix au moment du retour
+            updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (annonce_id, profile)
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_feedback_profile ON annonce_feedback(profile, feedback)")
+
+
+def _m9_photo_hash(cur: sqlite3.Cursor):
+    """Sprint 15.8 — empreinte perceptuelle de la première photo (doublons inter-sites)."""
+    a_cols = {r[1] for r in cur.execute("PRAGMA table_info(annonces)")}
+    if "photo_hash" not in a_cols:
+        cur.execute("ALTER TABLE annonces ADD COLUMN photo_hash TEXT")    # 16 caractères hexa
+    if "photo_hash_attempts" not in a_cols:
+        cur.execute("ALTER TABLE annonces ADD COLUMN photo_hash_attempts INTEGER DEFAULT 0")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_annonces_photo_hash ON annonces(photo_hash)")
+
+
 MIGRATIONS = [
     _m1_base_schema,
     _m2_indexes_and_price_history,
@@ -259,6 +292,9 @@ MIGRATIONS = [
     _m4_structured_extraction,
     _m5_llm_analysis,
     _m6_llm_registry,
+    _m7_profile_requirements,
+    _m8_feedback,
+    _m9_photo_hash,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)

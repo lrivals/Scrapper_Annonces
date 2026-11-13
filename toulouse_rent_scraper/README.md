@@ -90,6 +90,8 @@ python main.py check-links [--limit 50]            # vérifier les liens (Chromi
 python main.py purge                               # vérification HEAD (peu fiable sur SeLoger/LBC)
 python main.py export csv|json                     # export des annonces actives
 python main.py rescore                             # recalculer les scores (après un changement de poids)
+python main.py weights [--apply|--reset]           # poids du score appris de vos ⭐ / 📞 / 👎
+python main.py dedupe                              # doublons inter-sites par empreinte de la 1re photo
 python main.py notify-test                         # vérifier la configuration des notifications
 python main.py quality [--days 7]                  # taux de remplissage des champs par site (santé de l’extraction)
 python main.py analyze [--limit 20]                # analyse LLM des nouvelles descriptions (une lecture par texte) — voir SPRINT_15
@@ -130,6 +132,24 @@ Chaque annonce reçoit, pour chaque profil, un score sur 100 (pastille ★ dans 
 
 Un critère inconnu (annonce pas encore enrichie) vaut 0.5 : il ne pénalise pas. Poids réglables via
 `SCORE_WEIGHTS` dans `config.py`, puis `python main.py rescore`.
+
+### Retours et poids appris
+
+Chaque carte a trois boutons : ⭐ favori, 📞 contacté, 👎 pas intéressé (par profil ; 👎 retire
+l'annonce de la liste par défaut). Après ~30 retours (dont 5 👎), la page « Poids du score » (ou
+`python main.py weights`) propose des poids estimés par régression logistique, à côté des poids
+actuels ; ils ne s'appliquent qu'après confirmation (`data/score_weights.json`). Un favori qui
+baisse de prix ou disparaît du site est toujours notifié.
+
+### Critères éliminatoires
+
+Distincts du score : `requirements=Requirements(...)` dans le profil (`config.py`), par exemple
+`Requirements(apl_required=True, no_ground_floor=True, min_surface_m2=18, available_before="2027-01-15")`.
+Une annonce qui en viole un est **exclue du profil** : masquée par défaut dans l'interface (filtre
+« Critères » pour les revoir, motif ⛔ sur la carte), absente des notifications et des rapports.
+Une information inconnue n'exclut jamais. Recalculé à chaque `rescore` : rien n'est perdu en
+modifiant un critère. Critères : `available_before`, `apl_required`, `no_ground_floor`,
+`min_surface_m2`, `furnished`, `no_colocation`, `excluded_lease_types`, `max_dpe`.
 
 ### Notifications
 

@@ -267,6 +267,34 @@ document.querySelectorAll('form[action="/delete"], form[action="/restore"]').for
   });
 });
 
+/* Retours ⭐ / 📞 / 👎 (Sprint 15.6) : un seul actif par carte ; re-cliquer l'efface */
+function sendFeedback(btn) {
+  var data = new FormData();
+  data.append('id', btn.dataset.id);
+  data.append('value', btn.dataset.value);
+  data.append('profile', document.body.dataset.profile || '');
+  data.append('csrf_token', csrfToken());
+  fetch('/feedback', { method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' }, body: data })
+    .then(function(r) { return r.json(); })
+    .then(function(res) {
+      if (!res.ok) { showToast('err', res.msg); return; }
+      btn.parentNode.querySelectorAll('.btn-fb').forEach(function(b) {
+        var on = b.dataset.value === res.feedback;
+        b.classList.toggle('is-on', on);
+        b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      });
+      if (res.feedback) pulse(btn);
+      showToast('ok', res.msg);
+      // 👎 dans la vue par défaut (sans les 👎) : la carte sort de la liste
+      var fb = new URLSearchParams(window.location.search).get('fb') || '';
+      if (res.feedback === 'dislike' && fb === '') {
+        var card = btn.closest('article');
+        if (card) removeCard(card);
+      }
+    })
+    .catch(function() { showToast('err', 'Erreur réseau.'); });
+}
+
 /* Retire une carte : elle sort, puis les voisines glissent à leur nouvelle place (FLIP) */
 function removeCard(card) {
   leave(card, function() {

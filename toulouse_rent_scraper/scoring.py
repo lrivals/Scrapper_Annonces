@@ -9,7 +9,7 @@ import json
 from statistics import median
 from typing import Dict, Iterable, List, Optional, Tuple
 
-from config import DPE_SCORES, SCAM_RISK_PENALTY, SCORE_WEIGHTS, SEARCH_PROFILES, SearchProfile
+from config import DPE_SCORES, SCAM_RISK_PENALTY, SEARCH_PROFILES, SearchProfile
 from utils.logger import setup_logger
 
 logger = setup_logger("scoring")
@@ -84,7 +84,7 @@ def dpe_score(rating: Optional[str]) -> float:
     return DPE_SCORES.get(rating.strip().upper()[:1], NEUTRAL)
 
 
-_LABELS = {
+LABELS = {
     "loyer": "Loyer CC",
     "distance": "Distance",
     "prix_m2": "€/m²",
@@ -99,9 +99,15 @@ def compute_score(
     distance_km: Optional[float],
     profile: SearchProfile,
     median_ppm2: Optional[float] = None,
-    weights: Dict[str, float] = SCORE_WEIGHTS,
+    weights: Optional[Dict[str, float]] = None,
 ) -> Tuple[float, Dict[str, float]]:
-    """Retourne (score sur 100, valeur 0–1 de chaque critère)."""
+    """
+    Retourne (score sur 100, valeur 0–1 de chaque critère).
+    Poids par défaut : ceux confirmés depuis les retours (15.6), sinon `SCORE_WEIGHTS`.
+    """
+    if weights is None:
+        from analysis.weights import current_weights
+        weights = current_weights()
     detail = {
         "loyer": rent_score(
             annonce.get("price"), annonce.get("charges"), profile, annonce.get("charges_included")
@@ -133,7 +139,7 @@ def describe(detail_json: Optional[str]) -> str:
         detail = json.loads(detail_json)
     except (TypeError, ValueError):
         return ""
-    return " · ".join(f"{_LABELS.get(k, k)} {round(v * 10)}/10" for k, v in detail.items())
+    return " · ".join(f"{LABELS.get(k, k)} {round(v * 10)}/10" for k, v in detail.items())
 
 
 def median_price_per_m2(rows: Iterable[Dict]) -> Optional[float]:
@@ -149,18 +155,32 @@ def rescore(profile_keys: Optional[List[str]] = None) -> int:
     Recalcule le score de toutes les annonces des profils donnés (défaut : tous).
     La médiane €/m² est prise sur les annonces actives du profil. Retourne le nombre d'annonces notées.
     """
+    from filters.requirements import exclusion_reasons
     from storage.sqlite import annonces_for_scoring, save_scores
 
+    from analysis.weights import current_weights
+
+    weights = current_weights()
     count = 0
     for key in profile_keys or list(SEARCH_PROFILES):
         profile = SEARCH_PROFILES[key]
         rows = annonces_for_scoring(key)
         med = median_price_per_m2(r for r in rows if (r.get("status") or "active") == "active")
         updates = []
+        excluded = 0
         for row in rows:
-            score, detail = compute_score(row, row.get("distance_km"), profile, med)
-            updates.append((row["id"], score, json.dumps(detail)))
+            score, detail = compute_score(row, row.get("distance_km"), profile, med, weights)
+            # Critères éliminatoires (15.5) : recalculés à chaque fois, donc réversibles
+            reasons = exclusion_reasons(row, profile.requirements)
+            excluded += bool(reasons)
+            updates.append((
+                row["id"], score, json.dumps(detail),
+                json.dumps(reasons, ensure_ascii=False) if reasons else None,
+            ))
         save_scores(key, updates)
         count += len(updates)
-        logger.debug(f"Scores recalculés : {len(updates)} annonces ({profile.label})")
+        (logger.info if excluded else logger.debug)(
+            f"Scores recalculés : {len(updates)} annonces ({profile.label}), "
+            f"{excluded} exclue(s) par les critères"
+        )
     return count

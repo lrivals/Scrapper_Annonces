@@ -55,7 +55,11 @@ def build_messages(events: List[Dict]) -> List[Dict]:
             a = infos.get(e["url"])
             if not a or e["url"] in seen:
                 continue
-            if (a.get("score") or 0) < config.NOTIFY_MIN_SCORE:
+            # Même bien déjà connu sur un autre site (doublon) : pas une nouveauté
+            if e["kind"] == "new" and a.get("duplicate_of"):
+                continue
+            # Un favori (⭐, 15.6) est toujours suivi, quel que soit son score
+            if (a.get("score") or 0) < config.NOTIFY_MIN_SCORE and a.get("feedback") != "favorite":
                 continue
             seen.add(e["url"])
             items.append((e, a))
@@ -78,14 +82,40 @@ def build_messages(events: List[Dict]) -> List[Dict]:
             continue
 
         for e, a in items:
+            favorite = a.get("feedback") == "favorite"
             if e["kind"] == "price_drop":
-                title = f"Baisse de {e['old_price'] - a['price']} € — {label}"
+                title = f"{'⭐ ' if favorite else ''}Baisse de {e['old_price'] - a['price']} € — {label}"
                 body = f"{_line(a)}\n(avant : {e['old_price']} €)"
                 tags = ["chart_with_downwards_trend"]
             else:
                 title = f"Nouvelle annonce — {label}"
                 body = _line(a) + (f"\n{a['location_raw']}" if a.get("location_raw") else "")
                 tags = ["house"]
-            priority = "high" if (a.get("score") or 0) >= 75 else "default"
+            priority = "high" if (a.get("score") or 0) >= 75 or favorite else "default"
             messages.append({"title": title, "body": body, "url": a["url"], "priority": priority, "tags": tags})
+    return messages
+
+
+def favorite_gone_messages(annonces: List[Dict]) -> List[Dict]:
+    """
+    Sprint 15.6 — favoris (⭐) devenus indisponibles. `annonces` : dicts avec id, title,
+    price, url. Un message par annonce, avec les profils où elle était en favori.
+    """
+    from storage.feedback import favorites_by_annonce
+
+    favorites = favorites_by_annonce([a["id"] for a in annonces])
+    messages = []
+    for a in annonces:
+        profiles = favorites.get(a["id"])
+        if not profiles:
+            continue
+        labels = ", ".join(SEARCH_PROFILES[p].label if p in SEARCH_PROFILES else p for p in profiles)
+        price = f"{a['price']} € — " if a.get("price") else ""
+        messages.append({
+            "title": f"⭐ Favori retiré — {labels}",
+            "body": f"{price}{a.get('title') or 'Annonce'}\nL'annonce n'est plus disponible sur le site.",
+            "url": a["url"],
+            "priority": "high",
+            "tags": ["wastebasket"],
+        })
     return messages

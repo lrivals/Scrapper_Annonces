@@ -122,6 +122,7 @@ def enrich_annonces(
     expired_count = 0
     relocated_count = 0
     done_by_site: dict = {}
+    gone = []   # annonces retirées : favoris ⭐ notifiés (15.6)
 
     try:
         with chrome_session() as (_browser, page):
@@ -171,6 +172,7 @@ def enrich_annonces(
                         "enriched_at": datetime.now().isoformat(),
                     })
                     expired_count += 1
+                    gone.append(annonce)
                     continue
 
                 # Sélectionner l'extracteur selon le site
@@ -219,6 +221,15 @@ def enrich_annonces(
         raise
 
     report_extraction_health(done_by_site)
+
+    if gone:
+        from storage.cleaner import _notify_gone
+        _notify_gone(gone)
+
+    # Photos complètes : empreintes et doublons par photo (15.8), avant l'analyse LLM
+    if enriched_count:
+        from filters.photo_duplicates import run_photo_dedup
+        run_photo_dedup()
 
     # Nouvelles descriptions : analyse LLM (15.4, si activée) avant le recalcul des scores
     if enriched_count:

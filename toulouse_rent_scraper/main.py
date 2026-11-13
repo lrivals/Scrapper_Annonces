@@ -8,6 +8,8 @@
 #   python main.py purge
 #   python main.py export csv|json
 #   python main.py rescore
+#   python main.py weights [--apply | --reset]
+#   python main.py dedupe [--limit 150]
 #   python main.py notify-test
 #   python main.py ui [--port 5000]
 #
@@ -26,7 +28,7 @@ from utils.logger import setup_logger
 
 logger = setup_logger("main")
 
-COMMANDS = ("scrape", "enrich", "check-links", "purge", "export", "rescore", "notify-test", "quality", "analyze", "ui")
+COMMANDS = ("scrape", "enrich", "check-links", "purge", "export", "rescore", "notify-test", "quality", "analyze", "weights", "dedupe", "ui")
 
 # Code de sortie quand un autre run tient le verrou (EX_TEMPFAIL)
 EXIT_ALREADY_RUNNING = 75
@@ -65,6 +67,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("rescore", help="Recalculer les scores d'intérêt (après un changement de poids)")
     sub.add_parser("notify-test", help="Envoyer une notification de test (vérifier .env)")
+
+    dedupe = sub.add_parser("dedupe", help="Doublons inter-sites par empreinte de la 1re photo")
+    dedupe.add_argument("--limit", type=int, help="Photos à télécharger au plus (défaut PHOTO_HASH_MAX_PER_RUN)")
+
+    weights = sub.add_parser("weights", help="Poids du score appris des retours ⭐ / 📞 / 👎 de l'interface")
+    weights_action = weights.add_mutually_exclusive_group()
+    weights_action.add_argument("--apply", action="store_true", help="Appliquer les poids proposés et recalculer les scores")
+    weights_action.add_argument("--reset", action="store_true", help="Revenir aux poids de config.py")
 
     analyze = sub.add_parser("analyze", help="Analyser les nouvelles descriptions par LLM (une seule lecture par texte)")
     analyze.add_argument("--limit", type=int, help="Appels au modèle au plus (défaut LLM_MAX_PER_RUN)")
@@ -201,6 +211,47 @@ def cmd_rescore():
     logger.info(f"Scores recalculés : {rescore()} annonce(s)")
 
 
+def cmd_dedupe(limit: Optional[int] = None) -> dict:
+    from filters.photo_duplicates import run_photo_dedup
+    from storage.sqlite import init_db
+
+    init_db()
+    stats = run_photo_dedup(limit)
+    logger.info(
+        f"Empreintes : {stats['hashed']} calculée(s), {stats['failed']} échec(s) — "
+        f"{stats['linked']} doublon(s) rattaché(s)"
+    )
+    return stats
+
+
+def cmd_weights(apply: bool = False, reset: bool = False) -> bool:
+    """Affiche les poids proposés ; --apply les confirme, --reset revient à config.py."""
+    from analysis.weights import format_proposal, propose_weights, reset_weights, save_weights, weights_source
+    from scoring import rescore
+    from storage.sqlite import init_db
+
+    init_db()
+    if reset:
+        if reset_weights():
+            logger.info(f"Poids de config.py rétablis — {rescore()} score(s) recalculé(s)")
+        else:
+            logger.info("Les poids de config.py sont déjà utilisés")
+        return True
+    proposal = propose_weights()
+    print(f"Poids actuels : {weights_source()}")
+    print("\n".join(format_proposal(proposal)))
+    if not apply:
+        if proposal.ready:
+            print("\n→ python main.py weights --apply  pour les appliquer")
+        return proposal.ready
+    if not proposal.ready:
+        logger.warning("Rien à appliquer")
+        return False
+    save_weights(proposal.proposed, proposal.samples)
+    logger.info(f"Poids appliqués — {rescore()} score(s) recalculé(s)")
+    return True
+
+
 def cmd_notify_test() -> bool:
     import config
     import notify
@@ -307,6 +358,10 @@ def main(argv: Optional[List[str]] = None):
         cmd_analyze(args.limit, args.retry_errors, args.stats)
     elif args.command == "quality":
         cmd_quality(args.days)
+    elif args.command == "dedupe":
+        cmd_dedupe(args.limit)
+    elif args.command == "weights":
+        cmd_weights(args.apply, args.reset)
     elif args.command == "notify-test":
         sys.exit(0 if cmd_notify_test() else 1)
     else:

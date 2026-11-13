@@ -1,7 +1,7 @@
 # Sprint 15 — Fiches détaillées, tri affiné, nouvelles sources
 
 > **Date** : 2026-11-12
-> **Statut** : 🔵 En cours — 15.1, 15.2, 15.4 et 15.7 livrés ; 15.3, 15.5, 15.6 et 15.8 planifiés
+> **Statut** : 🔵 En cours — 15.1, 15.2, 15.4 à 15.8 livrés ; reste 15.3 (SeLoger, nécessite une capture réelle)
 > **Origine** : réflexion « comment améliorer la récolte, le tri, l'automatisation et la couverture »
 > **Prérequis** : [Sprint 12](SPRINT_12.md) (migrations versionnées, `chrome_session`), [Sprint 13](SPRINT_13.md) (score, notifications), [Sprint 14](SPRINT_14.md) (profils)
 
@@ -30,10 +30,10 @@ Constat de départ :
 | 15.2 | LBC : annonces complètes dès la page de recherche | ✅ | À valider sur une vraie page (voir bilan) |
 | 15.3 | SeLoger : extraction depuis l'état JSON embarqué | 🔲 | Même principe que 15.1 |
 | 15.4 | Analyse de la description par LLM | ✅ | Optionnelle ; LLM et clé de l'utilisateur ; une seule lecture par texte (15.4-bis) |
-| 15.5 | Critères éliminatoires par profil | 🔲 | Distincts des poids du score |
-| 15.6 | Retours ⭐ / 👎 dans l'UI → poids appris | 🔲 | Régression logistique simple |
+| 15.5 | Critères éliminatoires par profil | ✅ | Distincts des poids du score ; à remplir par profil |
+| 15.6 | Retours ⭐ / 👎 dans l'UI → poids appris | ✅ | Régression logistique ; appliqués sur confirmation |
 | 15.7 | Nouvelle source : Bien'ici (API JSON) + modèle `Listing` | ✅ | À valider sur la vraie API (voir bilan) ; puis PAP ([Sprint 4](SPRINT_4.md)) |
-| 15.8 | Doublons inter-sites par empreinte photo | 🔲 | `imagehash` |
+| 15.8 | Doublons inter-sites par empreinte photo | ✅ | dHash avec Pillow (sans `imagehash`) |
 
 Hors sprint, à garder en tête : temps de trajet (13.5, désormais possible grâce au GPS
 exact), suivi des candidatures (contacté → visite → réponse), message de contact
@@ -343,19 +343,113 @@ normalisé — espaces et casse ignorés), avec le résultat, le nombre d'appels
 - ⚠️ À valider en réel : une connexion par famille (Claude et, par exemple, Ollama local) avec
   « Tester la connexion », puis `analyze --limit 5` et `analyze --stats`.
 
-## 15.5 — Critères éliminatoires par profil 🔲
+## 15.5 — Critères éliminatoires par profil ✅
 
-`SearchProfile.requirements` : ex. `available_before`, `apl_required`, `no_ground_floor`,
-`min_surface_m2`. Une annonce qui ne les respecte pas est masquée du profil (statut par
-profil, réversible) au lieu d'être seulement moins bien notée. Inconnu = conservé.
+**Fichiers** : `filters/requirements.py` (nouveau), `config.py`, `storage/migrations.py`
+(migration 7), `storage/sqlite.py`, `storage/queries.py`, `scoring.py`, `reporting/generator.py`,
+`ui/routes.py`, `ui/templates/index.html`, `ui/static/app.css`, `tests/test_requirements.py` (nouveau)
 
-## 15.6 — Retours ⭐ / 👎 et poids appris 🔲
+### Principe
 
-- UI : boutons ⭐ favori / 📞 contacté / 👎 pas intéressé (table `annonce_feedback`).
-- Après ~30 retours : régression logistique sur les critères 0–1 du score
-  (`score_detail`) → poids proposés, affichés à côté des poids actuels, appliqués sur
-  confirmation (`rescore`).
-- Bonus : notification si une annonce ⭐ baisse de prix ou disparaît.
+Le score classe ; les critères **trient**. `SearchProfile.requirements` (`config.Requirements`) :
+
+| Critère | Exclut si… | Source de la donnée |
+|---|---|---|
+| `available_before="AAAA-MM-JJ"` | disponible après cette date (« immédiate » passe) | LLM (15.4) |
+| `apl_required=True` | l'annonce refuse les APL | LLM |
+| `no_ground_floor=True` | étage = 0 | JSON / DOM |
+| `min_surface_m2` | surface inférieure | JSON / DOM |
+| `furnished=True / False` | meublé ≠ exigé (seulement après enrichissement) | JSON / DOM |
+| `no_colocation=True` | colocation | LLM |
+| `excluded_lease_types=(…)` | type de bail listé (`saisonnier`, `mobilite`…) | LLM |
+| `max_dpe="E"` | DPE plus mauvais | JSON / DOM |
+
+**Inconnu = conservé** : une valeur absente (pas encore enrichie, pas analysée, « NS ») n'exclut
+jamais. Le « meublé » d'une annonce non enrichie est ignoré (valeur par défaut des cartes).
+
+### Stockage et calcul
+
+- Migration 7 : `annonce_profiles.excluded_reasons` (NULL = conservée, JSON des motifs sinon) —
+  **par profil** : un rez-de-chaussée peut être exclu d'ENAC et rester dans Blagnac.
+- Calculé dans `rescore`, donc après l'enrichissement et l'analyse LLM, et **réversible** :
+  assouplir un critère puis `python main.py rescore` réintègre les annonces. Le masquage manuel
+  (`status = 'hidden'`) reste indépendant.
+- Exclues : pas de notification (`annonces_for_notification`), pas dans les rapports Markdown.
+  Le score reste calculé (utile pour 15.6).
+
+### UI
+
+- Bandeau « Critères ENAC : APL acceptées · pas de rez-de-chaussée — **N annonces exclues** » (lien).
+- Filtre « Critères » : Respectés (défaut) / Tout afficher / Exclues seulement ; aussi sur la carte.
+- Motif sur la carte d'une annonce exclue : pastille ⛔ « rez-de-chaussée · APL refusées ».
+- Profil sans critère : ni bandeau ni filtre.
+
+### Bilan
+
+- Tests : `tests/test_requirements.py` (33 tests : chaque règle, valeurs inconnues, meublé avant
+  enrichissement, migration, exclusion par profil, réversibilité, champs LLM, notifications, UI,
+  carte). Suite complète verte.
+- **À faire par l'utilisateur** : les profils ENAC et Blagnac n'ont pas encore de critères
+  (`Requirements()` vide, aucun effet). Les renseigner dans `config.py`, puis `python main.py rescore`.
+- Les critères issus de la description (disponibilité, APL, colocation, bail) ne jouent que si
+  l'analyse LLM (15.4) est activée.
+
+## 15.6 — Retours ⭐ / 👎 et poids appris ✅
+
+**Fichiers** : `storage/feedback.py`, `analysis/weights.py`, `ui/templates/weights.html` (nouveaux),
+`config.py`, `storage/migrations.py` (migration 8), `storage/sqlite.py`, `storage/queries.py`,
+`storage/cleaner.py`, `scoring.py`, `scrapers/enricher.py`, `notify/__init__.py`,
+`notify/messages.py`, `main.py`, `ui/routes.py`, `ui/templates/index.html`, `ui/static/app.js`,
+`ui/static/app.css`, `tests/conftest.py`, `tests/test_feedback.py` (nouveau)
+
+### Retours dans l'interface
+
+- Trois boutons sur chaque carte : ⭐ favori, 📞 contacté, 👎 pas intéressé. Un seul actif à la
+  fois ; re-cliquer l'efface. Requête AJAX (`POST /feedback`, jeton CSRF), pas de rechargement.
+- Table `annonce_feedback` (migration 8) : **par profil** (une annonce peut être ⭐ pour Blagnac et
+  👎 pour l'ENAC), avec le prix au moment du retour.
+- 👎 sort l'annonce de la liste par défaut (la carte disparaît aussitôt) ; filtre « Retours » :
+  sans les 👎 (défaut) / ⭐ / 📞 / 👎 / tout. Différent du masquage 🗑 : 👎 sert d'exemple à
+  l'apprentissage et ne vaut que pour le profil.
+
+### Poids appris
+
+- `analysis/weights.py` : régression logistique en pur Python (descente de gradient, L2 = 0,05) sur
+  les critères 0–1 du score (`score_detail`) — ⭐ et 📞 = intéressant, 👎 = pas intéressé.
+  Les critères étant sur la même échelle, les coefficients se comparent directement : négatifs
+  ramenés à 0, puis normalisés à la somme des poids actuels (100).
+- Proposition seulement à partir de **30 retours** (`FEEDBACK_MIN_SAMPLES`) dont **5 de chaque
+  sorte** (`FEEDBACK_MIN_PER_CLASS`) ; sinon le message dit ce qui manque. Aucun critère
+  explicatif (tous les coefficients ≤ 0) → poids conservés.
+- Affichage à côté des poids actuels, avec la concordance avec les retours et la référence
+  « toujours la même réponse » (un écart faible = les critères du score expliquent mal les choix).
+- **Appliqués sur confirmation seulement**, puis `rescore` : page « Poids du score »
+  (`/settings/weights`) ou CLI. Stockés dans `data/score_weights.json` (prioritaire sur
+  `SCORE_WEIGHTS`, ignoré s'il est illisible ou incomplet) ; « Revenir aux poids par défaut »
+  le supprime.
+  ```bash
+  python main.py weights           # poids actuels vs proposés
+  python main.py weights --apply   # confirmer et recalculer les scores
+  python main.py weights --reset   # revenir à config.py
+  ```
+
+### Suivi des favoris (bonus)
+
+- Baisse de prix d'un ⭐ : notifiée **quel que soit le score** (et même si l'annonce est exclue par
+  les critères 15.5), titre « ⭐ Baisse de … », priorité haute.
+- ⭐ devenu indisponible (`check-links`, `purge`, ou détecté à l'enrichissement) : notification
+  « ⭐ Favori retiré ». Une erreur de notification n'interrompt jamais la vérification.
+- Un 👎 n'est jamais notifié (ni nouvelle annonce, ni baisse de prix).
+
+### Bilan
+
+- Tests : `tests/test_feedback.py` (33 tests : stockage par profil, bascule, régression sur données
+  synthétiques — le critère qui explique les retours ressort en tête —, seuils, cas sans signal,
+  fichier de poids invalide, effet sur le score, notifications ⭐ / 👎, favori retiré, purge, UI,
+  CSRF, filtres, page des poids, CLI). Le fichier de poids des tests est toujours temporaire.
+  Suite complète verte.
+- À l'usage : donner ~30 avis (dont au moins 5 👎) sur un ou deux profils, puis
+  `python main.py weights`. Les retours de tous les profils servent à un seul jeu de poids.
 
 ## 15.7 — Nouvelle source : Bien'ici ✅
 
@@ -432,8 +526,59 @@ anti-ban habituel), résultats ajoutés page par page (une erreur en page 3 gard
 - Annonces retirées : `check-links` utilise les marqueurs génériques (« annonce n'est plus
   disponible »…) ; à confirmer sur une annonce Bien'ici expirée.
 
-## 15.8 — Doublons inter-sites par empreinte photo 🔲
+## 15.8 — Doublons inter-sites par empreinte photo ✅
 
-Hash perceptuel (`imagehash.phash`) de la première photo, stocké en base ; deux annonces
-de sites différents avec une distance de Hamming ≤ 6 et un prix proche → `duplicate_of`.
-Complète la détection actuelle (prix + mots de la localisation).
+**Fichiers** : `filters/photo_duplicates.py` (nouveau), `config.py`, `storage/migrations.py`
+(migration 9), `storage/sqlite.py`, `pipeline.py`, `scrapers/enricher.py`, `notify/messages.py`,
+`main.py`, `requirements.txt`, `tests/conftest.py`, `tests/test_photo_duplicates.py` (nouveau)
+
+### Principe
+
+La détection historique (prix ±5 € + 2 mots communs dans la localisation) échoue dès que les sites
+décrivent l'adresse différemment (« Blagnac » sur Bien'ici, « Blagnac 31700 Centre » sur LBC). Les
+photos, elles, sont presque toujours les mêmes, seulement redimensionnées et recompressées.
+
+- **Empreinte** : dHash 64 bits de la 1ʳᵉ photo (image réduite à 9×8 en niveaux de gris, un bit par
+  comparaison de pixels voisins), calculée avec **Pillow seul** — `imagehash` aurait ajouté numpy,
+  scipy et PyWavelets pour le même résultat. Insensible à la taille, à la compression JPEG, à un
+  léger flou (vérifié par les tests). Sans Pillow, l'étape est sautée avec un message.
+- **Migration 9** : `photo_hash` (16 caractères hexa, indexé) et `photo_hash_attempts`.
+- **Téléchargement** : `requests` (pas de navigateur), 150 photos au plus par run, 0,3 s entre deux,
+  5 Mo maximum, `Content-Type` image exigé, des plus récentes aux plus anciennes. Un échec est
+  retenté une fois au run suivant (`PHOTO_HASH_MAX_ATTEMPTS = 2`), puis abandonné.
+
+### Rapprochement
+
+Deux annonces sont le même bien si :
+
+| Règle | Réglage |
+|---|---|
+| Sites différents | — |
+| Empreintes à ≤ 6 bits d'écart sur 64 | `PHOTO_HASH_MAX_DISTANCE` |
+| Prix à ±30 € (un site affiche HC, l'autre CC) | `PHOTO_DUP_PRICE_TOLERANCE` |
+| Photo non générique : même empreinte sur > 3 annonces d'un même site = logo d'agence, ignorée ; image unie ignorée | `PHOTO_GENERIC_MAX_SAME_SITE` |
+
+La plus récente est rattachée (`duplicate_of`) à la **racine** de la plus ancienne : jamais de chaîne
+de doublons, jamais rattachée à une annonce du même site que sa racine. Les rattachements existants
+ne sont pas modifiés.
+
+### Intégration
+
+- Fin de `scrape` (après la collecte, **avant l'analyse LLM** — un doublon réutilise l'analyse de
+  l'original, donc un appel économisé — et avant les notifications) et fin de `enrich`.
+- Notifications : une **nouvelle** annonce qui est un doublon n'est plus signalée (le bien est déjà
+  connu) ; une baisse de prix sur un doublon l'est toujours. Vaut aussi pour les doublons texte.
+- UI : rien de nouveau, le lien « aussi sur … » et le filtre « Doublons » existants s'appliquent.
+- CLI : `python main.py dedupe [--limit N]` (rattrapage des annonces déjà en base).
+- Tests : `PHOTO_DEDUP_ENABLED` est désactivé par défaut (`conftest`) — aucun téléchargement.
+
+### Bilan
+
+- Tests : `tests/test_photo_duplicates.py` (33 tests : robustesse de l'empreinte sur des photos
+  synthétiques redimensionnées / recompressées / floutées, photos différentes, PNG, image illisible,
+  image unie, lecture de `photos`, chaque règle de rapprochement, logo d'agence, racine sans chaîne,
+  trois sites en une passe, téléchargement plafonné, échecs retentés puis abandonnés, limite par run,
+  bout en bout LBC ↔ Bien'ici avec adresses différentes, notifications, CLI). Suite complète verte.
+- ⚠️ **À valider en réel** : `python main.py dedupe`, puis dans l'UI filtrer un profil et vérifier
+  2–3 liens « aussi sur … » créés par la photo (log `📷 Doublon par photo`). Si les CDN d'images
+  répondent 403 (log en DEBUG), il faudra ajouter un en-tête `Referer` du site.

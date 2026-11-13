@@ -26,6 +26,7 @@
       <div class="action-bar">
         <button class="btn-scrape" id="btn-scrape" onclick="startScraping()">Lancer le scraping</button>
         <a href="/settings/llm" class="btn-view" title="Brancher votre propre LLM pour analyser les descriptions">Connexion LLM</a>
+        <a href="/settings/weights" class="btn-view" title="Poids du score appris de vos ⭐ / 📞 / 👎">Poids du score</a>
         <form method="POST" action="/clear-db" onsubmit="return confirmClear(this)">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="confirm" value="">
@@ -54,6 +55,15 @@
 
     {% if flash %}
     <div class="flash flash-{{ flash.type }}">{{ flash.msg }}</div>
+    {% endif %}
+
+    {% if requirements %}
+    <p class="requirements-bar" title="Une information inconnue n’exclut jamais une annonce">
+      Critères {{ profile.label }} : {{ requirements | join(' · ') }}
+      {% if current_excl == '' and excluded_count %}
+      — <a href="{{ excluded_url }}">{{ excluded_count }} annonce{{ 's' if excluded_count != 1 else '' }} exclue{{ 's' if excluded_count != 1 else '' }}</a>
+      {% endif %}
+    </p>
     {% endif %}
 
     <form method="get" class="filter-bar">
@@ -85,6 +95,28 @@
           <option value="hide" {% if current_dups == 'hide' %}selected{% endif %}>Masquer</option>
         </select>
       </div>
+
+      <div class="filter-group">
+        <label>Retours</label>
+        <select name="fb">
+          <option value="" {% if current_fb == '' %}selected{% endif %}>Sans les 👎</option>
+          <option value="favorite" {% if current_fb == 'favorite' %}selected{% endif %}>⭐ Favoris</option>
+          <option value="contacted" {% if current_fb == 'contacted' %}selected{% endif %}>📞 Contactés</option>
+          <option value="dislike" {% if current_fb == 'dislike' %}selected{% endif %}>👎 Pas intéressé</option>
+          <option value="any" {% if current_fb == 'any' %}selected{% endif %}>Tout</option>
+        </select>
+      </div>
+
+      {% if requirements %}
+      <div class="filter-group">
+        <label title="Critères éliminatoires du profil : {{ requirements | join(' · ') }}">Critères</label>
+        <select name="excl">
+          <option value="" {% if current_excl == '' %}selected{% endif %}>Respectés</option>
+          <option value="show" {% if current_excl == 'show' %}selected{% endif %}>Tout afficher</option>
+          <option value="only" {% if current_excl == 'only' %}selected{% endif %}>Exclues seulement</option>
+        </select>
+      </div>
+      {% endif %}
 
       <div class="filter-group">
         <label>Prix (€)</label>
@@ -196,8 +228,11 @@
           {% if a.apl_ok %}{% set _ = feats.append(('APL ✓', 'APL acceptées')) %}{% elif a.apl_ok == false %}{% set _ = feats.append(('APL ✗', 'APL refusées')) %}{% endif %}
           {% if a.visale_ok %}{% set _ = feats.append(('Visale ✓', 'Garantie Visale acceptée')) %}{% elif a.visale_ok == false %}{% set _ = feats.append(('Visale ✗', 'Garantie Visale refusée')) %}{% endif %}
           {% if a.agency_fees %}{% set _ = feats.append(('Frais ' ~ a.agency_fees ~ ' €', 'Honoraires d’agence à la charge du locataire')) %}{% endif %}
-          {% if feats or a.scam_risk in ('moyen', 'eleve') %}
+          {% if feats or a.scam_risk in ('moyen', 'eleve') or a.excluded %}
           <div class="card-feats">
+            {% if a.excluded %}
+            <span class="feat feat-excluded" title="Ne respecte pas les critères du profil {{ profile.label }}">⛔ {{ a.excluded | join(' · ') }}</span>
+            {% endif %}
             {% if a.scam_risk in ('moyen', 'eleve') %}
             <span class="feat feat-warn {{ 'feat-danger' if a.scam_risk == 'eleve' else '' }}"
                   title="Risque d’arnaque {{ 'élevé' if a.scam_risk == 'eleve' else 'moyen' }} : {{ (a.scam_flags | flags) | join(' · ') }}">⚠️ {{ 'Arnaque ?' if a.scam_risk == 'eleve' else 'À vérifier' }}</span>
@@ -221,6 +256,12 @@
           </div>
 
           <div style="display:flex;align-items:center;gap:8px">
+          <div class="feedback" role="group" aria-label="Votre avis">
+            {% for value, icon, label in [('favorite', '⭐', 'Favori'), ('contacted', '📞', 'Contacté'), ('dislike', '👎', 'Pas intéressé')] %}
+            <button type="button" class="btn-fb {% if a.feedback == value %}is-on{% endif %}" data-id="{{ a.id }}" data-value="{{ value }}"
+                    aria-pressed="{{ 'true' if a.feedback == value else 'false' }}" title="{{ label }}" onclick="sendFeedback(this)">{{ icon }}</button>
+            {% endfor %}
+          </div>
           <button class="btn-add-doc" id="doc-btn-{{ a.id }}" onclick="toggleAnnonce({{ a.id }}, this)">+ Doc</button>
           {% if s == 'hidden' %}
           <form method="post" action="/restore" style="display:inline">

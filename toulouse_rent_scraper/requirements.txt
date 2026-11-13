@@ -3,4 +3,5 @@ playwright>=1.40,<2
 geopy>=2.4,<3
 flask>=3.0,<4
 requests>=2.31,<3
+Pillow>=10,<13       # empreinte des photos, doublons inter-sites (Sprint 15.8, optionnelle)
 anthropic>=2.8,<3   # analyse des descriptions par LLM (Sprint 15.4, optionnelle)

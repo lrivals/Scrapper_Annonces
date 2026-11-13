@@ -126,6 +126,28 @@ LEBONCOIN_SEARCH_URL = build_leboncoin_search_url(
 # =========================
 
 @dataclass(frozen=True)
+class Requirements:
+    """
+    Critères éliminatoires d'un profil (Sprint 15.5), distincts des poids du score :
+    une annonce qui en viole un est exclue du profil (masquée par défaut dans l'UI,
+    jamais notifiée). Une information inconnue ne fait JAMAIS exclure l'annonce.
+    L'exclusion est recalculée à chaque `rescore` : modifier un critère ici puis
+    `python main.py rescore` la lève ou l'applique, sans rien perdre.
+    """
+    available_before: Optional[str] = None      # AAAA-MM-JJ : libre au plus tard ce jour-là
+    apl_required: bool = False                  # exclut si l'annonce refuse les APL
+    no_ground_floor: bool = False               # exclut le rez-de-chaussée
+    min_surface_m2: Optional[float] = None
+    furnished: Optional[bool] = None            # True = meublé exigé, False = vide exigé
+    no_colocation: bool = False
+    excluded_lease_types: Tuple[str, ...] = ()  # ex. ("saisonnier", "mobilite")
+    max_dpe: Optional[str] = None               # ex. "E" : exclut F et G
+
+    def is_empty(self) -> bool:
+        return self == Requirements()
+
+
+@dataclass(frozen=True)
 class SearchProfile:
     """Un cas d'usage : une cible, un budget, un rayon, et les recherches associées."""
     key: str
@@ -150,6 +172,8 @@ class SearchProfile:
     bienici_places: Tuple[str, ...] = ()
     bienici_zone_ids: Tuple[str, ...] = ()
     bienici_property_types: Tuple[str, ...] = ("flat",)   # flat, house, loft, castle, townhouse
+    # Critères éliminatoires (15.5) — ex. Requirements(apl_required=True, min_surface_m2=18)
+    requirements: Requirements = Requirements()
     enabled: bool = True
 
     @property
@@ -333,6 +357,16 @@ LOG_LEVEL = "INFO"
 # Même bien publié sur deux sites : écart de prix toléré (en euros)
 DUPLICATE_PRICE_TOLERANCE = 5
 
+# Sprint 15.8 — doublons par empreinte de la 1ʳᵉ photo (dHash 64 bits, Pillow)
+PHOTO_DEDUP_ENABLED = True
+PHOTO_HASH_MAX_PER_RUN = 150      # photos téléchargées au plus par run
+PHOTO_HASH_MAX_ATTEMPTS = 2       # échecs de téléchargement avant abandon
+PHOTO_HASH_DELAY = 0.3            # pause entre deux téléchargements (s)
+PHOTO_MAX_BYTES = 5_000_000
+PHOTO_HASH_MAX_DISTANCE = 6       # bits différents au plus (sur 64) pour « même photo »
+PHOTO_DUP_PRICE_TOLERANCE = 30    # € : un même bien peut être affiché HC sur un site, CC sur l'autre
+PHOTO_GENERIC_MAX_SAME_SITE = 3   # au-delà, la photo est générique (logo d'agence…) : ignorée
+
 
 # =========================
 # 🕒 PLANIFICATION
@@ -411,6 +445,13 @@ SCORE_WEIGHTS = {
 
 # Valeur (0–1) de chaque étiquette DPE ; inconnu = 0.5 (neutre)
 DPE_SCORES = {"A": 1.0, "B": 1.0, "C": 1.0, "D": 0.6, "E": 0.3, "F": 0.0, "G": 0.0}
+
+# Sprint 15.6 — poids appris des retours ⭐ / 📞 / 👎 de l'interface
+FEEDBACK_MIN_SAMPLES = 30      # retours (positifs + négatifs) avant de proposer des poids
+FEEDBACK_MIN_PER_CLASS = 5     # au moins autant de positifs que de négatifs
+# Poids confirmés par l'utilisateur (`python main.py weights --apply` ou l'interface),
+# prioritaires sur SCORE_WEIGHTS ; supprimer le fichier pour revenir aux poids ci-dessus.
+SCORE_WEIGHTS_FILE = Path(__file__).resolve().parent / "data" / "score_weights.json"
 
 
 # =========================

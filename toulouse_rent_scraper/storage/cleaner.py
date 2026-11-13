@@ -80,11 +80,12 @@ def check_expired_annonces() -> dict:
     cur = conn.cursor()
 
     annonces = cur.execute(
-        "SELECT id, url, title FROM annonces WHERE status = 'active'"
+        "SELECT id, url, title, price FROM annonces WHERE status = 'active'"
     ).fetchall()
 
     checked = 0
     expired = 0
+    gone = []
 
     for annonce in annonces:
         alive = _check_url_alive(annonce["url"])
@@ -96,6 +97,7 @@ def check_expired_annonces() -> dict:
                 (annonce["id"],),
             )
             expired += 1
+            gone.append(dict(annonce))
             logger.info(f"Expirée : {annonce['title']} ({annonce['url']})")
         else:
             logger.debug(f"Active : {annonce['title']}")
@@ -104,6 +106,7 @@ def check_expired_annonces() -> dict:
 
     conn.commit()
     conn.close()
+    _notify_gone(gone)
 
     summary = {"checked": checked, "expired": expired, "still_active": checked - expired}
     logger.info(
@@ -111,6 +114,17 @@ def check_expired_annonces() -> dict:
         f"{summary['expired']} expirées, {summary['still_active']} actives"
     )
     return summary
+
+
+def _notify_gone(annonces: list):
+    """Favoris (⭐) parmi les annonces expirées : notification (Sprint 15.6)."""
+    if not annonces:
+        return
+    try:
+        from notify import notify_favorites_gone
+        notify_favorites_gone(annonces)
+    except Exception as e:  # une notification ne doit jamais interrompre la vérification
+        logger.warning(f"Suivi des favoris indisponible : {e}")
 
 
 def _mark_checked(annonce_id: int):
@@ -146,7 +160,7 @@ def check_links_playwright(limit: int = None) -> dict:
     cur = conn.cursor()
 
     query = """
-        SELECT id, url, title, site FROM annonces
+        SELECT id, url, title, site, price FROM annonces
         WHERE COALESCE(status, 'active') = 'active'
           AND (checked_at IS NULL OR checked_at < datetime('now', '-24 hours'))
     """
@@ -157,6 +171,7 @@ def check_links_playwright(limit: int = None) -> dict:
 
     checked = 0
     expired = 0
+    gone = []
     network_errors = 0
     page_errors = 0
     consecutive_network_errors = 0
@@ -185,6 +200,7 @@ def check_links_playwright(limit: int = None) -> dict:
                             (annonce["id"],),
                         )
                     expired += 1
+                    gone.append(dict(annonce))
                     logger.info(f"Expirée : {annonce['title']} ({annonce['site']})")
                 else:
                     logger.debug(f"Active : {annonce['title']}")
@@ -220,6 +236,7 @@ def check_links_playwright(limit: int = None) -> dict:
         context.close()
         browser.close()
 
+    _notify_gone(gone)
     summary = {
         "checked": checked,
         "expired": expired,

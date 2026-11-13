@@ -35,6 +35,8 @@ class ListingFilters:
     prix_min: str = ""
     prix_max: str = ""
     dups: str = ""
+    fb: str = ""        # 15.6 — "" : sans les 👎, "favorite" | "contacted" | "dislike" | "any"
+    excl: str = ""      # 15.5 — "" : exclues masquées, "show" : toutes, "only" : seulement les exclues
 
     @classmethod
     def from_args(cls, args) -> "ListingFilters":
@@ -48,12 +50,15 @@ class ListingFilters:
             prix_min=self.prix_min if _int_or_none(self.prix_min) is not None else "",
             prix_max=self.prix_max if _int_or_none(self.prix_max) is not None else "",
             dups=self.dups,
+            excl=self.excl if self.excl in ("show", "only") else "",
+            fb=self.fb if self.fb in ("favorite", "contacted", "dislike", "any") else "",
         )
 
     def where(self) -> Tuple[str, list]:
         """
-        Clause WHERE sur la table aliasée « a ».
-        Sans filtre de statut, les annonces masquées sont exclues.
+        Clause WHERE sur les tables aliasées « a » (annonces) et « ap » (annonce_profiles).
+        Sans filtre de statut, les annonces masquées sont exclues ; par défaut, les
+        annonces exclues par les critères du profil aussi.
         """
         clauses, params = [], []
         if self.status:
@@ -73,6 +78,19 @@ class ListingFilters:
             params.append(pmax)
         if self.dups == "hide":
             clauses.append("a.duplicate_of IS NULL")
+        # Retours de l'utilisateur (15.6) : un 👎 sort l'annonce de la liste par défaut
+        fb_sql = ("(SELECT fbk.feedback FROM annonce_feedback fbk "
+                  "WHERE fbk.annonce_id = a.id AND fbk.profile = ap.profile)")
+        if self.fb in ("favorite", "contacted", "dislike"):
+            clauses.append(f"{fb_sql} = ?")
+            params.append(self.fb)
+        elif self.fb != "any":
+            clauses.append(f"COALESCE({fb_sql}, '') != 'dislike'")
+        # Critères éliminatoires du profil (15.5) — nécessite la jointure « ap »
+        if self.excl == "only":
+            clauses.append("ap.excluded_reasons IS NOT NULL")
+        elif self.excl != "show":
+            clauses.append("ap.excluded_reasons IS NULL")
         return "WHERE " + " AND ".join(clauses), params
 
 
@@ -85,6 +103,8 @@ def list_annonces(profile: str, filters: ListingFilters, sort: str = "score", or
         SELECT a.*,
                ap.distance_km AS distance_km,
                ap.score AS score, ap.score_detail AS score_detail,
+               ap.excluded_reasons AS excluded_reasons,
+               f.feedback AS feedback,
                d.site AS dup_site, d.url AS dup_url,
                (SELECT ph.price FROM price_history ph WHERE ph.annonce_id = a.id
                 ORDER BY ph.seen_at, ph.id LIMIT 1) AS first_price,
@@ -93,11 +113,24 @@ def list_annonces(profile: str, filters: ListingFilters, sort: str = "score", or
         FROM annonces a
         JOIN annonce_profiles ap ON ap.annonce_id = a.id AND ap.profile = ?
         LEFT JOIN annonces d ON d.id = a.duplicate_of
+        LEFT JOIN annonce_feedback f ON f.annonce_id = a.id AND f.profile = ap.profile
         {where_sql}
         ORDER BY {sort_sql} {order_sql}
     """
     with connect() as conn:
         return [dict(r) for r in conn.execute(query, [profile] + params).fetchall()]
+
+
+def count_excluded(profile: str, filters: ListingFilters) -> int:
+    """Annonces que les critères du profil masquent avec les autres filtres actuels (bandeau UI)."""
+    where_sql, params = ListingFilters(**{**filters.__dict__, "excl": "only"}).where()
+    query = f"""
+        SELECT COUNT(*) FROM annonces a
+        JOIN annonce_profiles ap ON ap.annonce_id = a.id AND ap.profile = ?
+        {where_sql}
+    """
+    with connect() as conn:
+        return conn.execute(query, [profile] + params).fetchone()[0]
 
 
 def list_sites() -> List[str]:

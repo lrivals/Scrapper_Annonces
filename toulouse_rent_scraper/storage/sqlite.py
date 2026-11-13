@@ -214,7 +214,8 @@ def annonces_for_scoring(profile: str) -> List[Dict]:
         rows = conn.execute(
             """
             SELECT a.id, a.price, a.charges, a.charges_included, a.surface_m2, a.furnished, a.dpe_rating,
-                   a.scam_risk,
+                   a.scam_risk, a.floor, a.available_from, a.apl_ok, a.colocation, a.lease_type,
+                   a.enrichment_status,
                    COALESCE(a.status, 'active') AS status, ap.distance_km
             FROM annonces a
             JOIN annonce_profiles ap ON ap.annonce_id = a.id AND ap.profile = ?
@@ -232,7 +233,11 @@ def get_price(url: str) -> Optional[int]:
 
 
 def annonces_for_notification(profile: str, urls: List[str]) -> Dict[str, Dict]:
-    """Titre, prix, distance et score des annonces d'un profil, indexés par URL (actives seulement)."""
+    """
+    Titre, prix, distance et score des annonces d'un profil, indexés par URL
+    (actives et non exclues par les critères du profil — 15.5 ; jamais les 👎, toujours
+    les ⭐ — 15.6).
+    """
     if not urls:
         return {}
     placeholders = ",".join("?" * len(urls))
@@ -240,10 +245,13 @@ def annonces_for_notification(profile: str, urls: List[str]) -> Dict[str, Dict]:
         rows = conn.execute(
             f"""
             SELECT a.url, a.title, a.price, a.location_raw, a.surface_m2, a.nb_rooms, a.dpe_rating,
-                   a.scam_risk, a.available_from, ap.distance_km, ap.score
+                   a.scam_risk, a.available_from, a.duplicate_of, ap.distance_km, ap.score, f.feedback
             FROM annonces a
             JOIN annonce_profiles ap ON ap.annonce_id = a.id AND ap.profile = ?
+            LEFT JOIN annonce_feedback f ON f.annonce_id = a.id AND f.profile = ap.profile
             WHERE a.url IN ({placeholders}) AND COALESCE(a.status, 'active') = 'active'
+              AND (ap.excluded_reasons IS NULL OR f.feedback = 'favorite')
+              AND COALESCE(f.feedback, '') != 'dislike'
             """,
             [profile] + list(urls),
         ).fetchall()
@@ -251,11 +259,20 @@ def annonces_for_notification(profile: str, urls: List[str]) -> Dict[str, Dict]:
 
 
 def save_scores(profile: str, updates) -> None:
-    """updates : itérable de (annonce_id, score, detail_json)."""
+    """
+    updates : itérable de (annonce_id, score, detail_json[, excluded_reasons_json]).
+    Sans 4ᵉ élément, l'annonce est considérée comme conservée (exclusion levée).
+    """
+    rows = []
+    for update in updates:
+        annonce_id, score, detail = update[:3]
+        excluded = update[3] if len(update) > 3 else None
+        rows.append((score, detail, excluded, annonce_id, profile))
     with connect() as conn:
         conn.executemany(
-            "UPDATE annonce_profiles SET score = ?, score_detail = ? WHERE annonce_id = ? AND profile = ?",
-            [(score, detail, annonce_id, profile) for annonce_id, score, detail in updates],
+            "UPDATE annonce_profiles SET score = ?, score_detail = ?, excluded_reasons = ? "
+            "WHERE annonce_id = ? AND profile = ?",
+            rows,
         )
 
 
@@ -313,6 +330,48 @@ def find_potential_duplicates(annonce: Dict) -> List[Dict]:
             matches.append(candidate)
 
     return matches
+
+
+def annonces_without_photo_hash(max_attempts: int, limit: int) -> List[Dict]:
+    """Annonces actives avec photo et sans empreinte (15.8), des plus récentes aux plus anciennes."""
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, url, site, photos FROM annonces
+            WHERE COALESCE(status, 'active') = 'active'
+              AND photo_hash IS NULL AND photos IS NOT NULL AND photos NOT IN ('', '[]')
+              AND COALESCE(photo_hash_attempts, 0) < ?
+            ORDER BY id DESC LIMIT ?
+            """,
+            (max_attempts, limit),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def save_photo_hash(annonce_id: int, photo_hash: Optional[str]) -> None:
+    """Empreinte calculée, ou None = échec (une tentative de plus)."""
+    with connect() as conn:
+        if photo_hash:
+            conn.execute("UPDATE annonces SET photo_hash = ? WHERE id = ?", (photo_hash, annonce_id))
+        else:
+            conn.execute(
+                "UPDATE annonces SET photo_hash_attempts = COALESCE(photo_hash_attempts, 0) + 1 WHERE id = ?",
+                (annonce_id,),
+            )
+
+
+def photo_hash_rows() -> List[Dict]:
+    """Annonces actives avec une empreinte photo, et le site de leur origine si ce sont des doublons."""
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT a.id, a.url, a.site, a.price, a.photo_hash, a.duplicate_of, o.site AS root_site
+            FROM annonces a
+            LEFT JOIN annonces o ON o.id = a.duplicate_of
+            WHERE a.photo_hash IS NOT NULL AND COALESCE(a.status, 'active') = 'active'
+            """
+        ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def set_duplicate_of(url: str, original_id: int) -> bool:
@@ -405,6 +464,7 @@ def clear_db() -> int:
     cur.execute("DELETE FROM annonces")
     cur.execute("DELETE FROM annonce_profiles")
     cur.execute("DELETE FROM price_history")
+    cur.execute("DELETE FROM annonce_feedback")
     conn.commit()
     conn.close()
     return count
