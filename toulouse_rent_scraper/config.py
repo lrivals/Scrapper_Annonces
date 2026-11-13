@@ -172,6 +172,11 @@ class SearchProfile:
     bienici_places: Tuple[str, ...] = ()
     bienici_zone_ids: Tuple[str, ...] = ()
     bienici_property_types: Tuple[str, ...] = ("flat",)   # flat, house, loft, castle, townhouse
+    # URL de recherche Bien'ici copiée du site (communes, chambres, balcon, tri…) :
+    # prioritaire sur bienici_places / bienici_property_types / budget du profil.
+    # Traduite en filtres de l'API, paginée comme le site (24 annonces par page).
+    bienici_search_url: Optional[str] = None
+    bienici_max_pages: Optional[int] = None     # None = BIENICI_MAX_PAGES (ou MAX_PAGES_PER_SITE avec une URL)
     # Critères éliminatoires (15.5) — ex. Requirements(apl_required=True, min_surface_m2=18)
     requirements: Requirements = Requirements()
     enabled: bool = True
@@ -271,11 +276,13 @@ SEARCH_PROFILES: Dict[str, SearchProfile] = {
             "&method=form&numberOfBedroomsMin=1&numberOfRoomsMax=3&projectTypes=Stock"
             "&order=DateDesc"
         ),
-        # Communes à ≤ 8 km de la cible ; appartements et maisons comme la recherche LBC
-        bienici_places=(
-            "Blagnac", "Toulouse", "Beauzelle", "Cornebarrieu", "Colomiers", "Aussonne", "Seilh",
+        # Bien'ici (2026-11-13) : URL copiée du site — Toulouse + Blagnac, 1 à 2 chambres,
+        # balcon ou terrasse, tri par date de publication ; 10 pages de 24 annonces.
+        bienici_search_url=(
+            "https://www.bienici.com/recherche/location/toulouse-31000,blagnac-31700"
+            "?chambres-min=1&chambres-max=2&balcon-ou-terrasse=oui&mode=liste&tri=publication-desc"
         ),
-        bienici_property_types=("flat", "house"),
+        bienici_max_pages=10,
     ),
 }
 
@@ -410,6 +417,7 @@ BIENICI_BASE_URL = "https://www.bienici.com"
 BIENICI_SEARCH_API = "https://www.bienici.com/realEstateAds.json"
 BIENICI_SUGGEST_API = "https://res.bienici.com/suggest.json"
 BIENICI_PAGE_SIZE = 50
+BIENICI_SITE_PAGE_SIZE = 24            # annonces par page de la liste du site (recherche par URL)
 BIENICI_MAX_PAGES = 4                 # 200 annonces max par profil, triées des plus récentes
 BIENICI_MIN_DELAY = 2.0               # pause entre deux requêtes (s) — usage personnel, rythme humain
 BIENICI_MAX_DELAY = 4.0
@@ -428,6 +436,10 @@ QUALITY_MIN_FILL_RATES = {
 # Part minimale d'annonces LBC extraites depuis le JSON : en dessous, `__NEXT_DATA__`
 # a probablement disparu ou changé de forme
 QUALITY_MIN_JSON_RATE = {"LeBonCoin": 0.5}
+# Champs que le JSON de la page de recherche ne fournit pas : non jugés par le contrôle de
+# santé de la recherche (ils le sont après `enrich`). Constaté le 2026-11-13 : la recherche
+# LBC n'a pas de `body`, donc 0 % de descriptions → fausse alerte à chaque scrape.
+QUALITY_SEARCH_SKIP_FIELDS = {"LeBonCoin": ("description",)}
 
 
 # =========================

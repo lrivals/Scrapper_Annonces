@@ -53,19 +53,25 @@ def json_rate(rows: List[Dict]) -> Optional[float]:
     return sum("json" in s for s in sources) / len(sources)
 
 
-def check_fill_rates(rows_by_site: Dict[str, List[Dict]]) -> List[str]:
+def check_fill_rates(
+    rows_by_site: Dict[str, List[Dict]],
+    skip_fields: Optional[Dict[str, Iterable[str]]] = None,
+) -> List[str]:
     """
     Alertes lisibles pour les sites dont l'extraction semble cassée.
     Ne juge que les sites avec au moins QUALITY_MIN_SAMPLES annonces.
+    `skip_fields` : par site, champs à ne pas juger (absents de la source lue).
     """
     alerts = []
     for site, rows in sorted(rows_by_site.items()):
         if len(rows) < QUALITY_MIN_SAMPLES:
             continue
-        rates = fill_rates(rows, QUALITY_MIN_FILL_RATES)
+        skipped = set((skip_fields or {}).get(site, ()))
+        minimums = {f: m for f, m in QUALITY_MIN_FILL_RATES.items() if f not in skipped}
+        rates = fill_rates(rows, minimums)
         low = [
             f"{_LABELS.get(f, f)} {rates[f]:.0%} (< {minimum:.0%})"
-            for f, minimum in QUALITY_MIN_FILL_RATES.items()
+            for f, minimum in minimums.items()
             if rates[f] < minimum
         ]
         if low:

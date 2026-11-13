@@ -19,7 +19,7 @@ from config import (
 )
 from scrapers.antibot import is_page_blocked, record_block, wait_for_challenge
 from scrapers.browser import chrome_session, BrowserError
-from storage.cleaner import is_expired_content
+from storage.cleaner import page_shows_expired
 from storage.sqlite import (
     get_coordinates,
     get_pending_annonces,
@@ -75,11 +75,11 @@ def _refresh_distances(url: str) -> bool:
     return True
 
 
-def report_extraction_health(rows_by_site: dict) -> list:
+def report_extraction_health(rows_by_site: dict, skip_fields: Optional[dict] = None) -> list:
     """Alerte (log + notification) si un site renvoie des fiches anormalement vides."""
     from storage.quality import check_fill_rates
 
-    alerts = check_fill_rates(rows_by_site)
+    alerts = check_fill_rates(rows_by_site, skip_fields)
     for alert in alerts:
         logger.warning(f"🩺 {alert}")
     if alerts:
@@ -160,7 +160,7 @@ def enrich_annonces(
 
                 # Annonce retirée du site : inutile d'extraire ni de retenter
                 try:
-                    removed = is_expired_content(page.content())
+                    removed = page_shows_expired(page)
                 except Exception:
                     removed = False
                 if removed:

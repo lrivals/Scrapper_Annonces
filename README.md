@@ -19,10 +19,10 @@ Ce module permet de :
 - Scraper **SeLoger** et **LeBonCoin** avec contournement des protections anti-bot, et **Bien'ici** via son API JSON.
 - Filtrer automatiquement par prix (≤ 500€) et distance de l'ENAC (≤ 10 km).
 - Stocker les résultats en base SQLite locale avec déduplication.
-- Consulter les annonces via une **interface web Flask** (`--ui`).
-- Exporter en **CSV ou JSON** (`--export`).
+- Consulter les annonces via une **interface web Flask** (`python main.py ui`).
+- Exporter en **CSV ou JSON** (`python main.py export csv|json`).
 - Générer des **rapports Markdown** automatiques après chaque scrape.
-- Vérifier la validité des liens via **Playwright** (`--check-links`).
+- Vérifier la validité des liens via **Playwright** (`python main.py check-links`).
 
 ---
 
@@ -30,12 +30,14 @@ Ce module permet de :
 
 ### Interface Web Flask
 
-Interface responsive pour consulter, filtrer et supprimer les annonces, accessible sur `http://localhost:5000` via `python main.py --ui`.
+Interface responsive pour consulter, filtrer et supprimer les annonces, accessible sur `http://localhost:5000` via `python main.py ui`.
+
+Toutes les commandes : voir [toulouse_rent_scraper/README.md](toulouse_rent_scraper/README.md#commandes). L'ancienne syntaxe (`--ui`, `--export`…) reste acceptée avec un avertissement.
 
 ### Export & Rapports
 
 - Rapports Markdown auto-générés après chaque exécution (`nouvelles_annonces.md`, `toutes_les_annonces.md`).
-- Export CSV/JSON via `--export csv` ou `--export json`.
+- Export CSV/JSON via `python main.py export csv` ou `python main.py export json`.
 
 ---
 

@@ -279,14 +279,21 @@ toulouse_rent_scraper/
 
 Modifiez `config.py` pour ajuster :
 
-- `SEARCH_PROFILES` : profils de recherche (cible, budget, rayon, pièces, URLs LeBonCoin/SeLoger,
-  communes Bien'ici `bienici_places`).
+- `SEARCH_PROFILES` : profils de recherche (cible, budget, rayon, pièces, URLs LeBonCoin/SeLoger/Bien'ici,
+  ou communes Bien'ici `bienici_places`).
   Ajouter un profil = ajouter une entrée. `min_rent_eur`, `max_rent_eur` et `rooms` sont
   optionnels (`None` = pas de filtre). Deux façons de décrire une recherche :
   - **URL construite** : `lbc_location` / `seloger_locations` (+ budget), comme `enac` ;
   - **URL copiée du site** : `lbc_search_url` / `seloger_search_url`, utilisée telle quelle et
     paginée par `&page=2…` jusqu'à `MAX_PAGES_PER_SITE`, avec en option des recherches de
     **warm-up** (`lbc_warmup_urls` / `seloger_warmup_urls`) visitées avant, comme `blagnac`.
+  - **Bien'ici** : `bienici_search_url` = URL de recherche copiée de bienici.com (ex. `blagnac` :
+    `/recherche/location/toulouse-31000,blagnac-31700?chambres-min=1&chambres-max=2&balcon-ou-terrasse=oui&tri=publication-desc`).
+    Pas de navigateur : communes, chambres, prix, surface, types, options (`balcon-ou-terrasse`,
+    `meuble`, `jardin`…) et tri sont traduits en filtres de l'API JSON du site, paginée par 24
+    comme la liste du site jusqu'à `bienici_max_pages` (défaut `MAX_PAGES_PER_SITE`). Les
+    paramètres `page`/`mode` de l'URL sont ignorés. Sans URL : communes `bienici_places`
+    (50 annonces × `BIENICI_MAX_PAGES`), comme `enac`.
 - `MAX_RENT_EUR` / `MAX_DISTANCE_KM` : budget et rayon du profil historique `enac`
 - `CHROME_BINARY` / `CHROME_DEBUG_PORT` : Chrome utilisé et port CDP (`0` = port libre)
 - `MAX_PAGES_PER_SITE` : Nombre de pages à scraper (défaut : 10)
@@ -376,9 +383,25 @@ LeBonCoin mélange parfois les attributs des cartes (`data-qa-id="aditem_contain
 Si le log affiche encore « 5 cartes trouvées », capturer la page avec
 `scripts/debug/capture_cards_leboncoin.py` et vérifier les sélecteurs de `scrapers/leboncoin.py`.
 
-### Problème : `--purge` ne fonctionne pas pour SeLoger/LeBonCoin
+### Problème : `purge` ne fonctionne pas pour SeLoger/LeBonCoin
 
-Ces sites sont des SPAs — les requêtes HEAD ne permettent pas de détecter les annonces expirées. Utiliser `--check-links` à la place (vérification via Playwright).
+Ces sites sont des SPAs — les requêtes HEAD ne permettent pas de détecter les annonces expirées. Utiliser `python main.py check-links` à la place (vérification via Playwright).
+
+### Problème : des annonces en ligne sont marquées « retirées »
+
+`enrich` et `check-links` décident qu'une annonce est retirée via `storage/cleaner.py::page_shows_expired` :
+une page dont le JSON embarqué contient l'annonce est en ligne ; sinon, seul le **texte visible** est
+comparé aux motifs (« cette annonce n'est plus en ligne »…). Ne jamais chercher ces motifs dans le HTML
+complet : les pages LBC embarquent tous leurs messages d'erreur dans leurs scripts (bug corrigé le
+2026-11-13). Pour remettre des annonces marquées à tort :
+`UPDATE annonces SET status = 'active', enrichment_status = 'pending', enrichment_attempts = 0 WHERE id IN (…);`
+
+### Alerte « Extraction dégradée » après un scrape
+
+Le contrôle de santé compare le taux de remplissage des champs clés aux seuils de
+`QUALITY_MIN_FILL_RATES` (`config.py`). Après un scrape, il juge les fiches lues depuis le JSON de la
+page de recherche, **sans** les champs que cette page ne fournit pas (`QUALITY_SEARCH_SKIP_FIELDS` :
+la recherche LBC n'a pas de description, contrôlée après `enrich`). Détail : `python main.py quality`.
 
 ### Problème : Aucune coordonnée trouvée pour une adresse
 

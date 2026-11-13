@@ -103,3 +103,26 @@ class TestCheckExpiredAnnonces:
 
         assert summary["expired"] == 0
         assert summary["still_active"] == 2
+
+
+def test_page_shows_expired_uses_visible_text_and_embedded_ad():
+    """Régression 2026-11-13 : motifs d'erreur présents dans les scripts d'une page LBC en ligne."""
+    import json
+    from unittest.mock import MagicMock
+    from storage.cleaner import page_shows_expired
+
+    def page(html, text):
+        p = MagicMock()
+        p.content.return_value = html
+        p.inner_text.return_value = text
+        return p
+
+    scripts = '<script>{"t":"Annonce introuvable — Page introuvable"}</script>'
+    assert not page_shows_expired(page(scripts, "T3 duplex 68 m²"))
+    assert page_shows_expired(page(scripts, "Cette annonce n'est plus en ligne"))
+
+    next_data = {"props": {"pageProps": {"ad": {
+        "list_id": 3279424665, "subject": "T3", "body": "x" * 40, "price": [900], "attributes": [],
+    }}}}
+    live = f'<script id="__NEXT_DATA__" type="application/json">{json.dumps(next_data)}</script>'
+    assert not page_shows_expired(page(live, "Page introuvable"))   # l'annonce est dans le JSON

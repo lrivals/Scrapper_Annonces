@@ -11,7 +11,7 @@ import pytest
 
 from config import SEARCH_PROFILES
 from scrapers.bienici import (
-    BienIciScraper, ad_url, build_filters, parse_ad, pick_zone_ids,
+    BienIciScraper, ad_url, build_filters, max_pages, parse_ad, parse_search_url, pick_zone_ids,
 )
 
 ENAC = SEARCH_PROFILES["enac"]
@@ -118,10 +118,43 @@ class TestFilters:
         assert (f["sortBy"], f["sortOrder"]) == ("publicationDate", "desc")
         assert "minRooms" not in f
 
-    def test_blagnac_without_budget(self):
-        f = build_filters(BLAGNAC, ["1"], page=1)
-        assert f["propertyType"] == ["flat", "house"]
+    def test_blagnac_from_search_url(self):
+        f = build_filters(BLAGNAC, ["-35738", "-34917"], page=3)
+        assert f["propertyType"] == ["flat", "house", "loft", "castle", "townhouse"]
+        assert (f["minBedrooms"], f["maxBedrooms"], f["hasBalconyOrTerrace"]) == (1, 2, True)
+        assert (f["size"], f["from"], f["page"]) == (24, 48, 3)
+        assert (f["sortBy"], f["sortOrder"]) == ("publicationDate", "desc")
+        assert f["zoneIdsByTypes"] == {"zoneIds": ["-35738", "-34917"]}
         assert "maxPrice" not in f and "minPrice" not in f
+        assert max_pages(BLAGNAC) == 10
+
+
+class TestSearchUrl:
+
+    def test_blagnac_url(self):
+        places, f = parse_search_url(
+            "https://www.bienici.com/recherche/location/toulouse-31000,blagnac-31700"
+            "?chambres-min=1&chambres-max=2&balcon-ou-terrasse=oui&page=2&mode=liste&tri=publication-desc"
+        )
+        assert places == [("toulouse", "31000"), ("blagnac", "31700")]
+        assert f["filterType"] == "rent"
+        assert (f["minBedrooms"], f["maxBedrooms"], f["hasBalconyOrTerrace"]) == (1, 2, True)
+        assert "page" not in f and "mode" not in f
+
+    def test_types_price_sort(self):
+        places, f = parse_search_url(
+            "https://www.bienici.com/recherche/location/saint-orens-de-gameville-31650/appartement,maisonvilla"
+            "?prix-max=700&meuble=oui&jardin=non&tri=prix-asc"
+        )
+        assert places == [("saint orens de gameville", "31650")]
+        assert f["propertyType"] == ["flat", "house"]
+        assert (f["maxPrice"], f["isFurnished"]) == (700, True)
+        assert "hasGarden" not in f
+        assert (f["sortBy"], f["sortOrder"]) == ("price", "asc")
+
+    def test_bad_url(self):
+        with pytest.raises(ValueError):
+            parse_search_url("https://www.bienici.com/annonce/abc")
 
 
 class TestZones:
@@ -133,6 +166,23 @@ class TestZones:
 
     def test_pick_exact_name(self):
         assert pick_zone_ids("Toulouse", self.SUGGEST) == ["-35735"]
+
+    def test_pick_by_postal_code(self):
+        suggest = [
+            {"name": "Blagnac", "postalCodes": ["99999"], "zoneIds": ["-1"]},
+            {"name": "Blagnac", "postalCodes": ["31700"], "zoneIds": ["-34917"]},
+        ]
+        assert pick_zone_ids("blagnac", suggest, postal_code="31700") == ["-34917"]
+        assert pick_zone_ids("blagnac", suggest) == ["-1"]
+
+    def test_search_url_places_resolved(self, tmp_path):
+        suggest = {"toulouse": [{"name": "Toulouse", "postalCodes": ["31000"], "zoneIds": ["-35738"]}],
+                   "blagnac": [{"name": "Blagnac", "postalCodes": ["31700"], "zoneIds": ["-34917"]}]}
+        scraper = BienIciScraper(BLAGNAC)
+        with patch.object(scraper, "get_json", side_effect=lambda u, p, timeout: suggest[p["q"]]), \
+             patch("scrapers.api_base.time.sleep"):
+            assert scraper.zone_ids(cache_file=tmp_path / "z.json") == ["-35738", "-34917"]
+        assert scraper.search_url() == BLAGNAC.bienici_search_url
 
     def test_pick_first_otherwise(self):
         assert pick_zone_ids("Saint-Agne", self.SUGGEST) == ["-111"]

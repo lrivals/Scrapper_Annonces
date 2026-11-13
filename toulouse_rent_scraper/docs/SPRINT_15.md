@@ -140,6 +140,17 @@ Pastilles sous chaque carte : `T2`, `DPE D`, `GES B`, `Meublé` / `Vide`, `CC` o
      vraie clé et l'ajouter dans `ATTRIBUTE_KEYS` (`lbc_json.py`) ;
   4. vérifier sur 2–3 annonces que `is_shape` / `source` distinguent bien les adresses
      précises des positions approximatives.
+- **Validation réelle du 2026-11-13** (`enrich --site leboncoin --limit 5` puis `quality --days 1`) :
+  5/5 enrichies depuis le JSON (`json`), JSON 100 %, surface / pièces / chambres / description /
+  photos / charges / caution / meublé / date 100 %, étage / DPE / GES 80 %, annonceur 60 %,
+  GPS exact 20 % (1 annonce repositionnée). Aucun champ sous son seuil. ✅
+  - 🐛 Corrigé au passage : le premier essai avait marqué les 5 annonces **retirées** alors
+    qu'elles étaient en ligne. `is_expired_content` cherchait ses motifs dans le HTML complet,
+    et les pages LBC embarquent dans leurs scripts « annonce introuvable », « page introuvable »,
+    « annonce supprimée »… Nouveau `page_shows_expired(page)` (`storage/cleaner.py`) : une page
+    dont le JSON contient l'annonce est en ligne, sinon seul le texte visible compte. Utilisé
+    par `enrich` **et** `check-links` (même défaut). Tests de régression dans `test_enricher.py`
+    et `test_cleaner.py`.
 - Pour re-traiter les annonces déjà enrichies par le DOM :
   `UPDATE annonces SET enrichment_status = 'pending', enrichment_attempts = 0 WHERE site = 'LeBonCoin';`
   puis `python main.py enrich --site leboncoin`.
@@ -205,6 +216,18 @@ d'objets « annonce » trouvée dans l'arbre), au même format que la page de d�
   4. si le log dit `JSON ignoré : 0 % des cartes…` sur la page 1, le chemin des annonces
      a changé : capturer la page avec `python scripts/debug/capture_cards_leboncoin.py`
      (→ `logs/debug_lbc_fullpage.html`), chercher `__NEXT_DATA__` et ajuster `find_search_ads`.
+- **Validation réelle du 2026-11-13** (profil Blagnac, 11 pages, 370 annonces brutes) :
+  - ✅ `35 annonces lues depuis le JSON de la page` sur chaque page, 2–5 cartes par page
+    complétées depuis le DOM ; 212 fiches pré-remplies.
+  - ✅ En base (211 fiches `search_json`) : surface 100 %, photos 98 %, GPS exact 40 %,
+    `extra_attributes` complet (meublé, DPE/GES, charges, caution, disponibilité…).
+  - ❌ **Aucune description** : le JSON de recherche LBC ne contient pas `body`. Les fiches
+    restent donc `pending` et `enrich` visite toujours la page de détail — l'économie visée
+    par 15.2 ne joue pas pour LBC (`LBC_SEARCH_JSON_SKIPS_DETAIL` est sans effet).
+  - 🐛 Corrigé : le contrôle de santé de la recherche exigeait 60 % de descriptions → alerte
+    « Extraction dégradée » (notification haute priorité) à chaque scrape. La description n'est
+    plus jugée sur la recherche LBC (`QUALITY_SEARCH_SKIP_FIELDS` dans `config.py`) ; elle
+    reste contrôlée après `enrich`. Test : `test_search_health_ignores_description_absent_from_search_json`.
 
 ## 15.3 — SeLoger : état JSON embarqué 🔲
 
