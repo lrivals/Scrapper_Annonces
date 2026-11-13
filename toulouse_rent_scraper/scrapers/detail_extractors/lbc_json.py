@@ -301,3 +301,130 @@ def extract_from_html(html: Optional[str]) -> Optional[Dict]:
     """Raccourci : HTML de la page d'annonce → champs, ou None si pas de JSON exploitable."""
     ad = find_ad(extract_next_data(html))
     return parse_ad(ad) if ad else None
+
+
+# ---------------------------------------------------------------------------
+# Page de résultats de recherche (Sprint 15.2)
+#
+# La page de recherche est elle aussi rendue par Next.js : `__NEXT_DATA__` contient
+# la liste des annonces de la page (props.pageProps.searchData.ads), chacune au même
+# format que l'annonce d'une page de détail.
+# ⚠️ Avec une pagination côté client (bouton « suivant »), `__NEXT_DATA__` reste celui
+# de la première page chargée : l'appelant doit vérifier que la liste correspond aux
+# cartes affichées (voir LeBonCoinScraper.page_json_annonces).
+# ---------------------------------------------------------------------------
+
+LBC_BASE_URL = "https://www.leboncoin.fr"
+_LIST_ID_RE = re.compile(r"/(\d{6,})(?:\.htm)?/?(?:[?#].*)?$")
+
+
+def list_id_from_url(url: Optional[str]) -> Optional[str]:
+    """« https://www.leboncoin.fr/ad/locations/2875512345 » → « 2875512345 »."""
+    if not url:
+        return None
+    m = _LIST_ID_RE.search(url)
+    return m.group(1) if m else None
+
+
+def find_search_ads(next_data: Optional[Dict], max_depth: int = 6) -> List[Dict]:
+    """
+    Annonces d'une page de résultats : props.pageProps.searchData.ads, sinon la plus
+    longue liste d'objets ressemblant à des annonces trouvée dans l'arbre.
+    """
+    if not isinstance(next_data, dict):
+        return []
+    search = ((next_data.get("props") or {}).get("pageProps") or {}).get("searchData") or {}
+    ads = search.get("ads") if isinstance(search, dict) else None
+    if isinstance(ads, list) and any(_looks_like_ad(a) for a in ads):
+        return [a for a in ads if _looks_like_ad(a)]
+
+    best: List[Dict] = []
+    frontier: List[Any] = [next_data]
+    for _ in range(max_depth):
+        nxt: List[Any] = []
+        for node in frontier:
+            values: Iterable[Any] = node.values() if isinstance(node, dict) else node
+            for value in values:
+                if isinstance(value, list):
+                    found = [v for v in value if _looks_like_ad(v)]
+                    if len(found) > len(best):
+                        best = found
+                if isinstance(value, (dict, list)):
+                    nxt.append(value)
+        if not nxt:
+            break
+        frontier = nxt
+    return best
+
+
+def ad_url(ad: Dict) -> Optional[str]:
+    url = ad.get("url")
+    if isinstance(url, str) and url:
+        return url if url.startswith("http") else LBC_BASE_URL + url
+    if ad.get("list_id"):
+        return f"{LBC_BASE_URL}/ad/locations/{ad['list_id']}"
+    return None
+
+
+def _location_label(ad: Dict) -> Optional[str]:
+    loc = ad.get("location") or {}
+    if not isinstance(loc, dict):
+        return None
+    if loc.get("city_label"):
+        return str(loc["city_label"])
+    parts = [str(loc[k]) for k in ("city", "zipcode") if loc.get(k)]
+    return " ".join(parts) or None
+
+
+# Sans ces champs, l'annonce de la recherche ne remplace pas la visite de la page de détail
+SEARCH_COMPLETE_FIELDS = ("description", "surface_m2")
+
+
+def search_ad_to_annonce(ad: Dict) -> Optional[Dict]:
+    """
+    Annonce de la recherche → annonce brute du pipeline (mêmes clés que les cartes DOM),
+    plus `details` : les champs d'enrichissement déjà connus.
+    `details["enrichment_status"] == "done"` si la fiche est assez complète pour se passer
+    de la visite de la page de détail.
+    """
+    url = ad_url(ad)
+    price = _first_price(ad)
+    if not url or price is None:
+        return None
+    details = parse_ad(ad)
+    details.pop("price", None)
+    lat, lon, precision = details.pop("lat", None), details.pop("lon", None), details.pop("geo_precision", None)
+
+    photos = details.get("photos")
+    annonce = {
+        "site": "LeBonCoin",
+        "title": (ad.get("subject") or "").strip(),
+        "price": price,
+        "location_raw": _location_label(ad) or "",
+        "url": url,
+        "photos": json.dumps(photos[:1]) if photos else None,
+    }
+    if lat is not None and lon is not None:
+        annonce.update(lat=lat, lon=lon, geo_precision=precision)
+    if details.get("nb_rooms"):
+        annonce["nb_rooms"] = details["nb_rooms"]   # filtre « pièces » des profils (guess_rooms)
+
+    details["field_sources"] = {k: "search_json" for k, v in details.items() if v is not None}
+    details["extraction_source"] = "search_json"
+    if all(details.get(f) is not None for f in SEARCH_COMPLETE_FIELDS):
+        details["enrichment_status"] = "done"
+    annonce["details"] = details
+    return annonce
+
+
+def search_annonces_from_html(html: Optional[str]) -> List[Dict]:
+    """HTML d'une page de résultats → annonces du pipeline (vide si pas de JSON exploitable)."""
+    annonces = []
+    for ad in find_search_ads(extract_next_data(html)):
+        try:
+            annonce = search_ad_to_annonce(ad)
+        except Exception:  # une annonce inattendue ne doit pas faire perdre les autres
+            continue
+        if annonce:
+            annonces.append(annonce)
+    return annonces

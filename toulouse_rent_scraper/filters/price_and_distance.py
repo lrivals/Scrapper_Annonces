@@ -146,6 +146,9 @@ def match_profiles(
         return None, []
 
     coords = known_coords or geocode_address(location_raw)
+    if not coords and annonce.get("lat") is not None and annonce.get("lon") is not None:
+        # Adresse introuvable : position approximative fournie par le site (JSON LBC, 15.2)
+        coords = (annonce["lat"], annonce["lon"])
     if not coords:
         return None, []
 

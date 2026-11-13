@@ -238,7 +238,8 @@ def annonces_for_notification(profile: str, urls: List[str]) -> Dict[str, Dict]:
     with connect() as conn:
         rows = conn.execute(
             f"""
-            SELECT a.url, a.title, a.price, a.location_raw, ap.distance_km, ap.score
+            SELECT a.url, a.title, a.price, a.location_raw, a.surface_m2, a.nb_rooms, a.dpe_rating,
+                   ap.distance_km, ap.score
             FROM annonces a
             JOIN annonce_profiles ap ON ap.annonce_id = a.id AND ap.profile = ?
             WHERE a.url IN ({placeholders}) AND COALESCE(a.status, 'active') = 'active'
@@ -458,6 +459,13 @@ def update_annonce_enrichment(url: str, data: Dict) -> bool:
     conn.commit()
     conn.close()
     return updated
+
+
+def get_enrichment_status(url: str) -> Optional[str]:
+    """Statut d'enrichissement de l'annonce, ou None si elle n'existe pas."""
+    with connect() as conn:
+        row = conn.execute("SELECT enrichment_status FROM annonces WHERE url = ?", (url,)).fetchone()
+    return row["enrichment_status"] if row else None
 
 
 def get_coordinates(url: str) -> Optional[Dict]:

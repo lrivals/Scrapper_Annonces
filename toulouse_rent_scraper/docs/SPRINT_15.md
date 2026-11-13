@@ -1,7 +1,7 @@
 # Sprint 15 — Fiches détaillées, tri affiné, nouvelles sources
 
 > **Date** : 2026-11-12
-> **Statut** : 🔵 En cours — 15.1 livré, 15.2 → 15.8 planifiés
+> **Statut** : 🔵 En cours — 15.1 et 15.2 livrés, 15.3 → 15.8 planifiés
 > **Origine** : réflexion « comment améliorer la récolte, le tri, l'automatisation et la couverture »
 > **Prérequis** : [Sprint 12](SPRINT_12.md) (migrations versionnées, `chrome_session`), [Sprint 13](SPRINT_13.md) (score, notifications), [Sprint 14](SPRINT_14.md) (profils)
 
@@ -27,7 +27,7 @@ Constat de départ :
 | # | Tâche | Statut | Notes |
 |---|-------|--------|-------|
 | 15.1 | LBC : extraction depuis `__NEXT_DATA__`, GPS exact, santé de l'extraction | ✅ | À valider sur une vraie page (voir bilan) |
-| 15.2 | LBC : annonces complètes dès la page de recherche | 🔲 | Moins de visites, alertes plus rapides |
+| 15.2 | LBC : annonces complètes dès la page de recherche | ✅ | À valider sur une vraie page (voir bilan) |
 | 15.3 | SeLoger : extraction depuis l'état JSON embarqué | 🔲 | Même principe que 15.1 |
 | 15.4 | Analyse de la description par LLM | 🔲 | Disponibilité, APL/Visale, bail, arnaques, résumé |
 | 15.5 | Critères éliminatoires par profil | 🔲 | Distincts des poids du score |
@@ -146,19 +146,65 @@ Pastilles sous chaque carte : `T2`, `DPE D`, `GES B`, `Meublé` / `Vide`, `CC` o
 
 ---
 
-## 15.2 — LBC : annonces complètes dès la page de recherche 🔲
+## 15.2 — LBC : annonces complètes dès la page de recherche ✅
 
-La page de résultats est elle aussi rendue par Next.js : `__NEXT_DATA__` y contient
-la liste des annonces (`props.pageProps.searchData.ads`, à confirmer) avec, pour chacune,
-la plupart des attributs de 15.1 et la position.
+**Fichiers** : `scrapers/detail_extractors/lbc_json.py`, `scrapers/base.py`,
+`scrapers/leboncoin.py`, `pipeline.py`, `filters/price_and_distance.py`,
+`storage/sqlite.py`, `storage/quality.py`, `notify/messages.py`, `config.py`,
+`tests/test_lbc_search_json.py` (nouveau)
 
-- `LeBonCoinScraper` : après chargement d'une page de résultats, lire le JSON ;
-  `lbc_json.parse_ad` sur chaque annonce ; les cartes DOM restent le repli.
-- `insert_annonce` : accepter les champs enrichis à l'insertion ; marquer
-  `enrichment_status = 'done'` si la description est présente, sinon laisser `pending`.
-- Effets : notification avec surface/DPE dès la première détection ; beaucoup moins de
-  visites de pages d'annonce (moins de captchas) ; le point exact sert directement au filtre
-  de rayon.
+La page de résultats est elle aussi rendue par Next.js : `__NEXT_DATA__` contient les
+annonces de la page (`props.pageProps.searchData.ads`, sinon la plus longue liste
+d'objets « annonce » trouvée dans l'arbre), au même format que la page de détail.
+
+### Scraping
+
+- `lbc_json.search_annonces_from_html` : chaque annonce → annonce brute du pipeline
+  (titre, prix, `location.city_label`, URL, 1ʳᵉ photo, `nb_rooms` pour le filtre pièces,
+  lat/lon/précision) + `details` (tous les champs de 15.1, `extraction_source = "search_json"`).
+- `BaseScraper._scrape_current_page` (nouveau crochet `page_json_annonces`, défaut : aucun) :
+  1. lit le JSON de la page ;
+  2. **vérifie qu'il correspond aux cartes affichées** : au moins 50 % des cartes
+     (jointure par `list_id` extrait de l'URL) doivent y figurer. Sinon le JSON est ignoré —
+     cas de la pagination par bouton « suivant », où Next.js ne met pas `__NEXT_DATA__` à jour ;
+  3. ajoute les annonces du JSON, puis extrait par le DOM **uniquement les cartes absentes
+     du JSON** (plus de scroll carte par carte pour celles-là) ;
+  4. sans JSON exploitable : extraction par cartes comme avant.
+
+### Pipeline
+
+- Le point GPS **exact** de l'annonce sert directement au filtre de rayon (plus de géocodage
+  Nominatim pour ces annonces) ; un point **approximatif** sert de secours si le géocodage de
+  l'adresse échoue.
+- `details` est enregistré à l'insertion, **sauf si l'annonce est déjà enrichie** (une fiche
+  de page de détail n'est jamais écrasée par la recherche).
+- Fiche complète (description + surface) → `enrichment_status = 'done'` : **pas de visite
+  de la page de détail**. Sinon les champs sont pré-remplis et l'annonce reste `pending`.
+  `LBC_SEARCH_JSON_SKIPS_DETAIL = False` (config) garde toujours la visite.
+- Notifications : `T2 38 m² DPE D` dans chaque ligne, dès la première détection.
+- Compteur `Fiches pré-remplies depuis la recherche` dans le résumé du run.
+
+### Santé
+
+- `search_health_rows` + `report_extraction_health` en fin de `run_scraping` : même alerte
+  qu'à l'enrichissement (champs clés < 60 %, ou moins de 50 % d'annonces LBC lues depuis le
+  JSON). Une recherche LBC qui retombe sur les cartes DOM déclenche donc l'alerte.
+- `quality` compte `search_json` comme une lecture JSON.
+
+### Bilan
+
+- Tests : `tests/test_lbc_search_json.py` (23 tests : parsing de la recherche, jointure
+  JSON ↔ cartes, JSON périmé, repli DOM, option de visite, stockage, non-écrasement,
+  GPS approximatif de secours, santé, notification). Suite complète verte.
+- ⚠️ **Validation manuelle à faire** (réseau de développement bloqué par LBC) :
+  1. `python main.py scrape --site leboncoin --profile blagnac` → le log doit afficher
+     `N annonces lues depuis le JSON de la page` sur chaque page ;
+  2. `python main.py quality --days 1` → JSON ≈ 100 %, description et surface remplies ;
+  3. vérifier sur 2–3 annonces que la description de la recherche est **complète**
+     (et non tronquée) : sinon passer `LBC_SEARCH_JSON_SKIPS_DETAIL = False` ;
+  4. si le log dit `JSON ignoré : 0 % des cartes…` sur la page 1, le chemin des annonces
+     a changé : capturer la page avec `python scripts/debug/capture_cards_leboncoin.py`
+     (→ `logs/debug_lbc_fullpage.html`), chercher `__NEXT_DATA__` et ajuster `find_search_ads`.
 
 ## 15.3 — SeLoger : état JSON embarqué 🔲
 

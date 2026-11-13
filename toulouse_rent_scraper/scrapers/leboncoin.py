@@ -8,7 +8,8 @@ import re
 from typing import List, Dict, Optional
 
 from scrapers.base import BaseScraper
-from config import LEBONCOIN_BASE_URL
+from scrapers.detail_extractors.lbc_json import list_id_from_url, search_annonces_from_html
+from config import LBC_SEARCH_JSON_SKIPS_DETAIL, LEBONCOIN_BASE_URL
 
 
 class LeBonCoinScraper(BaseScraper):
@@ -51,6 +52,27 @@ class LeBonCoinScraper(BaseScraper):
             "veuillez patienter",
             "vérification en cours",
         ]
+
+    def page_json_annonces(self, page) -> List[Dict]:
+        """Annonces complètes de `__NEXT_DATA__` (Sprint 15.2)."""
+        annonces = search_annonces_from_html(page.content())
+        if not LBC_SEARCH_JSON_SKIPS_DETAIL:
+            for a in annonces:
+                a["details"].pop("enrichment_status", None)
+        return annonces
+
+    def annonce_key(self, url: Optional[str]) -> Optional[str]:
+        return list_id_from_url(url) or url
+
+    def card_url(self, card) -> Optional[str]:
+        try:
+            href = card.get_attribute("href")
+            if not href:
+                link = card.query_selector('a[href*="/ad/"]')
+                href = link.get_attribute("href") if link else None
+            return self.build_full_url(href) if href else None
+        except Exception:
+            return None
 
     def extract_annonce(self, card) -> Optional[Dict]:
         """Extrait les données d'une carte Le Bon Coin."""

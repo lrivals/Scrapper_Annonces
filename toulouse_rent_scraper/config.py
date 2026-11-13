@@ -348,6 +348,11 @@ ENRICHMENT_DEFAULT_LIMIT = 50
 ENRICHMENT_MAX_ATTEMPTS = 3
 ENRICHMENT_RETRY_DELAY_HOURS = 24
 
+# Sprint 15.2 — une annonce LBC lue complète (description + surface) dans le JSON de la
+# page de recherche est marquée enrichie : pas de visite de sa page de détail.
+# False : le JSON de la recherche sert seulement à pré-remplir, la visite reste faite.
+LBC_SEARCH_JSON_SKIPS_DETAIL = True
+
 # Santé de l'extraction (Sprint 15.1) : taux de remplissage minimal attendu par champ
 # sur les annonces enrichies d'un run. En dessous → alerte « sélecteurs probablement cassés ».
 QUALITY_MIN_SAMPLES = 5            # pas de verdict en dessous de N annonces enrichies par site
