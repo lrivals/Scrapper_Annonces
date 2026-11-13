@@ -322,3 +322,10 @@ def test_ui_shows_feature_badges(db):
     html = app.test_client().get("/?profile=enac").get_data(as_text=True)
     for label in ("DPE D", "GES B", "Vide", "CC", "T2", "📍 GPS"):
         assert label in html
+
+
+def test_json_rate_counts_api_source():
+    """Bien'ici (API JSON, source `api`) compte comme extraction structurée dans `quality`."""
+    from storage.quality import json_rate
+    assert json_rate([{"extraction_source": "api"}, {"extraction_source": "search_json"}]) == 1.0
+    assert json_rate([{"extraction_source": "api"}, {"extraction_source": "dom"}]) == 0.5

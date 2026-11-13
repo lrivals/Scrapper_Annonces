@@ -546,6 +546,18 @@ anti-ban habituel), résultats ajoutés page par page (une erreur en page 3 gard
   4. `python main.py quality` → colonne JSON à 100 % pour Bien'ici, surface/photos remplies ;
   5. si l'API répond 400 : un nom de filtre a changé — comparer avec la requête
      `realEstateAds.json` visible dans l'onglet Réseau du navigateur sur bienici.com.
+- **Validation réelle du 2026-11-13** (`scrape --site bienici --profile blagnac`, limité à 5 pages) :
+  5 pages × 24 annonces (303 annoncées), zones Toulouse + Blagnac en cache, 64 annonces conservées,
+  complètes sans `enrich` (surface, pièces, description, photos 100 %, charges 89 %, DPE 91 %).
+  Reste à ouvrir 2–3 liens depuis l'UI et à vérifier un prix charges comprises sur le site.
+  - 🐛 `quality` affichait JSON 0 % pour Bien'ici (source `api` non comptée) : corrigé.
+  - 🐛 **Faux doublons** : 39 des 64 annonces rattachées à une autre. La règle textuelle comptait
+    « Toulouse » + code postal comme 2 mots communs, et la surface SeLoger est souvent inconnue.
+    Nouvelle règle (`storage/sqlite.py::same_property`) : codes postaux et mots génériques
+    (« saint », « grand », « croix »…) ignorés, découpage sur les traits d'union, même nombre de
+    pièces si connu, et deux GPS exacts doivent être à ≤ `DUPLICATE_MAX_GPS_M` (300 m).
+    `python main.py dedupe --recheck --apply` a détaché 131 rattachements sur 160 en base
+    (liens confirmés par photo conservés) ; doublons Bien'ici : 39 → 9.
 - Annonces retirées : `check-links` utilise les marqueurs génériques (« annonce n'est plus
   disponible »…) ; à confirmer sur une annonce Bien'ici expirée.
 

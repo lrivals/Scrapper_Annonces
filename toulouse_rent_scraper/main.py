@@ -10,6 +10,7 @@
 #   python main.py rescore
 #   python main.py weights [--apply | --reset]
 #   python main.py dedupe [--limit 150]
+#   python main.py dedupe --recheck [--apply]   # revérifier les doublons déjà rattachés
 #   python main.py notify-test
 #   python main.py ui [--port 5000]
 #
@@ -70,6 +71,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     dedupe = sub.add_parser("dedupe", help="Doublons inter-sites par empreinte de la 1re photo")
     dedupe.add_argument("--limit", type=int, help="Photos à télécharger au plus (défaut PHOTO_HASH_MAX_PER_RUN)")
+    dedupe.add_argument("--recheck", action="store_true",
+                        help="Revérifier les doublons déjà rattachés (simulation, sans --apply)")
+    dedupe.add_argument("--apply", action="store_true", help="Avec --recheck : détacher les faux doublons")
 
     weights = sub.add_parser("weights", help="Poids du score appris des retours ⭐ / 📞 / 👎 de l'interface")
     weights_action = weights.add_mutually_exclusive_group()
@@ -211,11 +215,21 @@ def cmd_rescore():
     logger.info(f"Scores recalculés : {rescore()} annonce(s)")
 
 
-def cmd_dedupe(limit: Optional[int] = None) -> dict:
+def cmd_dedupe(limit: Optional[int] = None, recheck: bool = False, apply: bool = False) -> dict:
     from filters.photo_duplicates import run_photo_dedup
-    from storage.sqlite import init_db
+    from storage.sqlite import init_db, recheck_duplicates
 
     init_db()
+    if recheck:
+        invalid = recheck_duplicates(apply=apply)
+        for r in invalid:
+            root = r["root"]
+            print(f"  #{r['id']} {r['site']} {r['price']}€ {r['surface_m2'] or '?'} m² {r['nb_rooms'] or '?'} p. "
+                  f"« {r['location_raw']} »  ↔  #{root['id']} {root['site']} {root['price']}€ "
+                  f"{root['surface_m2'] or '?'} m² {root['nb_rooms'] or '?'} p. « {root['location_raw']} »")
+        verb = "détaché(s)" if apply else "à détacher (relancer avec --apply)"
+        logger.info(f"Doublons revérifiés : {len(invalid)} faux doublon(s) {verb}")
+        return {"invalid": len(invalid)}
     stats = run_photo_dedup(limit)
     logger.info(
         f"Empreintes : {stats['hashed']} calculée(s), {stats['failed']} échec(s) — "
@@ -359,7 +373,7 @@ def main(argv: Optional[List[str]] = None):
     elif args.command == "quality":
         cmd_quality(args.days)
     elif args.command == "dedupe":
-        cmd_dedupe(args.limit)
+        cmd_dedupe(args.limit, recheck=args.recheck, apply=args.apply)
     elif args.command == "weights":
         cmd_weights(args.apply, args.reset)
     elif args.command == "notify-test":

@@ -4,6 +4,7 @@
 # =========================
 
 import json
+import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta
@@ -11,7 +12,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from config import (
-    DB_PATH, DUPLICATE_PRICE_TOLERANCE, ENRICHMENT_MAX_ATTEMPTS, ENRICHMENT_RETRY_DELAY_HOURS,
+    DB_PATH, DUPLICATE_MAX_GPS_M, DUPLICATE_PRICE_TOLERANCE, ENRICHMENT_MAX_ATTEMPTS, ENRICHMENT_RETRY_DELAY_HOURS,
 )
 
 # Statuts possibles d'une annonce :
@@ -277,7 +278,50 @@ def save_scores(profile: str, updates) -> None:
 
 
 def _location_words(location: Optional[str]) -> set:
-    return {w.lower().strip(",.()") for w in (location or "").split() if len(w) > 3}
+    """
+    Mots significatifs d'une localisation. Les codes postaux sont ignorés : « Toulouse 31200 »
+    est commun à tout un quartier, et comptait pour 2 mots communs (faux doublons Bien'ici,
+    dont la localisation est « Toulouse 31200 (Toulouse) », constaté le 2026-11-13).
+    Découpage aussi sur les traits d'union (« Saint-Martin-du-Touch » = « Saint-Martin du Touch »),
+    sans les mots trop génériques pour désigner un quartier (« saint », « grand »…).
+    """
+    words = re.split(r"[^\w']+", (location or "").lower())
+    return {w for w in words if len(w) > 3 and not any(c.isdigit() for c in w) and w not in _GENERIC_PLACE_WORDS}
+
+
+_GENERIC_PLACE_WORDS = {
+    "saint", "sainte", "grand", "grande", "petit", "petite", "croix", "quartier", "centre", "ville",
+}
+
+
+def _gps_distance_m(a: Dict, b: Dict) -> Optional[float]:
+    """Distance (m) entre deux annonces si les deux ont une position GPS exacte, sinon None."""
+    if a.get("geo_precision") != "exact" or b.get("geo_precision") != "exact":
+        return None
+    if None in (a.get("lat"), a.get("lon"), b.get("lat"), b.get("lon")):
+        return None
+    from geo.distance import distance_km
+    return distance_km((a["lat"], a["lon"]), (b["lat"], b["lon"])) * 1000
+
+
+def same_property(annonce: Dict, candidate: Dict) -> bool:
+    """
+    Règles de rapprochement hors prix (le prix est filtré en SQL) :
+      - surface à ±2 m² et même nombre de pièces, si connus des deux côtés ;
+      - lieu : positions GPS exactes à ≤ DUPLICATE_MAX_GPS_M si les deux en ont une,
+        sinon au moins 2 mots communs dans location_raw (hors codes postaux).
+    """
+    surface, cand_surface = annonce.get("surface_m2"), candidate.get("surface_m2")
+    if surface is not None and cand_surface is not None and abs(surface - cand_surface) > 2:
+        return False
+    rooms, cand_rooms = annonce.get("nb_rooms"), candidate.get("nb_rooms")
+    if rooms is not None and cand_rooms is not None and int(rooms) != int(cand_rooms):
+        return False
+    gps_m = _gps_distance_m(annonce, candidate)
+    if gps_m is not None:
+        return gps_m <= DUPLICATE_MAX_GPS_M
+    common = _location_words(annonce.get("location_raw")) & _location_words(candidate.get("location_raw"))
+    return len(common) >= 2
 
 
 def find_potential_duplicates(annonce: Dict) -> List[Dict]:
@@ -285,8 +329,7 @@ def find_potential_duplicates(annonce: Dict) -> List[Dict]:
     Recherche le même bien publié sur un AUTRE site :
       - site différent, URL différente
       - prix à ±DUPLICATE_PRICE_TOLERANCE €
-      - surface à ±2 m² si connue des deux côtés
-      - au moins 2 mots (> 3 caractères) communs dans location_raw
+      - puis `same_property` : surface, pièces, GPS exact ou mots communs (hors codes postaux)
     Seules les annonces « racines » (duplicate_of IS NULL) sont candidates,
     triées de la plus ancienne à la plus récente.
     """
@@ -297,17 +340,14 @@ def find_potential_duplicates(annonce: Dict) -> List[Dict]:
     if price is None:
         return []
 
-    words_ref = _location_words(annonce.get("location_raw"))
-    if len(words_ref) < 2:
-        return []
-
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
     cur.execute(
         """
-        SELECT id, url, title, price, location_raw, site, surface_m2
+        SELECT id, url, title, price, location_raw, site, surface_m2, nb_rooms,
+               lat, lon, geo_precision
         FROM annonces
         WHERE site != ?
           AND price BETWEEN ? AND ?
@@ -320,16 +360,45 @@ def find_potential_duplicates(annonce: Dict) -> List[Dict]:
     candidates = [dict(row) for row in cur.fetchall()]
     conn.close()
 
-    surface = annonce.get("surface_m2")
-    matches = []
-    for candidate in candidates:
-        cand_surface = candidate.get("surface_m2")
-        if surface is not None and cand_surface is not None and abs(surface - cand_surface) > 2:
-            continue
-        if len(words_ref & _location_words(candidate.get("location_raw"))) >= 2:
-            matches.append(candidate)
+    return [c for c in candidates if same_property(annonce, c)]
 
-    return matches
+
+def recheck_duplicates(apply: bool = False) -> List[Dict]:
+    """
+    Revérifie les rattachements existants avec les règles actuelles et détache ceux qui
+    ne tiennent plus. Un rattachement confirmé par la photo (15.8) est toujours conservé.
+    Retourne les rattachements invalides (détachés si `apply`).
+    """
+    from config import PHOTO_HASH_MAX_DISTANCE
+    from filters.photo_duplicates import hamming, is_uniform
+
+    cols = "id, url, title, site, price, location_raw, surface_m2, nb_rooms, lat, lon, geo_precision, photo_hash"
+    with connect() as conn:
+        rows = [dict(r) for r in conn.execute(
+            f"SELECT {cols}, duplicate_of FROM annonces WHERE duplicate_of IS NOT NULL"
+        )]
+        roots = {r["id"]: dict(r) for r in conn.execute(
+            f"SELECT {cols} FROM annonces WHERE id IN (SELECT duplicate_of FROM annonces WHERE duplicate_of IS NOT NULL)"
+        )}
+
+    invalid = []
+    for row in rows:
+        root = roots.get(row["duplicate_of"])
+        if root is None:
+            continue
+        a, b = row.get("photo_hash"), root.get("photo_hash")
+        if a and b and not is_uniform(a) and hamming(a, b) <= PHOTO_HASH_MAX_DISTANCE:
+            continue
+        if abs(row["price"] - root["price"]) <= DUPLICATE_PRICE_TOLERANCE and same_property(row, root):
+            continue
+        invalid.append({**row, "root": root})
+
+    if apply and invalid:
+        with connect() as conn:
+            conn.executemany(
+                "UPDATE annonces SET duplicate_of = NULL WHERE id = ?", [(r["id"],) for r in invalid]
+            )
+    return invalid
 
 
 def annonces_without_photo_hash(max_attempts: int, limit: int) -> List[Dict]:

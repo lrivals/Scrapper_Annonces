@@ -204,6 +204,82 @@ class TestDuplicates:
         assert find_potential_duplicates({**self.SELOGER, "surface_m2": 30}) == []
         assert len(find_potential_duplicates({**self.SELOGER, "surface_m2": 19})) == 1
 
+    # --- Faux doublons Bien'ici (constat réel 2026-11-13) ---
+
+    BIENICI = {
+        "site": "Bien'ici", "title": "T2", "price": 808, "location_raw": "Toulouse 31200 (Toulouse)",
+        "url": "https://www.bienici.com/annonce/1",
+    }
+    SL_MINIMES = {
+        "site": "SeLoger", "title": "Appartement à louer", "price": 811,
+        "location_raw": "Minimes, Toulouse (31200)", "url": "https://www.seloger.com/annonces/9.htm",
+    }
+
+    def test_city_and_postcode_alone_are_not_enough(self, temp_db):
+        init_db()
+        insert_annonce(self.SL_MINIMES)
+        assert find_potential_duplicates(self.BIENICI) == []
+
+    def test_same_district_still_matches(self, temp_db):
+        init_db()
+        insert_annonce(self.SL_MINIMES)
+        lbc = {**self.BIENICI, "site": "LeBonCoin", "location_raw": "Toulouse 31200 Minimes",
+               "url": "https://www.leboncoin.fr/ad/locations/1"}
+        assert len(find_potential_duplicates(lbc)) == 1
+
+    def test_location_words_split_hyphens_and_ignore_generic(self):
+        from storage.sqlite import _location_words
+        assert _location_words("Toulouse 31300 (Toulouse - Saint-Martin du Touch)") == \
+            _location_words("Saint-Martin-du-Touch, Toulouse (31300)") == {"toulouse", "martin", "touch"}
+        # « Saint-… » et « Grand … » seuls ne font pas un quartier commun
+        assert _location_words("Toulouse Saint-Cyprien") & _location_words("Toulouse Saint-Agne") == {"toulouse"}
+        assert _location_words("Toulouse Grand Selve") & _location_words("Toulouse Grand Noble") == {"toulouse"}
+        assert _location_words("Toulouse 31200 Croix Bénite") & _location_words("Croix-daurade, Toulouse") == {"toulouse"}
+
+    def test_room_count_mismatch(self, temp_db):
+        init_db()
+        insert_annonce(self.LBC)
+        with sqlite3.connect(temp_db) as con:
+            con.execute("UPDATE annonces SET nb_rooms = 3 WHERE url = ?", (self.LBC["url"],))
+        assert find_potential_duplicates({**self.SELOGER, "nb_rooms": 2}) == []
+        assert len(find_potential_duplicates({**self.SELOGER, "nb_rooms": 3})) == 1
+
+    def test_exact_gps_decides_location(self, temp_db):
+        init_db()
+        insert_annonce(self.SL_MINIMES)
+        with sqlite3.connect(temp_db) as con:
+            con.execute("UPDATE annonces SET lat = 43.6207, lon = 1.4490, geo_precision = 'exact' WHERE url = ?",
+                        (self.SL_MINIMES["url"],))
+        near = {**self.BIENICI, "lat": 43.6215, "lon": 1.4490, "geo_precision": "exact"}    # ~90 m
+        far = {**self.BIENICI, "lat": 43.6379, "lon": 1.4490, "geo_precision": "exact"}     # ~1,9 km
+        same_words_far = {**far, "location_raw": "Toulouse 31200 Minimes"}
+        assert len(find_potential_duplicates(near)) == 1          # GPS suffit, sans mots communs
+        assert find_potential_duplicates(far) == []
+        assert find_potential_duplicates(same_words_far) == []    # GPS exact prime sur les mots
+        approx = {**near, "geo_precision": "approx"}               # position floue : mots requis
+        assert find_potential_duplicates(approx) == []
+
+    def test_recheck_detaches_false_duplicates_but_keeps_photo_links(self, temp_db):
+        from storage.sqlite import recheck_duplicates
+        init_db()
+        insert_annonce(self.SL_MINIMES)
+        insert_annonce(self.BIENICI)
+        photo_dup = {**self.BIENICI, "url": "https://www.bienici.com/annonce/2"}
+        insert_annonce(photo_dup)
+        with sqlite3.connect(temp_db) as con:
+            root_id = con.execute("SELECT id FROM annonces WHERE url = ?", (self.SL_MINIMES["url"],)).fetchone()[0]
+            con.execute("UPDATE annonces SET duplicate_of = ? WHERE site = 'Bien''ici'", (root_id,))
+            con.execute("UPDATE annonces SET photo_hash = 'f0e1d2c3b4a59687' WHERE url IN (?, ?)",
+                        (self.SL_MINIMES["url"], photo_dup["url"]))
+
+        invalid = recheck_duplicates(apply=False)
+        assert [r["url"] for r in invalid] == [self.BIENICI["url"]]
+        assert _row(temp_db, self.BIENICI["url"])["duplicate_of"] == root_id      # simulation : rien d'écrit
+
+        recheck_duplicates(apply=True)
+        assert _row(temp_db, self.BIENICI["url"])["duplicate_of"] is None
+        assert _row(temp_db, photo_dup["url"])["duplicate_of"] == root_id         # lien photo conservé
+
     def test_newer_annonce_cannot_be_original(self, temp_db):
         init_db()
         insert_annonce(self.LBC)

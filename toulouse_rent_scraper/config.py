@@ -363,6 +363,9 @@ LOG_LEVEL = "INFO"
 
 # Même bien publié sur deux sites : écart de prix toléré (en euros)
 DUPLICATE_PRICE_TOLERANCE = 5
+# Deux positions GPS exactes plus éloignées que ça ne sont pas le même bien (et plus proches,
+# elles suffisent comme preuve de lieu, sans mots communs dans la localisation)
+DUPLICATE_MAX_GPS_M = 300
 
 # Sprint 15.8 — doublons par empreinte de la 1ʳᵉ photo (dHash 64 bits, Pillow)
 PHOTO_DEDUP_ENABLED = True

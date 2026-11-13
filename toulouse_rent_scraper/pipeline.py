@@ -173,11 +173,13 @@ def process_annonces(raw_annonces: Sequence[Dict], site_name: str) -> RunStats:
                                      "old_price": old_price})
 
         # Même bien publié sur un autre site
-        # La surface des annonces lues en JSON (LBC, Bien'ici) est dans `details`
+        # Surface, pièces et GPS des annonces lues en JSON (LBC, Bien'ici) sont dans `details`
         details = filtered.get("details") or {}
-        potential_dups = find_potential_duplicates(
-            {**filtered, "surface_m2": filtered.get("surface_m2") or details.get("surface_m2")}
-        )
+        potential_dups = find_potential_duplicates({
+            **filtered,
+            **{k: details.get(k) for k in ("surface_m2", "nb_rooms", "lat", "lon", "geo_precision")
+               if filtered.get(k) is None},
+        })
         if potential_dups:
             original = potential_dups[0]
             if set_duplicate_of(filtered["url"], original["id"]):

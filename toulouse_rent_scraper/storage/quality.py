@@ -45,12 +45,13 @@ def fill_rates(rows: List[Dict], fields: Iterable[str] = TRACKED_FIELDS) -> Dict
 def json_rate(rows: List[Dict]) -> Optional[float]:
     """
     Part des lignes extraites (au moins en partie) depuis un JSON embarqué — page de détail
-    (`json`, `json+dom`) ou page de recherche (`search_json`) ; None si aucune info.
+    (`json`, `json+dom`), page de recherche (`search_json`) ou API JSON (`api`, Bien'ici) ;
+    None si aucune info.
     """
     sources = [r.get("extraction_source") for r in rows if r.get("extraction_source")]
     if not sources:
         return None
-    return sum("json" in s for s in sources) / len(sources)
+    return sum("json" in s or s == "api" for s in sources) / len(sources)
 
 
 def check_fill_rates(
