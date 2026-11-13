@@ -888,10 +888,17 @@ body.doc-mode-active .btn-add-doc { display: inline-block; animation: reveal var
 .settings-form label { display: grid; gap: 6px; font-size: 0.8125rem; font-weight: 600; }
 .settings-form small { font-weight: 400; color: var(--text-muted); }
 .settings-form input[type="text"], .settings-form input[type="url"],
-.settings-form input[type="password"], .settings-form select {
+.settings-form input[type="password"], .settings-form input[type="number"],
+.settings-form input[type="date"], .settings-form select {
   font: inherit; font-weight: 400; padding: 8px 10px;
   border: 1px solid var(--border); border-radius: 8px; width: 100%; box-sizing: border-box;
 }
 .settings-form .settings-check { display: flex; align-items: center; gap: 8px; font-weight: 400; }
 .settings-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+/* Page « Critères » (15.5) */
+.settings-form h2 { margin: 8px 0 0; }
+.settings-form h2 small { font-size: 0.8125rem; }
+.settings-fieldset { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; display: grid; gap: 8px; }
+.settings-fieldset legend { font-size: 0.8125rem; font-weight: 600; padding: 0 4px; }
+.requirements-bar a.requirements-edit { margin-left: 6px; }
 .settings-stats { font-size: 0.875rem; padding-left: 18px; line-height: 1.7; }

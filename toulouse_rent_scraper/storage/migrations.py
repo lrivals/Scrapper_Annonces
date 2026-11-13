@@ -285,6 +285,43 @@ def _m9_photo_hash(cur: sqlite3.Cursor):
     cur.execute("CREATE INDEX IF NOT EXISTS idx_annonces_photo_hash ON annonces(photo_hash)")
 
 
+def _m10_seloger_canonical_urls(cur: sqlite3.Cursor):
+    """
+    Sprint 15.3 — URLs SeLoger sans paramètres (`?serp_view=…&search=…page%3D3…#…`).
+    Elles portaient la recherche et le numéro de page : une même annonce revue sur une autre
+    page devenait une nouvelle ligne. Les lignes qui retombent sur la même URL sont fusionnées
+    dans la plus ancienne (historique des prix, profils, retours, doublons rattachés).
+    """
+    rows = cur.execute(
+        "SELECT id, url FROM annonces WHERE site = 'SeLoger' AND (url LIKE '%?%' OR url LIKE '%#%') "
+        "ORDER BY id"
+    ).fetchall()
+    for annonce_id, url in rows:
+        clean = url.split("#", 1)[0].split("?", 1)[0]
+        keeper = cur.execute("SELECT id FROM annonces WHERE url = ?", (clean,)).fetchone()
+        if keeper is None:
+            cur.execute("UPDATE annonces SET url = ? WHERE id = ?", (clean, annonce_id))
+            continue
+        keep = keeper[0]
+        cur.execute("UPDATE price_history SET annonce_id = ? WHERE annonce_id = ?", (keep, annonce_id))
+        cur.execute(
+            "INSERT OR IGNORE INTO annonce_profiles (annonce_id, profile, distance_km, matched_at, score, "
+            "score_detail, excluded_reasons) SELECT ?, profile, distance_km, matched_at, score, "
+            "score_detail, excluded_reasons FROM annonce_profiles WHERE annonce_id = ?",
+            (keep, annonce_id),
+        )
+        cur.execute(
+            "INSERT OR IGNORE INTO annonce_feedback (annonce_id, profile, feedback, price, updated_at) "
+            "SELECT ?, profile, feedback, price, updated_at "
+            "FROM annonce_feedback WHERE annonce_id = ?",
+            (keep, annonce_id),
+        )
+        cur.execute("UPDATE annonces SET duplicate_of = ? WHERE duplicate_of = ?", (keep, annonce_id))
+        for table in ("annonce_profiles", "annonce_feedback"):
+            cur.execute(f"DELETE FROM {table} WHERE annonce_id = ?", (annonce_id,))
+        cur.execute("DELETE FROM annonces WHERE id = ?", (annonce_id,))
+
+
 MIGRATIONS = [
     _m1_base_schema,
     _m2_indexes_and_price_history,
@@ -295,6 +332,7 @@ MIGRATIONS = [
     _m7_profile_requirements,
     _m8_feedback,
     _m9_photo_hash,
+    _m10_seloger_canonical_urls,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)

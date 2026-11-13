@@ -62,7 +62,7 @@ def test_dispatch(argv, target):
 def test_enrich_site_filter_uses_db_site_name():
     with patch("scrapers.enricher.enrich_annonces", return_value={"enriched": 0, "total": 0, "errors": 0}) as enrich:
         main.main(["enrich", "--site", "leboncoin", "--limit", "3"])
-    enrich.assert_called_once_with(site_filter="LeBonCoin", limit=3, unattended=False)
+    enrich.assert_called_once_with(site_filter="LeBonCoin", limit=3, unattended=False, ids=None)
 
 
 def test_scrape_runs_pipeline_then_post_steps():

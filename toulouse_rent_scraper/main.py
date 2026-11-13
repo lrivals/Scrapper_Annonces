@@ -60,11 +60,16 @@ def build_parser() -> argparse.ArgumentParser:
     enrich.add_argument("--site", **site_opt)
     enrich.add_argument("--limit", type=int, help=f"Nombre max d'annonces (défaut {ENRICHMENT_DEFAULT_LIMIT})")
     enrich.add_argument("--unattended", action="store_true", help="Run planifié (captcha notifié)")
+    enrich.add_argument("--ids", help="Annonces précises (ids séparés par des virgules), revisitées même "
+                                      "si déjà enrichies — ex. pour vérifier des prix")
 
     check = sub.add_parser("check-links", help="Vérifier les liens via navigateur headless")
     check.add_argument("--limit", type=int, help="Nombre max d'annonces à vérifier")
 
-    sub.add_parser("purge", help="Marquer les annonces expirées (requêtes HEAD, peu fiable sur les SPA)")
+    purge = sub.add_parser("purge", help="Marquer les annonces expirées (requêtes HEAD, peu fiable sur les SPA)")
+    purge.add_argument("--delete-expired", action="store_true",
+                       help="Supprimer définitivement de la base les annonces déjà marquées retirées "
+                            "(par enrich / check-links), sans requêtes HEAD")
 
     sub.add_parser("rescore", help="Recalculer les scores d'intérêt (après un changement de poids)")
     sub.add_parser("notify-test", help="Envoyer une notification de test (vérifier .env)")
@@ -162,13 +167,17 @@ def _site_filter(site_keys: Optional[List[str]]) -> Optional[str]:
     return None
 
 
-def cmd_enrich(site_keys, limit, unattended: bool = False) -> dict:
+def cmd_enrich(site_keys, limit, unattended: bool = False, ids: Optional[str] = None) -> dict:
     from scrapers.enricher import enrich_annonces
 
+    id_list = [int(i) for i in (ids or "").replace(" ", "").split(",") if i.isdigit()]
+    if ids and not id_list:
+        raise SystemExit(f"--ids invalide : {ids!r} (ex. --ids 1035,1126)")
     summary = enrich_annonces(
         site_filter=_site_filter(site_keys),
         limit=limit if limit is not None else ENRICHMENT_DEFAULT_LIMIT,
         unattended=unattended,
+        ids=id_list or None,
     )
     logger.info(
         f"Enrichissement terminé : {summary['enriched']}/{summary['total']} enrichis, "
@@ -189,11 +198,15 @@ def cmd_check_links(limit):
     )
 
 
-def cmd_purge():
+def cmd_purge(delete_expired: bool = False):
     from storage.cleaner import check_expired_annonces
-    from storage.sqlite import init_db
+    from storage.sqlite import delete_expired_annonces, init_db
 
     init_db()
+    if delete_expired:
+        count = delete_expired_annonces()
+        logger.info(f"🗑️  {count} annonce(s) retirée(s) des sites supprimée(s) de la base")
+        return
     summary = check_expired_annonces()
     logger.info(f"Purge : {summary['expired']} expirées / {summary['checked']} vérifiées")
 
@@ -359,11 +372,11 @@ def main(argv: Optional[List[str]] = None):
         run_ui(port=args.port, open_browser=not args.no_browser)
     elif args.command == "enrich":
         with _exclusive():
-            cmd_enrich(args.sites, args.limit, unattended=args.unattended)
+            cmd_enrich(args.sites, args.limit, unattended=args.unattended, ids=args.ids)
     elif args.command == "check-links":
         cmd_check_links(args.limit)
     elif args.command == "purge":
-        cmd_purge()
+        cmd_purge(delete_expired=args.delete_expired)
     elif args.command == "export":
         cmd_export(args.format)
     elif args.command == "rescore":

@@ -8,11 +8,36 @@ import re
 from typing import List, Dict, Optional
 
 from scrapers.base import BaseScraper
+from scrapers.detail_extractors.seloger_json import (
+    canonical_url, classified_id_from_url, search_annonces_from_html,
+)
 from config import SELOGER_BASE_URL
 
 
 class SeLogerScraper(BaseScraper):
     """Scraper pour SeLoger.com."""
+
+    # --- Données structurées de la page de résultats (Sprint 15.3) ---
+
+    def page_json_annonces(self, page) -> List[Dict]:
+        """Annonces de l'état embarqué `__UFRN_FETCHER__` (prix, surface, pièces, photos…)."""
+        return search_annonces_from_html(page.content())
+
+    def annonce_key(self, url: Optional[str]) -> Optional[str]:
+        return classified_id_from_url(url) or canonical_url(url)
+
+    def card_url(self, card) -> Optional[str]:
+        try:
+            link = card.query_selector('a[data-testid="card-mfe-covering-link-testid"]') \
+                or card.query_selector("a[href]")
+            href = link.get_attribute("href") if link else None
+            return self.build_full_url(href) if href else None
+        except Exception:
+            return None
+
+    def build_full_url(self, relative_url: str) -> str:
+        # Sans la recherche ni le numéro de page : une annonce = une URL (voir canonical_url)
+        return canonical_url(super().build_full_url(relative_url))
 
     def site_name(self) -> str:
         return "SeLoger"

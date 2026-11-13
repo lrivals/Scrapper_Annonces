@@ -286,3 +286,29 @@ class TestDuplicates:
         insert_annonce(self.SELOGER)
         newer_id = _row(temp_db, self.SELOGER["url"])["id"]
         assert set_duplicate_of(self.LBC["url"], newer_id) is False
+
+
+def test_delete_expired_annonces(temp_db):
+    """Annonces retirées des sites : supprimées avec leurs lignes liées ; masquées et actives gardées."""
+    import sqlite3
+    from storage.sqlite import delete_expired_annonces, init_db, insert_annonce, upsert_annonce_profile
+
+    init_db()
+    for i in range(1, 5):
+        url = f"https://www.seloger.com/annonce/{i}"
+        insert_annonce({"site": "SeLoger", "title": f"A{i}", "price": 600, "location_raw": "Toulouse", "url": url})
+        upsert_annonce_profile(url, "blagnac", 3.0)
+    con = sqlite3.connect(temp_db)
+    con.execute("UPDATE annonces SET status = 'expired' WHERE id IN (1, 2)")
+    con.execute("UPDATE annonces SET status = 'hidden' WHERE id = 3")
+    con.execute("UPDATE annonces SET duplicate_of = 1 WHERE id = 4")      # doublon d'une retirée
+    con.execute("INSERT INTO annonce_feedback (annonce_id, profile, feedback) VALUES (1, 'blagnac', 'favorite')")
+    con.commit()
+
+    assert delete_expired_annonces() == 2
+    assert [r[0] for r in con.execute("SELECT id FROM annonces ORDER BY id")] == [3, 4]
+    assert con.execute("SELECT duplicate_of FROM annonces WHERE id = 4").fetchone() == (None,)
+    for table in ("annonce_profiles", "price_history", "annonce_feedback"):
+        assert con.execute(f"SELECT COUNT(*) FROM {table} WHERE annonce_id IN (1, 2)").fetchone() == (0,)
+    assert delete_expired_annonces() == 0
+    con.close()

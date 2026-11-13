@@ -86,8 +86,10 @@ python main.py scrape --profile blagnac            # un profil (répétable)
 python main.py scrape --enrich --limit 20          # + enrichissement des nouvelles annonces
 python main.py scrape --export csv                 # + export CSV (ou json)
 python main.py enrich [--site seloger] [--limit 20]  # enrichir les annonces en attente
+python main.py enrich --ids 1035,1126              # revisiter des annonces précises (ex. prix à vérifier)
 python main.py check-links [--limit 50]            # vérifier les liens (Chromium headless)
 python main.py purge                               # vérification HEAD (peu fiable sur SeLoger/LBC)
+python main.py purge --delete-expired              # supprimer de la base les annonces retirées des sites
 python main.py export csv|json                     # export des annonces actives
 python main.py rescore                             # recalculer les scores (après un changement de poids)
 python main.py weights [--apply|--reset]           # poids du score appris de vos ⭐ / 📞 / 👎
@@ -144,8 +146,14 @@ baisse de prix ou disparaît du site est toujours notifié.
 
 ### Critères éliminatoires
 
-Distincts du score : `requirements=Requirements(...)` dans le profil (`config.py`), par exemple
+Distincts du score. Le plus simple : la page **Critères** de l'interface (un onglet par profil :
+surface minimale, meublé, DPE maximal, pas de rez-de-chaussée, disponibilité, APL, colocation, types
+de bail). Enregistrer recalcule aussitôt les exclusions ; les valeurs vont dans
+`data/profile_requirements.json`, prioritaire sur `config.py` (« Revenir aux critères de config.py »
+le retire pour le profil). Sinon, dans le profil (`config.py`) : `requirements=Requirements(...)`, par exemple
 `Requirements(apl_required=True, no_ground_floor=True, min_surface_m2=18, available_before="2027-01-15")`.
+Disponibilité, APL, colocation et type de bail sont lus dans la description : ils n'agissent
+qu'avec l'analyse LLM activée.
 Une annonce qui en viole un est **exclue du profil** : masquée par défaut dans l'interface (filtre
 « Critères » pour les revoir, motif ⛔ sur la carte), absente des notifications et des rapports.
 Une information inconnue n'exclut jamais. Recalculé à chaque `rescore` : rien n'est perdu en
@@ -212,7 +220,7 @@ toulouse_rent_scraper/
 │   ├── routes.py          # Vues (sans SQL)
 │   ├── security.py        # CSRF, redirections sûres
 │   ├── export.py          # Dossier de candidature Markdown
-│   ├── templates/index.html
+│   ├── templates/         # index, requirements (critères), weights, llm_settings
 │   └── static/            # app.css, app.js
 │
 ├── scrapers/              # Scrapers par site
@@ -223,10 +231,12 @@ toulouse_rent_scraper/
 │   ├── seloger.py
 │   ├── leboncoin.py
 │   ├── enricher.py        # Enrichissement (page de détail)
-│   └── detail_extractors/
+│   └── detail_extractors/ # lbc_json.py, seloger_json.py (JSON embarqué), extraction DOM de secours
 │
 ├── filters/               # Filtres métier
-│   └── price_and_distance.py
+│   ├── price_and_distance.py
+│   ├── requirements.py    # Critères éliminatoires (config.py ou page « Critères »)
+│   └── photo_duplicates.py
 │
 ├── storage/               # Stockage SQLite
 │   ├── sqlite.py          # Connexion, écritures (annonces, profils, historique de prix)
@@ -402,7 +412,13 @@ complet : les pages LBC embarquent tous leurs messages d'erreur dans leurs scrip
 Le contrôle de santé compare le taux de remplissage des champs clés aux seuils de
 `QUALITY_MIN_FILL_RATES` (`config.py`). Après un scrape, il juge les fiches lues depuis le JSON de la
 page de recherche, **sans** les champs que cette page ne fournit pas (`QUALITY_SEARCH_SKIP_FIELDS` :
-la recherche LBC n'a pas de description, contrôlée après `enrich`). Détail : `python main.py quality`.
+les recherches LBC et SeLoger n'ont pas de description complète, contrôlée après `enrich`). Détail : `python main.py quality`.
+
+Si le log d'un scrape SeLoger dit `JSON ignoré` ou n'affiche plus `N annonces lues depuis le JSON de
+la page`, l'état embarqué a changé : il est dans `window["__UFRN_FETCHER__"]` (recherche) et
+`window["__UFRN_LIFECYCLE_SERVERREQUEST__"]` (page d'annonce), lus par
+`scrapers/detail_extractors/seloger_json.py` (structure décrite dans `docs/SPRINT_15.md`, 15.3).
+En attendant, les cartes DOM prennent le relais.
 
 ### Problème : Aucune coordonnée trouvée pour une adresse
 

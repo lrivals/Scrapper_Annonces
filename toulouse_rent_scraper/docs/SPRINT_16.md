@@ -51,8 +51,9 @@ Mais :
 | 16.6 | Tests | 🔲 | Ordre du pipeline, sélection, budget, CLI |
 
 Hors périmètre :
-- **15.3 SeLoger JSON embarqué** : reste au Sprint 15 ; une fois fait, une partie des
-  visites SeLoger deviendra inutile (même mécanisme que `LBC_SEARCH_JSON_SKIPS_DETAIL`).
+- **15.3 SeLoger JSON embarqué** : livré (Sprint 15). Comme pour LBC, la recherche SeLoger n'a
+  qu'une description tronquée (et ni DPE ni GPS) : la visite de la page de détail reste
+  nécessaire, mais elle est lue depuis le JSON (`json`), plus fiable que le DOM.
 - **Bien'ici** : l'API donne déjà l'annonce entière (`Listing.authoritative` → `done`),
   aucune visite nécessaire.
 - **Visites en parallèle** : refusé, trop visible pour DataDome.

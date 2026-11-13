@@ -238,3 +238,143 @@ def test_map_data_hides_excluded(ui_client, strict_enac):
     assert urls == {"https://a/ok"}
     urls = {l["url"] for l in ui_client.get("/api/map-data?profile=enac&excl=show").get_json()["listings"]}
     assert urls == {"https://a/ok", "https://a/rdc"}
+
+
+# ---------------------------------------------------------------------------
+# Critères saisis dans l'interface (page « Critères »)
+# ---------------------------------------------------------------------------
+
+from filters.requirements import (  # noqa: E402
+    current_requirements, parse_requirements, requirements_from_dict, requirements_source,
+    reset_requirements, save_requirements,
+)
+
+
+class TestParseForm:
+
+    def test_full_form(self):
+        req, errors = parse_requirements({
+            "available_before": "2026-12-01", "apl_required": "on", "no_ground_floor": "on",
+            "min_surface_m2": "25,5", "furnished": "no", "no_colocation": "on",
+            "excluded_lease_types": ["saisonnier", "mobilite", "saisonnier"], "max_dpe": "e",
+        })
+        assert errors == []
+        assert req == Requirements(
+            available_before="2026-12-01", apl_required=True, no_ground_floor=True, min_surface_m2=25.5,
+            furnished=False, no_colocation=True, excluded_lease_types=("saisonnier", "mobilite"), max_dpe="E",
+        )
+
+    def test_empty_form_means_no_requirement(self):
+        req, errors = parse_requirements({"furnished": "", "max_dpe": "", "min_surface_m2": ""})
+        assert (req, errors) == (Requirements(), [])
+        assert req.is_empty()
+
+    def test_dpe_g_excludes_nothing(self):
+        assert parse_requirements({"max_dpe": "G"})[0].max_dpe is None
+
+    @pytest.mark.parametrize("form,fragment", [
+        ({"available_before": "01/12/2026"}, "date"),
+        ({"min_surface_m2": "abc"}, "surface"),
+        ({"min_surface_m2": "-3"}, "surface"),
+        ({"max_dpe": "Z"}, "DPE"),
+        ({"excluded_lease_types": ["colocation"]}, "bail"),
+    ])
+    def test_invalid_values_reported(self, form, fragment):
+        _, errors = parse_requirements(form)
+        assert len(errors) == 1 and fragment in errors[0]
+
+    def test_from_dict_ignores_garbage(self):
+        req = requirements_from_dict({"min_surface_m2": "x", "max_dpe": "Q", "furnished": True,
+                                      "no_ground_floor": True, "excluded_lease_types": None})
+        assert req == Requirements(furnished=True, no_ground_floor=True)
+
+
+class TestStoredRequirements:
+
+    def test_file_overrides_config_and_reset(self, strict_enac):
+        profile = strict_enac(no_ground_floor=True)
+        assert requirements_source(profile) == "config.py"
+        assert current_requirements(profile) == Requirements(no_ground_floor=True)
+
+        save_requirements("enac", Requirements(min_surface_m2=20, max_dpe="E"))
+        assert requirements_source(profile) == "interface"
+        assert current_requirements(profile) == Requirements(min_surface_m2=20.0, max_dpe="E")
+        # « aucun critère » saisi dans l'interface prime aussi sur config.py
+        save_requirements("enac", Requirements())
+        assert current_requirements(profile) == Requirements()
+
+        assert reset_requirements("enac") is True
+        assert current_requirements(profile) == Requirements(no_ground_floor=True)
+        assert not config.REQUIREMENTS_FILE.exists()
+        assert reset_requirements("enac") is False
+
+    def test_profiles_are_independent(self):
+        save_requirements("enac", Requirements(no_colocation=True))
+        save_requirements("blagnac", Requirements(min_surface_m2=40))
+        reset_requirements("enac")
+        assert current_requirements(config.SEARCH_PROFILES["blagnac"]).min_surface_m2 == 40
+        assert requirements_source(config.SEARCH_PROFILES["enac"]) == "config.py"
+
+    def test_corrupt_file_falls_back_to_config(self, strict_enac):
+        profile = strict_enac(apl_required=True)
+        config.REQUIREMENTS_FILE.write_text("{pas du json", encoding="utf-8")
+        assert current_requirements(profile) == Requirements(apl_required=True)
+
+    def test_rescore_uses_saved_requirements(self, temp_db, strict_enac):
+        init_db()
+        strict_enac()
+        _add("https://a/rdc", floor=0)
+        save_requirements("enac", Requirements(no_ground_floor=True))
+        rescore()
+        assert _excluded(temp_db)[("https://a/rdc", "enac")] == ["rez-de-chaussée"]
+
+
+@pytest.fixture
+def csrf_client(ui_client):
+    ui_client.get("/")
+    with ui_client.session_transaction() as sess:
+        token = sess["csrf_token"]
+    return ui_client, token
+
+
+class TestRequirementsPage:
+
+    def test_page_shows_current_values(self, csrf_client, strict_enac):
+        c, _ = csrf_client
+        strict_enac(min_surface_m2=18, furnished=True)
+        html = c.get("/settings/requirements?profile=enac").get_data(as_text=True)
+        assert 'name="min_surface_m2"' in html and 'value="18"' in html
+        assert '<option value="yes" selected>' in html
+        assert "source : config.py" in html
+        assert 'href="/settings/requirements?profile=enac"' in c.get("/?profile=enac").get_data(as_text=True)
+
+    def test_save_applies_immediately(self, csrf_client, temp_db, strict_enac):
+        c, token = csrf_client
+        strict_enac()
+        _add("https://a/rdc", floor=0)
+        _add("https://a/ok", floor=2)
+        rescore()
+        resp = c.post("/settings/requirements", data={
+            "csrf_token": token, "profile": "enac", "action": "save", "no_ground_floor": "on",
+        })
+        assert resp.status_code == 302 and "1+annonce+exclue" in resp.location
+        assert _excluded(temp_db)[("https://a/rdc", "enac")] == ["rez-de-chaussée"]
+        html = c.get("/?profile=enac").get_data(as_text=True)
+        assert "https://a/rdc" not in html and "pas de rez-de-chaussée" in html
+
+        c.post("/settings/requirements", data={"csrf_token": token, "profile": "enac", "action": "reset"})
+        assert _excluded(temp_db)[("https://a/rdc", "enac")] is None
+
+    def test_invalid_form_not_saved(self, csrf_client):
+        c, token = csrf_client
+        resp = c.post("/settings/requirements", data={
+            "csrf_token": token, "profile": "enac", "action": "save", "min_surface_m2": "beaucoup",
+        })
+        assert "flash=err" in resp.location
+        assert not config.REQUIREMENTS_FILE.exists()
+
+    def test_unknown_profile_and_csrf(self, csrf_client):
+        c, token = csrf_client
+        resp = c.post("/settings/requirements", data={"csrf_token": token, "profile": "x", "action": "save"})
+        assert "flash=err" in resp.location
+        assert c.post("/settings/requirements", data={"profile": "enac", "action": "save"}).status_code == 403

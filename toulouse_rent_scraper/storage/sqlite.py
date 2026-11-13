@@ -521,6 +521,76 @@ def get_pending_annonces(site_filter: Optional[str] = None, limit: int = 50) -> 
     return result
 
 
+def get_annonces_by_ids(ids: List[int]) -> List[Dict]:
+    """Annonces données (actives ou non, quel que soit leur état d'enrichissement), dans l'ordre des ids."""
+    if not ids:
+        return []
+    with connect() as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            f"SELECT * FROM annonces WHERE id IN ({','.join('?' * len(ids))})", list(ids)
+        ).fetchall()
+    by_id = {row["id"]: dict(row) for row in rows}
+    return [by_id[i] for i in ids if i in by_id]
+
+
+def correct_price(annonce_id: int, price: int) -> Optional[int]:
+    """
+    Prix lu sur la page de l'annonce, différent de celui en base (ex. prix de carte mal lu) :
+    remplacé et ajouté à l'historique. Retourne l'ancien prix, ou None si rien n'a changé.
+    """
+    now = datetime.now().isoformat()
+    with connect() as conn:
+        row = conn.execute("SELECT price FROM annonces WHERE id = ?", (annonce_id,)).fetchone()
+        if row is None or row[0] == price:
+            return None
+        conn.execute("UPDATE annonces SET price = ? WHERE id = ?", (price, annonce_id))
+        _record_price(conn.cursor(), annonce_id, price, now)
+        conn.commit()
+    return row[0]
+
+
+def linked_profiles(annonce_id: int) -> List[str]:
+    with connect() as conn:
+        return [r[0] for r in conn.execute(
+            "SELECT profile FROM annonce_profiles WHERE annonce_id = ? ORDER BY profile", (annonce_id,)
+        )]
+
+
+def unlink_profiles(annonce_id: int, profile_keys: List[str]) -> int:
+    """Retire l'annonce des profils donnés (elle n'en respecte plus le budget). Retourne le nombre retiré."""
+    if not profile_keys:
+        return 0
+    with connect() as conn:
+        cur = conn.execute(
+            f"DELETE FROM annonce_profiles WHERE annonce_id = ? AND profile IN ({','.join('?' * len(profile_keys))})",
+            [annonce_id, *profile_keys],
+        )
+        conn.commit()
+        return cur.rowcount
+
+
+def delete_expired_annonces(site: Optional[str] = None) -> int:
+    """
+    Supprime définitivement les annonces retirées des sites (status 'expired') et leurs lignes
+    liées (profils, historique de prix, retours). Les doublons qui leur étaient rattachés
+    redeviennent autonomes. Les annonces masquées ('hidden') sont gardées : elles empêchent
+    une annonce écartée de revenir. Une annonce supprimée qui réapparaît revient comme nouvelle.
+    Retourne le nombre d'annonces supprimées.
+    """
+    query = "SELECT id FROM annonces WHERE status = 'expired'" + (" AND site = ?" if site else "")
+    with connect() as conn:
+        ids = [r[0] for r in conn.execute(query, [site] if site else [])]
+        if not ids:
+            return 0
+        marks = ",".join("?" * len(ids))
+        conn.execute(f"UPDATE annonces SET duplicate_of = NULL WHERE duplicate_of IN ({marks})", ids)
+        for table in ("annonce_profiles", "price_history", "annonce_feedback"):
+            conn.execute(f"DELETE FROM {table} WHERE annonce_id IN ({marks})", ids)
+        conn.execute(f"DELETE FROM annonces WHERE id IN ({marks})", ids)
+    return len(ids)
+
+
 def clear_db() -> int:
     """
     Supprime toutes les annonces de la base de données.

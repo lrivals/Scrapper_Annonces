@@ -155,7 +155,7 @@ def rescore(profile_keys: Optional[List[str]] = None) -> int:
     Recalcule le score de toutes les annonces des profils donnés (défaut : tous).
     La médiane €/m² est prise sur les annonces actives du profil. Retourne le nombre d'annonces notées.
     """
-    from filters.requirements import exclusion_reasons
+    from filters.requirements import current_requirements, exclusion_reasons
     from storage.sqlite import annonces_for_scoring, save_scores
 
     from analysis.weights import current_weights
@@ -164,6 +164,7 @@ def rescore(profile_keys: Optional[List[str]] = None) -> int:
     count = 0
     for key in profile_keys or list(SEARCH_PROFILES):
         profile = SEARCH_PROFILES[key]
+        requirements = current_requirements(profile)   # interface, sinon config.py
         rows = annonces_for_scoring(key)
         med = median_price_per_m2(r for r in rows if (r.get("status") or "active") == "active")
         updates = []
@@ -171,7 +172,7 @@ def rescore(profile_keys: Optional[List[str]] = None) -> int:
         for row in rows:
             score, detail = compute_score(row, row.get("distance_km"), profile, med, weights)
             # Critères éliminatoires (15.5) : recalculés à chaque fois, donc réversibles
-            reasons = exclusion_reasons(row, profile.requirements)
+            reasons = exclusion_reasons(row, requirements)
             excluded += bool(reasons)
             updates.append((
                 row["id"], score, json.dumps(detail),

@@ -64,12 +64,14 @@ def is_expired_content(text: str) -> bool:
 def page_shows_expired(page) -> bool:
     """
     True si la page ouverte montre une annonce retirée.
-    Une page dont le JSON embarqué contient l'annonce (LBC) est en ligne, quel que soit le texte.
+    Une page dont le JSON embarqué contient l'annonce (LBC, SeLoger) est en ligne, quel que
+    soit le texte.
     """
-    from scrapers.detail_extractors.lbc_json import extract_from_html
+    from scrapers.detail_extractors import lbc_json, seloger_json
 
     try:
-        if extract_from_html(page.content()):
+        html = page.content()
+        if lbc_json.extract_from_html(html) or seloger_json.extract_from_html(html):
             return False
     except Exception:
         pass

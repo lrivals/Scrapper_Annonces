@@ -245,7 +245,7 @@ def test_search_health_rows():
     alerts = check_fill_rates({"LeBonCoin": search_health_rows(cards_only, "LeBonCoin")})
     assert any("JSON" in a for a in alerts)
 
-    assert search_health_rows(cards_only, "SeLoger") == []   # site sans JSON de recherche : pas jugé
+    assert search_health_rows(cards_only, "SiteSansJson") == []   # site sans JSON de recherche : pas jugé
 
 
 def test_search_health_ignores_description_absent_from_search_json():
