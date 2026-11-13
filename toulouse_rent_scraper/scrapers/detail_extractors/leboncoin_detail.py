@@ -1,6 +1,12 @@
 # scrapers/detail_extractors/leboncoin_detail.py
 # =========================
 # Extraction des détails d'une annonce LeBonCoin
+#
+# Ordre (Sprint 15.1) :
+#   1. JSON embarqué `__NEXT_DATA__` (lbc_json.py) — fiable, typé, avec GPS ;
+#   2. regex sur la description pour les champs que le JSON n'a pas (charges, caution) ;
+#   3. DOM + regex sur la page (extraction historique) si le JSON est absent.
+# `field_sources` indique d'où vient chaque champ rempli.
 # =========================
 
 import re
@@ -8,6 +14,7 @@ import time
 from typing import Optional
 
 from scrapers.browser import PlaywrightTimeoutError
+from scrapers.detail_extractors.lbc_json import extract_from_html
 
 from utils.logger import setup_logger
 
@@ -68,10 +75,10 @@ def _regex_float(pattern: str, text: str) -> Optional[float]:
     return None
 
 
-def extract_detail(page, url: str) -> dict:
+def _extract_from_dom(page, url: str) -> dict:
     """
-    Extrait les données de détail d'une annonce LeBonCoin.
-    La navigation est gérée par l'appelant (enricher.py).
+    Extraction historique (Sprint 3) : sélecteurs CSS puis regex sur le texte de la page.
+    Utilisée en secours quand le JSON `__NEXT_DATA__` est absent ou inexploitable.
     """
     result: dict = {}
 
@@ -241,7 +248,11 @@ def extract_detail(page, url: str) -> dict:
         result["deposit"] = deposit
 
         # --- Meublé ---
-        furnished = bool(re.search(r"meublé", page_text, re.IGNORECASE))
+        # « non meublé » contient « meublé » : à tester en premier
+        if re.search(r"non[\s-]+meubl", page_text, re.IGNORECASE):
+            furnished = False
+        else:
+            furnished = bool(re.search(r"meublé", page_text, re.IGNORECASE))
         result["furnished"] = furnished
 
         # --- Type de contact ---
@@ -307,4 +318,103 @@ def extract_detail(page, url: str) -> dict:
         result["enrichment_status"] = "error"
         result["error_detail"] = str(e)[:200]
 
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Extraction JSON d'abord (Sprint 15.1)
+# ---------------------------------------------------------------------------
+
+# Sans au moins un de ces champs, le JSON est jugé inexploitable → DOM
+_CORE_FIELDS = ("surface_m2", "nb_rooms", "description")
+
+# Champs que le DOM peut compléter quand le JSON est partiel
+_DOM_FIELDS = (
+    "surface_m2", "nb_rooms", "nb_bedrooms", "floor", "description", "charges",
+    "deposit", "furnished", "dpe_rating", "photos", "publisher_type", "published_at",
+)
+
+
+def _charges_from_text(text: Optional[str]) -> Optional[int]:
+    if not text:
+        return None
+    charges = _regex_int(r"(\d+)\s*€[^0-9€\n.]{0,25}charges", text)
+    if charges is None:
+        charges = _regex_int(r"charges[^0-9€\n.]{0,25}(\d+)\s*€", text)
+    return charges
+
+
+def _deposit_from_text(text: Optional[str]) -> Optional[int]:
+    if not text:
+        return None
+    deposit = _regex_int(r"(\d+)\s*€[^0-9€\n.]{0,25}(?:caution|d[eé]p[oô]t|garantie)", text)
+    if deposit is None:
+        deposit = _regex_int(r"(?:caution|d[eé]p[oô]t|garantie)[^0-9€\n.]{0,25}(\d+)\s*€", text)
+    return deposit
+
+
+def _from_json(page) -> Optional[dict]:
+    try:
+        html = page.content()
+    except Exception:
+        return None
+    try:
+        return extract_from_html(html)
+    except Exception as e:  # JSON inattendu : on ne casse pas l'enrichissement
+        logger.warning(f"JSON LBC illisible : {e}")
+        return None
+
+
+def _sources(result: dict, source: str, sources: dict) -> dict:
+    for key, value in result.items():
+        if value is not None and key not in sources and key not in ("enrichment_status", "error_detail"):
+            sources[key] = source
+    return sources
+
+
+def extract_detail(page, url: str) -> dict:
+    """
+    Extrait les données de détail d'une annonce LeBonCoin.
+    La navigation est gérée par l'appelant (enricher.py).
+    """
+    parsed = _from_json(page)
+    if parsed is not None:
+        parsed.pop("price", None)  # le prix vient de la recherche (historique des prix)
+
+    if parsed and any(parsed.get(f) is not None for f in _CORE_FIELDS):
+        sources = _sources(parsed, "json", {})
+        description = parsed.get("description")
+        if parsed.get("charges") is None and parsed.get("charges_included") is not True:
+            parsed["charges"] = _charges_from_text(description)
+            if parsed["charges"] is not None:
+                sources["charges"] = "description"
+        if parsed.get("deposit") is None:
+            parsed["deposit"] = _deposit_from_text(description)
+            if parsed["deposit"] is not None:
+                sources["deposit"] = "description"
+        parsed["field_sources"] = sources
+        parsed["extraction_source"] = "json"
+        parsed["enrichment_status"] = "done"
+        logger.debug(
+            f"LBC JSON pour {url}: surface={parsed.get('surface_m2')}, "
+            f"pièces={parsed.get('nb_rooms')}, DPE={parsed.get('dpe_rating')}, "
+            f"GPS={parsed.get('geo_precision')}"
+        )
+        return parsed
+
+    # Secours : extraction DOM, complétée par ce que le JSON partiel aurait apporté
+    result = _extract_from_dom(page, url)
+    if result.get("enrichment_status") != "done":
+        return result
+    sources = _sources({k: result.get(k) for k in _DOM_FIELDS}, "dom", {})
+    if parsed:
+        for key, value in parsed.items():
+            if value is not None and result.get(key) is None:
+                result[key] = value
+                sources[key] = "json"
+        result["extraction_source"] = "json+dom"
+    else:
+        result["extraction_source"] = "dom"
+        logger.info(f"LBC : pas de JSON __NEXT_DATA__ exploitable, extraction DOM pour {url}")
+    result["field_sources"] = sources
     return result

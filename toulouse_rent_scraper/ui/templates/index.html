@@ -25,6 +25,7 @@
       <div class="count" id="annonce-count">{{ total }} annonce{{ 's' if total != 1 else '' }}</div>
       <div class="action-bar">
         <button class="btn-scrape" id="btn-scrape" onclick="startScraping()">Lancer le scraping</button>
+        <a href="/settings/llm" class="btn-view" title="Brancher votre propre LLM pour analyser les descriptions">Connexion LLM</a>
         <form method="POST" action="/clear-db" onsubmit="return confirmClear(this)">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="confirm" value="">
@@ -149,6 +150,7 @@
           <a href="{{ a.url }}" target="_blank" class="card-title">
             {{ a.title or 'Annonce sans titre' }}
           </a>
+          {% if a.summary %}<p class="card-summary" title="Résumé de la description (analyse automatique)">{{ a.summary }}</p>{% endif %}
 
           <div class="card-meta">
             <div class="meta-item" title="Distance de {{ profile.target_address }}">
@@ -175,6 +177,34 @@
               {{ a.surface_m2 or '—' }} m²
             </div>
           </div>
+
+          {# Sprint 15.1 — caractéristiques issues de l'enrichissement #}
+          {% set feats = [] %}
+          {% if a.nb_rooms %}{% set _ = feats.append(('T' ~ a.nb_rooms, 'Pièces')) %}{% endif %}
+          {% if a.dpe_rating %}{% set _ = feats.append(('DPE ' ~ a.dpe_rating, 'Diagnostic énergétique')) %}{% endif %}
+          {% if a.ges_rating %}{% set _ = feats.append(('GES ' ~ a.ges_rating, 'Émissions de gaz à effet de serre')) %}{% endif %}
+          {% if a.furnished is not none and a.enrichment_status == 'done' %}{% set _ = feats.append(('Meublé' if a.furnished else 'Vide', 'Meublé / non meublé')) %}{% endif %}
+          {% if a.charges_included %}{% set _ = feats.append(('CC', 'Prix charges comprises')) %}{% elif a.charges %}{% set _ = feats.append(('+' ~ a.charges ~ ' € ch.', 'Charges mensuelles')) %}{% endif %}
+          {% if a.floor is not none %}{% set _ = feats.append(('RDC' if a.floor == 0 else 'Ét. ' ~ a.floor, 'Étage')) %}{% endif %}
+          {% if a.elevator %}{% set _ = feats.append(('Ascenseur', 'Ascenseur')) %}{% endif %}
+          {% if a.geo_precision == 'exact' %}{% set _ = feats.append(('📍 GPS', 'Position exacte fournie par l’annonce')) %}{% endif %}
+          {# Sprint 15.4 — informations tirées de la description par l'analyse LLM #}
+          {% if a.available_from == 'immediate' %}{% set _ = feats.append(('Dispo immédiate', 'Disponibilité')) %}
+          {% elif a.available_from %}{% set _ = feats.append(('Dispo ' ~ a.available_from[8:10] ~ '/' ~ a.available_from[5:7], 'Disponible le ' ~ a.available_from)) %}{% endif %}
+          {% if a.lease_type in ('mobilite', 'etudiant', 'colocation', 'saisonnier') %}{% set _ = feats.append(({'mobilite': 'Bail mobilité', 'etudiant': 'Bail étudiant', 'colocation': 'Colocation', 'saisonnier': 'Saisonnier'}[a.lease_type], 'Type de bail')) %}
+          {% elif a.colocation %}{% set _ = feats.append(('Colocation', 'Logement en colocation')) %}{% endif %}
+          {% if a.apl_ok %}{% set _ = feats.append(('APL ✓', 'APL acceptées')) %}{% elif a.apl_ok == false %}{% set _ = feats.append(('APL ✗', 'APL refusées')) %}{% endif %}
+          {% if a.visale_ok %}{% set _ = feats.append(('Visale ✓', 'Garantie Visale acceptée')) %}{% elif a.visale_ok == false %}{% set _ = feats.append(('Visale ✗', 'Garantie Visale refusée')) %}{% endif %}
+          {% if a.agency_fees %}{% set _ = feats.append(('Frais ' ~ a.agency_fees ~ ' €', 'Honoraires d’agence à la charge du locataire')) %}{% endif %}
+          {% if feats or a.scam_risk in ('moyen', 'eleve') %}
+          <div class="card-feats">
+            {% if a.scam_risk in ('moyen', 'eleve') %}
+            <span class="feat feat-warn {{ 'feat-danger' if a.scam_risk == 'eleve' else '' }}"
+                  title="Risque d’arnaque {{ 'élevé' if a.scam_risk == 'eleve' else 'moyen' }} : {{ (a.scam_flags | flags) | join(' · ') }}">⚠️ {{ 'Arnaque ?' if a.scam_risk == 'eleve' else 'À vérifier' }}</span>
+            {% endif %}
+            {% for label, title in feats %}<span class="feat" title="{{ title }}">{{ label }}</span>{% endfor %}
+          </div>
+          {% endif %}
         </div>
 
         <div class="card-footer">

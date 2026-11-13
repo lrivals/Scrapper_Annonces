@@ -35,6 +35,9 @@ from utils.logger import setup_logger
 class BaseScraper(ABC):
     """Classe de base pour tous les scrapers d'annonces immobilières."""
 
+    # Longue pause avant cette recherche dans un run multi-recherches (anti-bot)
+    requires_cooldown = True
+
     def __init__(self, profile: Optional[SearchProfile] = None, unattended: bool = False):
         self.profile = profile or SEARCH_PROFILES[DEFAULT_PROFILE]
         # Mode planifié : attente de captcha plus longue (le temps de voir la notification)
@@ -104,6 +107,30 @@ class BaseScraper(ABC):
     def warmup_urls(self) -> List[str]:
         """Recherches visitées avant la recherche scannée (cooldown entre chaque). Défaut : aucune."""
         return []
+
+    # --- Données structurées de la page de résultats (Sprint 15.2) ---
+
+    def page_json_annonces(self, page) -> List[Dict]:
+        """
+        Annonces lues dans les données structurées de la page de résultats (JSON embarqué),
+        plus complètes que les cartes. Défaut : aucune (extraction par cartes seulement).
+        """
+        return []
+
+    def annonce_key(self, url: Optional[str]) -> Optional[str]:
+        """Identifiant stable d'une annonce à partir de son URL (jointure JSON ↔ cartes)."""
+        return url
+
+    def card_url(self, card) -> Optional[str]:
+        """URL d'une carte sans l'extraire entièrement (lien vers l'annonce)."""
+        try:
+            href = card.get_attribute("href")
+            if not href:
+                link = card.query_selector("a[href]")
+                href = link.get_attribute("href") if link else None
+            return self.build_full_url(href) if href else None
+        except Exception:
+            return None
 
     def blocked_domains(self) -> List[str]:
         """Domaines indiquant un blocage (DataDome, captcha, etc.)."""
@@ -308,8 +335,37 @@ class BaseScraper(ABC):
             self.logger.info(f"  Selecteur {best_selector} retenu ({len(best_cards)} cartes)")
         return best_selector, best_cards
 
+    # Part minimale des cartes affichées présentes dans le JSON : en dessous, le JSON
+    # est périmé (pagination côté client) ou ne décrit pas la liste affichée
+    JSON_MIN_CARD_OVERLAP = 0.5
+
+    def _json_annonces_for_cards(self, page, cards) -> List[Dict]:
+        """JSON de la page, s'il correspond bien aux cartes affichées ; sinon liste vide."""
+        try:
+            json_annonces = self.page_json_annonces(page)
+        except Exception as e:
+            self.logger.warning(f"  Données JSON de la page illisibles : {e}")
+            return []
+        if not json_annonces:
+            return []
+        if not cards:
+            return json_annonces
+        json_keys = {self.annonce_key(a.get("url")) for a in json_annonces}
+        card_keys = [k for k in (self.annonce_key(self.card_url(c)) for c in cards) if k]
+        if card_keys:
+            overlap = sum(k in json_keys for k in card_keys) / len(card_keys)
+            if overlap < self.JSON_MIN_CARD_OVERLAP:
+                self.logger.info(
+                    f"  JSON ignoré : {overlap:.0%} des cartes affichées y figurent (page périmée ?)"
+                )
+                return []
+        return json_annonces
+
     def _scrape_current_page(self, page, selector: str, page_num: int):
-        """Scrape les cartes de la page courante."""
+        """
+        Scrape la page courante : annonces du JSON embarqué si disponible et cohérent avec
+        les cartes affichées, puis cartes DOM pour les annonces absentes du JSON.
+        """
         self.logger.info(f"Scraping page {page_num}")
 
         # Premier scroll pour déclencher le chargement initial
@@ -317,21 +373,32 @@ class BaseScraper(ABC):
         time.sleep(random.uniform(1, 2))
 
         selector, cards = self._best_selector_cards(page, selector)
-        if not cards:
+        json_annonces = self._json_annonces_for_cards(page, cards)
+        if not cards and not json_annonces:
             self.logger.warning(f"Aucune annonce trouvee sur la page {page_num}")
             return
 
+        json_keys = set()
+        for annonce in json_annonces:
+            self.results.append(annonce)
+            json_keys.add(self.annonce_key(annonce.get("url")))
+        if json_annonces:
+            self.logger.info(f"  {len(json_annonces)} annonces lues depuis le JSON de la page")
+
         self.logger.debug(f"  {len(cards)} cartes trouvees")
 
-        if cards:
+        if cards and not json_annonces:
             try:
                 sample_html = cards[0].evaluate("el => el.outerHTML")
                 self.logger.debug(f"HTML premiere carte:\n{sample_html[:2000]}")
             except Exception:
                 pass
 
-        # Extraire chaque carte en la scrollant dans le viewport d'abord
+        # Extraire chaque carte absente du JSON, en la scrollant dans le viewport d'abord
+        from_cards = 0
         for idx, card in enumerate(cards, 1):
+            if json_keys and self.annonce_key(self.card_url(card)) in json_keys:
+                continue
             try:
                 # Scroller la carte dans le viewport pour déclencher le lazy-loading
                 card.scroll_into_view_if_needed()
@@ -340,11 +407,14 @@ class BaseScraper(ABC):
                 annonce = self.extract_annonce(card)
                 if annonce:
                     self.results.append(annonce)
+                    from_cards += 1
                     self.logger.debug(f"  Carte {idx} extraite : {annonce.get('title', '')[:50]}...")
             except Exception as e:
                 self.logger.warning(f"  Erreur extraction carte {idx} : {e}")
                 continue
 
+        if json_annonces and from_cards:
+            self.logger.info(f"  {from_cards} carte(s) absente(s) du JSON extraite(s) depuis le DOM")
         self.logger.info(f"  {len(cards)} cartes trouvees, total: {len(self.results)} annonces")
 
     # =========================

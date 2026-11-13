@@ -306,6 +306,46 @@ h1 {
 .dot-expired { background: #d1d5db; }
 .dot-hidden  { background: #fca5a5; }
 
+.card-feats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 12px;
+}
+
+.feat {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  padding: 1px 7px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.feat-warn {
+  color: #92400e;
+  border-color: #f59e0b;
+  background: #fffbeb;
+}
+
+.feat-danger {
+  color: #991b1b;
+  border-color: #ef4444;
+  background: #fef2f2;
+}
+
+.card-summary {
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  color: var(--text-muted);
+  margin: 6px 0 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 .dup-tag {
   font-size: 0.7rem;
   font-weight: 600;
@@ -705,3 +745,28 @@ body.doc-mode-active .btn-add-doc { display: inline-block; animation: reveal var
     animation: none !important;
   }
 }
+
+
+/* Page « Connexion LLM » (Sprint 15.4-bis) */
+.settings-page { max-width: 720px; }
+.settings-card {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 16px;
+}
+.settings-card h2 { font-size: 1rem; margin: 0 0 8px; }
+.settings-intro, .settings-status { font-size: 0.875rem; color: var(--text-muted); line-height: 1.5; }
+.settings-warn { font-size: 0.875rem; color: #92400e; }
+.settings-form { display: grid; gap: 14px; margin-top: 12px; }
+.settings-form label { display: grid; gap: 6px; font-size: 0.8125rem; font-weight: 600; }
+.settings-form small { font-weight: 400; color: var(--text-muted); }
+.settings-form input[type="text"], .settings-form input[type="url"],
+.settings-form input[type="password"], .settings-form select {
+  font: inherit; font-weight: 400; padding: 8px 10px;
+  border: 1px solid var(--border); border-radius: 8px; width: 100%; box-sizing: border-box;
+}
+.settings-form .settings-check { display: flex; align-items: center; gap: 8px; font-weight: 400; }
+.settings-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.settings-stats { font-size: 0.875rem; padding-left: 18px; line-height: 1.7; }

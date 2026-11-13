@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Connexion LLM</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+</head>
+<body>
+  <div class="wrapper settings-page">
+    <header>
+      <h1>Connexion LLM</h1>
+      <nav class="profile-tabs"><a href="/" class="btn-view">← Annonces</a></nav>
+    </header>
+
+    {% if flash %}
+    <div class="flash flash-{{ flash.type }}">{{ flash.msg }}</div>
+    {% endif %}
+
+    <section class="settings-card">
+      <p class="settings-intro">
+        L'analyse des descriptions (disponibilité, APL/Visale, signaux d'arnaque…) utilise
+        <strong>votre</strong> fournisseur de LLM et <strong>votre</strong> clé. Sans réglage, aucune analyse n'est faite.
+        Chaque texte d'annonce n'est envoyé qu'<strong>une seule fois</strong>, même s'il réapparaît ailleurs.
+      </p>
+
+      {% if settings.provider %}
+      <p class="settings-status">
+        Actuel : <strong>{{ settings.label() }}</strong>
+        {% if settings.api_key %} · clé {{ settings.masked_key() }}{% endif %}
+        · source : {{ settings.source }}
+        · analyse automatique : {{ 'oui' if settings.auto else 'non' }}
+      </p>
+      {% if problems %}<p class="settings-warn">À compléter : {{ problems | join(' ; ') }}</p>{% endif %}
+      {% else %}
+      <p class="settings-warn">Aucun fournisseur configuré : l'analyse LLM est désactivée.</p>
+      {% endif %}
+
+      <form method="POST" action="/settings/llm" class="settings-form" autocomplete="off">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+        <label>Fournisseur
+          <select name="provider" id="provider" onchange="fillPreset()">
+            {% for key, p in providers.items() %}
+            <option value="{{ key }}" data-base-url="{{ p.base_url or '' }}" data-model="{{ p.default_model or '' }}"
+                    data-needs-key="{{ 'oui' if p.needs_key else 'non' }}"
+                    {% if key == settings.provider or (not settings.provider and key == 'anthropic') %}selected{% endif %}>{{ p.label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+
+        <label>Modèle
+          <input type="text" name="model" id="model" value="{{ settings.model }}"
+                 placeholder="identifiant du modèle chez ce fournisseur">
+        </label>
+
+        <label>URL de l'API <small>(fournisseurs compatibles OpenAI ; vide = valeur par défaut)</small>
+          <input type="url" name="base_url" id="base_url" value="{{ settings.base_url }}" placeholder="">
+        </label>
+
+        <label>Clé d'API <small id="key-hint">{% if settings.api_key %}laisser vide pour garder la clé actuelle ({{ settings.masked_key() }}){% endif %}</small>
+          <input type="password" name="api_key" value="" autocomplete="new-password" spellcheck="false">
+        </label>
+
+        <label class="settings-check">
+          <input type="checkbox" name="auto" {% if settings.auto %}checked{% endif %}>
+          Analyser automatiquement les nouvelles annonces après chaque scraping
+        </label>
+
+        <div class="settings-actions">
+          <button type="submit" class="btn-scrape">Enregistrer</button>
+        </div>
+      </form>
+
+      <div class="settings-actions">
+        <form method="POST" action="/settings/llm/test">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn-view" title="Un appel d'essai sur une annonce fictive (quelques centaines de jetons, sur votre clé)">Tester la connexion</button>
+        </form>
+        {% if settings.source == 'interface' %}
+        <form method="POST" action="/settings/llm/delete" onsubmit="return confirm('Supprimer les réglages et la clé de cette machine ?')">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn-clear-db">Supprimer la clé</button>
+        </form>
+        {% endif %}
+      </div>
+    </section>
+
+    <section class="settings-card">
+      <h2>Lectures effectuées</h2>
+      <ul class="settings-stats">
+        <li>Textes lus : <strong>{{ stats.texts }}</strong> (réussis {{ stats.done }}, erreurs {{ stats.errors }}, refus {{ stats.refused }})</li>
+        <li>Appels facturables : <strong>{{ stats.calls }}</strong>{% if stats.retried %} dont {{ stats.retried }} relance(s){% endif %}</li>
+        <li>Annonces couvertes : {{ stats.annonces }} (une analyse peut servir à plusieurs annonces)</li>
+        <li>Jetons : {{ stats.input_tokens }} en entrée, {{ stats.output_tokens }} en sortie</li>
+      </ul>
+      <p class="settings-intro">
+        Gratuit et sans clé : <strong>Ollama</strong> ou <strong>LM Studio</strong> en local (qualité selon le modèle installé).
+      </p>
+    </section>
+  </div>
+  <script>
+    function fillPreset() {
+      const opt = document.getElementById('provider').selectedOptions[0];
+      document.getElementById('base_url').placeholder = opt.dataset.baseUrl || 'https://…/v1';
+      document.getElementById('model').placeholder = opt.dataset.model || 'identifiant du modèle chez ce fournisseur';
+    }
+    fillPreset();
+  </script>
+</body>
+</html>

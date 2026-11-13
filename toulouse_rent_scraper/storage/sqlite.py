@@ -102,6 +102,7 @@ def insert_annonce(annonce: Dict) -> str:
                 distance_enac_km = COALESCE(?, distance_enac_km),
                 lat = COALESCE(?, lat),
                 lon = COALESCE(?, lon),
+                geo_precision = COALESCE(geo_precision, CASE WHEN ? IS NOT NULL THEN 'approx' END),
                 photos = COALESCE(photos, ?)
             WHERE url = ?
             """,
@@ -112,6 +113,7 @@ def insert_annonce(annonce: Dict) -> str:
                 annonce.get("distance_enac_km"),
                 annonce.get("lat"),
                 annonce.get("lon"),
+                annonce.get("lat"),
                 annonce.get("photos"),
                 url,
             ),
@@ -138,8 +140,9 @@ def insert_annonce(annonce: Dict) -> str:
             created_at,
             photos,
             lat,
-            lon
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            lon,
+            geo_precision
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         annonce.get("site"),
         annonce.get("title"),
@@ -151,6 +154,7 @@ def insert_annonce(annonce: Dict) -> str:
         annonce.get("photos"),
         annonce.get("lat"),
         annonce.get("lon"),
+        "approx" if annonce.get("lat") is not None else None,
     ))
     if annonce.get("price") is not None:
         _record_price(cur, cur.lastrowid, annonce["price"], now)
@@ -209,7 +213,8 @@ def annonces_for_scoring(profile: str) -> List[Dict]:
     with connect() as conn:
         rows = conn.execute(
             """
-            SELECT a.id, a.price, a.charges, a.surface_m2, a.furnished, a.dpe_rating,
+            SELECT a.id, a.price, a.charges, a.charges_included, a.surface_m2, a.furnished, a.dpe_rating,
+                   a.scam_risk,
                    COALESCE(a.status, 'active') AS status, ap.distance_km
             FROM annonces a
             JOIN annonce_profiles ap ON ap.annonce_id = a.id AND ap.profile = ?
@@ -234,7 +239,8 @@ def annonces_for_notification(profile: str, urls: List[str]) -> Dict[str, Dict]:
     with connect() as conn:
         rows = conn.execute(
             f"""
-            SELECT a.url, a.title, a.price, a.location_raw, ap.distance_km, ap.score
+            SELECT a.url, a.title, a.price, a.location_raw, a.surface_m2, a.nb_rooms, a.dpe_rating,
+                   a.scam_risk, a.available_from, ap.distance_km, ap.score
             FROM annonces a
             JOIN annonce_profiles ap ON ap.annonce_id = a.id AND ap.profile = ?
             WHERE a.url IN ({placeholders}) AND COALESCE(a.status, 'active') = 'active'
@@ -407,35 +413,249 @@ def clear_db() -> int:
 def update_annonce_enrichment(url: str, data: Dict) -> bool:
     """
     Met à jour une annonce avec les données d'enrichissement.
-    Les champs 'photos' (liste) sont sérialisés en JSON.
+    Les listes et dictionnaires (photos, field_sources, extra_attributes) sont sérialisés en JSON.
+
+    Coordonnées : un point `exact` (fourni par l'annonce) remplace le géocodage de
+    l'adresse ; un point `approx` ne sert que si l'annonce n'en avait aucun.
     """
-    conn = get_connection()
-    cur = conn.cursor()
+    data = dict(data)
+    for key in ("photos", "field_sources", "extra_attributes"):
+        if isinstance(data.get(key), (list, dict)):
+            data[key] = json.dumps(data[key], ensure_ascii=False)
 
-    # Sérialiser les photos en JSON si c'est une liste
-    if "photos" in data and isinstance(data["photos"], list):
-        data["photos"] = json.dumps(data["photos"])
-
-    # Construire le SET dynamiquement
     allowed_fields = {
         "surface_m2", "nb_rooms", "nb_bedrooms", "floor",
         "description", "charges", "deposit", "furnished",
         "dpe_rating", "photos", "publisher_type", "published_at",
         "enriched_at", "enrichment_status", "enrichment_attempts", "error_detail",
+        # Sprint 15.1
+        "ges_rating", "elevator", "charges_included", "extraction_source",
+        "field_sources", "extra_attributes",
     }
-
     fields_to_update = {k: v for k, v in data.items() if k in allowed_fields}
 
-    if not fields_to_update:
-        conn.close()
+    set_parts = [f"{k} = ?" for k in fields_to_update]
+    values = list(fields_to_update.values())
+
+    lat, lon, precision = data.get("lat"), data.get("lon"), data.get("geo_precision")
+    if lat is not None and lon is not None:
+        if precision == "exact":
+            set_parts += ["lat = ?", "lon = ?", "geo_precision = 'exact'"]
+            values += [lat, lon]
+        else:
+            set_parts += [
+                "geo_precision = CASE WHEN lat IS NULL THEN 'approx' ELSE geo_precision END",
+                "lat = COALESCE(lat, ?)",
+                "lon = COALESCE(lon, ?)",
+            ]
+            values += [lat, lon]
+
+    if not set_parts:
         return False
 
-    set_clause = ", ".join(f"{k} = ?" for k in fields_to_update)
-    values = list(fields_to_update.values()) + [url]
-
-    cur.execute(f"UPDATE annonces SET {set_clause} WHERE url = ?", values)
-
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(f"UPDATE annonces SET {', '.join(set_parts)} WHERE url = ?", values + [url])
     updated = cur.rowcount > 0
     conn.commit()
     conn.close()
     return updated
+
+
+def get_enrichment_status(url: str) -> Optional[str]:
+    """Statut d'enrichissement de l'annonce, ou None si elle n'existe pas."""
+    with connect() as conn:
+        row = conn.execute("SELECT enrichment_status FROM annonces WHERE url = ?", (url,)).fetchone()
+    return row["enrichment_status"] if row else None
+
+
+def get_coordinates(url: str) -> Optional[Dict]:
+    """{id, lat, lon, geo_precision} de l'annonce, ou None."""
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT id, lat, lon, geo_precision FROM annonces WHERE url = ?", (url,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def set_distances(annonce_id: int, distance_enac_km: Optional[float], by_profile: Dict[str, float]) -> int:
+    """
+    Met à jour la distance historique ENAC et la distance de chaque profil DÉJÀ rattaché
+    (une annonce n'est jamais rattachée à un nouveau profil ici). Retourne le nombre de profils mis à jour.
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    if distance_enac_km is not None:
+        cur.execute("UPDATE annonces SET distance_enac_km = ? WHERE id = ?", (distance_enac_km, annonce_id))
+    count = 0
+    for profile, dist in by_profile.items():
+        cur.execute(
+            "UPDATE annonce_profiles SET distance_km = ? WHERE annonce_id = ? AND profile = ?",
+            (dist, annonce_id, profile),
+        )
+        count += cur.rowcount
+    conn.commit()
+    conn.close()
+    return count
+
+
+# ---------------------------------------------------------------------------
+# Analyse LLM (Sprint 15.4)
+# ---------------------------------------------------------------------------
+
+def annonces_for_llm(include_errors: bool = False) -> List[Dict]:
+    """
+    Annonces actives avec une description et JAMAIS passées par l'analyse (llm_status NULL),
+    des plus récentes aux plus anciennes. `include_errors` : aussi celles en erreur
+    (relance explicite, `analyze --retry-errors`). Avec le texte de l'annonce d'origine
+    pour les doublons inter-sites (réutilisation de son analyse).
+    """
+    statuses = "a.llm_status IS NULL" + (" OR a.llm_status = 'error'" if include_errors else "")
+    with connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT a.id, a.url, a.site, a.title, a.price, a.surface_m2, a.location_raw,
+                   a.publisher_type, a.description, a.duplicate_of, a.llm_status,
+                   o.description AS original_description,
+                   COALESCE(o.status, 'active') AS original_status
+            FROM annonces a
+            LEFT JOIN annonces o ON o.id = a.duplicate_of
+            WHERE COALESCE(a.status, 'active') = 'active'
+              AND a.description IS NOT NULL AND length(a.description) > 20
+              AND ({statuses})
+            ORDER BY (a.duplicate_of IS NOT NULL), a.created_at DESC, a.id DESC
+            """
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def active_price_rows() -> List[Dict]:
+    """Prix et surface des annonces actives (médiane €/m² du signal « prix très bas »)."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT price, surface_m2 FROM annonces WHERE COALESCE(status, 'active') = 'active'"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+# --- Registre des lectures LLM (un texte = une lecture) ---
+
+def get_llm_entry(content_hash: str) -> Optional[Dict]:
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM llm_analyses WHERE content_hash = ?", (content_hash,)).fetchone()
+    return dict(row) if row else None
+
+
+def claim_llm_entry(content_hash: str, model: str, max_calls: int) -> bool:
+    """
+    Réserve le texte AVANT l'appel (atomique) : True si ce process peut appeler le modèle.
+    Nouveau texte → insertion ; texte rouvert par `--retry-errors` → seulement s'il reste un
+    appel autorisé. Un autre process (bouton de l'UI + run planifié) ne peut pas le réserver aussi.
+    """
+    now = datetime.now().isoformat(timespec="seconds")
+    with connect() as conn:
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO llm_analyses (content_hash, status, model, calls, first_call_at, last_call_at) "
+            "VALUES (?, 'running', ?, 1, ?, ?)",
+            (content_hash, model, now, now),
+        )
+        if cur.rowcount:
+            return True
+        cur = conn.execute(
+            "UPDATE llm_analyses SET status = 'running', model = ?, calls = calls + 1, last_call_at = ? "
+            "WHERE content_hash = ? AND status = 'retry' AND calls < ?",
+            (model, now, content_hash, max_calls),
+        )
+        return cur.rowcount > 0
+
+
+def release_llm_entry(content_hash: str) -> None:
+    """Appel non effectué (service indisponible, rien de facturé) : la réservation est annulée."""
+    with connect() as conn:
+        conn.execute("DELETE FROM llm_analyses WHERE content_hash = ? AND status = 'running' AND calls = 1",
+                     (content_hash,))
+        conn.execute("UPDATE llm_analyses SET status = 'error', calls = calls - 1 "
+                     "WHERE content_hash = ? AND status = 'running'", (content_hash,))
+
+
+def finish_llm_entry(content_hash: str, status: str, model: Optional[str], data: Optional[Dict],
+                     error: Optional[str], input_tokens: int, output_tokens: int) -> None:
+    with connect() as conn:
+        conn.execute(
+            "UPDATE llm_analyses SET status = ?, model = COALESCE(?, model), data = ?, error = ?, "
+            "input_tokens = input_tokens + ?, output_tokens = output_tokens + ? WHERE content_hash = ?",
+            (status, model, json.dumps(data, ensure_ascii=False) if data is not None else None,
+             error, input_tokens, output_tokens, content_hash),
+        )
+
+
+def llm_calls_since(since: str) -> int:
+    """Textes envoyés au modèle depuis `since` (ISO) — plafond journalier."""
+    with connect() as conn:
+        return conn.execute(
+            "SELECT COUNT(*) FROM llm_analyses WHERE last_call_at >= ? AND calls > 0", (since,)
+        ).fetchone()[0]
+
+
+def reopen_llm_errors(max_calls: int, stale_before: str) -> int:
+    """
+    `--retry-errors` : rouvre les textes en erreur (et les réservations orphelines d'un run
+    interrompu, plus anciennes que `stale_before`) qui n'ont pas atteint `max_calls`.
+    Les annonces concernées repassent à analyser.
+    """
+    with connect() as conn:
+        cur = conn.execute(
+            "UPDATE llm_analyses SET status = 'retry' WHERE calls < ? AND "
+            "(status = 'error' OR (status = 'running' AND last_call_at < ?))",
+            (max_calls, stale_before),
+        )
+        reopened = cur.rowcount
+        conn.execute(
+            "UPDATE annonces SET llm_status = NULL WHERE llm_status IN ('error', 'running') "
+            "AND llm_input_hash IN (SELECT content_hash FROM llm_analyses WHERE status = 'retry')"
+        )
+    return reopened
+
+
+def llm_stats() -> Dict:
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS texts, COALESCE(SUM(calls), 0) AS calls, "
+            "COALESCE(SUM(input_tokens), 0) AS input_tokens, COALESCE(SUM(output_tokens), 0) AS output_tokens, "
+            "SUM(status = 'done') AS done, SUM(status = 'error') AS errors, SUM(status = 'refused') AS refused, "
+            "SUM(calls > 1) AS retried FROM llm_analyses"
+        ).fetchone()
+        annonces = conn.execute(
+            "SELECT COUNT(*) FROM annonces WHERE llm_input_hash IS NOT NULL"
+        ).fetchone()[0]
+    stats = {k: (row[k] or 0) for k in row.keys()}
+    stats["annonces"] = annonces
+    return stats
+
+
+_LLM_COLUMNS = (
+    "llm_status", "llm_input_hash", "llm_model", "llm_analyzed_at", "llm_error", "llm_data",
+    "summary", "available_from", "lease_type", "colocation", "apl_ok", "visale_ok",
+    "agency_fees", "scam_risk", "scam_flags",
+)
+
+
+def save_llm_analysis(annonce_id: int, result: Dict) -> None:
+    """
+    Enregistre le résultat d'une analyse. Charges et dépôt de garantie trouvés dans le texte
+    complètent les colonnes d'enrichissement seulement si elles sont vides.
+    """
+    data = {k: result.get(k) for k in _LLM_COLUMNS if k in result}
+    for key in ("llm_data", "scam_flags"):
+        if isinstance(data.get(key), (list, dict)):
+            data[key] = json.dumps(data[key], ensure_ascii=False)
+    sets = [f"{k} = ?" for k in data]
+    values = list(data.values())
+    for key in ("charges", "deposit"):
+        if result.get(key) is not None:
+            sets.append(f"{key} = COALESCE({key}, ?)")
+            values.append(result[key])
+    if not sets:
+        return
+    with connect() as conn:
+        conn.execute(f"UPDATE annonces SET {', '.join(sets)} WHERE id = ?", values + [annonce_id])

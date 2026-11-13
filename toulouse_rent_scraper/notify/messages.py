@@ -14,11 +14,26 @@ from config import SEARCH_PROFILES
 
 def _line(a: Dict) -> str:
     parts = [f"{a['price']} €"]
+    # Caractéristiques connues dès la recherche (Sprint 15.2) ou après enrichissement
+    specs = []
+    if a.get("nb_rooms"):
+        specs.append(f"T{a['nb_rooms']}")
+    if a.get("surface_m2"):
+        specs.append(f"{a['surface_m2']:g} m²")
+    if a.get("dpe_rating"):
+        specs.append(f"DPE {a['dpe_rating']}")
+    if specs:
+        parts.append(" ".join(specs))
     if a.get("distance_km") is not None:
         parts.append(f"{a['distance_km']:.1f} km")
     if a.get("score") is not None:
         parts.append(f"★ {round(a['score'])}")
-    return f"{a.get('title') or 'Annonce'} — " + " · ".join(parts)
+    # Analyse LLM (15.4)
+    if a.get("available_from"):
+        parts.append("dispo immédiate" if a["available_from"] == "immediate"
+                     else f"dispo {a['available_from'][8:10]}/{a['available_from'][5:7]}")
+    prefix = "⚠️ " if a.get("scam_risk") == "eleve" else ""
+    return f"{prefix}{a.get('title') or 'Annonce'} — " + " · ".join(parts)
 
 
 def build_messages(events: List[Dict]) -> List[Dict]:

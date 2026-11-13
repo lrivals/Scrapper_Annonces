@@ -145,6 +145,11 @@ class SearchProfile:
     seloger_search_url: Optional[str] = None    # URL SeLoger brute (copiée du site), prioritaire
     seloger_warmup_urls: Tuple[str, ...] = ()   # recherches visitées avant celle scannée
     seloger_sub_types: str = "Studio"
+    # Bien'ici (Sprint 15.7) : communes interrogées (résolues en zones via l'autocomplétion
+    # du site, mises en cache) ou identifiants de zone directs, prioritaires s'ils sont fournis.
+    bienici_places: Tuple[str, ...] = ()
+    bienici_zone_ids: Tuple[str, ...] = ()
+    bienici_property_types: Tuple[str, ...] = ("flat",)   # flat, house, loft, castle, townhouse
     enabled: bool = True
 
     @property
@@ -194,6 +199,11 @@ SEARCH_PROFILES: Dict[str, SearchProfile] = {
         target_rent_eur=350,
         lbc_location=_LEBONCOIN_LOCATION_TOULOUSE,
         seloger_locations=_SELOGER_LOCATIONS,
+        # Communes à ≤ 10 km de l'ENAC ; le rayon exact est filtré en local
+        bienici_places=(
+            "Toulouse", "Ramonville-Saint-Agne", "Auzeville-Tolosane", "Castanet-Tolosan",
+            "Labège", "Saint-Orens-de-Gameville", "Balma",
+        ),
     ),
     "blagnac": SearchProfile(
         key="blagnac",
@@ -237,6 +247,11 @@ SEARCH_PROFILES: Dict[str, SearchProfile] = {
             "&method=form&numberOfBedroomsMin=1&numberOfRoomsMax=3&projectTypes=Stock"
             "&order=DateDesc"
         ),
+        # Communes à ≤ 8 km de la cible ; appartements et maisons comme la recherche LBC
+        bienici_places=(
+            "Blagnac", "Toulouse", "Beauzelle", "Cornebarrieu", "Colomiers", "Aussonne", "Seilh",
+        ),
+        bienici_property_types=("flat", "house"),
     ),
 }
 
@@ -348,6 +363,38 @@ ENRICHMENT_DEFAULT_LIMIT = 50
 ENRICHMENT_MAX_ATTEMPTS = 3
 ENRICHMENT_RETRY_DELAY_HOURS = 24
 
+# Sprint 15.2 — une annonce LBC lue complète (description + surface) dans le JSON de la
+# page de recherche est marquée enrichie : pas de visite de sa page de détail.
+# False : le JSON de la recherche sert seulement à pré-remplir, la visite reste faite.
+LBC_SEARCH_JSON_SKIPS_DETAIL = True
+
+# =========================
+# 🌐 BIEN'ICI (Sprint 15.7) — API JSON, sans navigateur
+# =========================
+
+BIENICI_BASE_URL = "https://www.bienici.com"
+BIENICI_SEARCH_API = "https://www.bienici.com/realEstateAds.json"
+BIENICI_SUGGEST_API = "https://res.bienici.com/suggest.json"
+BIENICI_PAGE_SIZE = 50
+BIENICI_MAX_PAGES = 4                 # 200 annonces max par profil, triées des plus récentes
+BIENICI_MIN_DELAY = 2.0               # pause entre deux requêtes (s) — usage personnel, rythme humain
+BIENICI_MAX_DELAY = 4.0
+BIENICI_TIMEOUT = 30
+BIENICI_ZONE_CACHE_FILE = DATA_DIR / "bienici_zones.json"
+
+# Santé de l'extraction (Sprint 15.1) : taux de remplissage minimal attendu par champ
+# sur les annonces enrichies d'un run. En dessous → alerte « sélecteurs probablement cassés ».
+QUALITY_MIN_SAMPLES = 5            # pas de verdict en dessous de N annonces enrichies par site
+QUALITY_MIN_FILL_RATES = {
+    "surface_m2": 0.6,
+    "nb_rooms": 0.6,
+    "description": 0.6,
+    "photos": 0.6,
+}
+# Part minimale d'annonces LBC extraites depuis le JSON : en dessous, `__NEXT_DATA__`
+# a probablement disparu ou changé de forme
+QUALITY_MIN_JSON_RATE = {"LeBonCoin": 0.5}
+
 
 # =========================
 # ⭐ SCORE D'INTÉRÊT (Sprint 13)
@@ -399,3 +446,24 @@ NOTIFY_PRICE_DROP_EUR = 20     # alerte si le loyer baisse d'au moins ce montant
 NOTIFY_GROUP_THRESHOLD = 3     # au-delà, un seul message récapitulatif par profil
 NOTIFY_GROUP_MAX_ITEMS = 8     # nombre d'annonces listées dans un récapitulatif
 
+
+
+# =========================
+# 🧠 ANALYSE DES DESCRIPTIONS PAR LLM (Sprint 15.4)
+# =========================
+# Fournisseur, modèle et clé : choisis par l'utilisateur (page « Connexion LLM » de l'UI,
+# ou LLM_PROVIDER / LLM_MODEL / LLM_API_KEY / LLM_BASE_URL / LLM_ANALYSIS dans .env).
+# Voir analysis/providers.py. Sans fournisseur configuré, aucune analyse.
+LLM_EFFORT = os.environ.get("LLM_EFFORT", "low")    # Claude : extraction simple, effort bas
+LLM_MAX_TOKENS = 4000
+LLM_DESCRIPTION_MAX_CHARS = 6000
+
+# Garde-fous de dépense — chaque texte n'est lu qu'UNE fois (registre llm_analyses) :
+LLM_MAX_PER_RUN = 60           # appels au modèle au plus par run
+LLM_MAX_CALLS_PER_DAY = 150    # plafond quotidien, tous runs confondus (bug, boucle, runs rapprochés)
+LLM_MAX_CALLS_PER_TEXT = 2     # 1 lecture + 1 relance explicite (`analyze --retry-errors`) au plus
+
+# Malus de score selon le risque d'arnaque (multiplicateur du score final)
+SCAM_RISK_PENALTY = {"moyen": 0.8, "eleve": 0.5}
+# Prix au m² sous cette fraction de la médiane du profil → signal « prix anormalement bas »
+SCAM_LOW_PRICE_RATIO = 0.5

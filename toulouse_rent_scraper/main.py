@@ -26,7 +26,7 @@ from utils.logger import setup_logger
 
 logger = setup_logger("main")
 
-COMMANDS = ("scrape", "enrich", "check-links", "purge", "export", "rescore", "notify-test", "ui")
+COMMANDS = ("scrape", "enrich", "check-links", "purge", "export", "rescore", "notify-test", "quality", "analyze", "ui")
 
 # Code de sortie quand un autre run tient le verrou (EX_TEMPFAIL)
 EXIT_ALREADY_RUNNING = 75
@@ -65,6 +65,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("rescore", help="Recalculer les scores d'intérêt (après un changement de poids)")
     sub.add_parser("notify-test", help="Envoyer une notification de test (vérifier .env)")
+
+    analyze = sub.add_parser("analyze", help="Analyser les nouvelles descriptions par LLM (une seule lecture par texte)")
+    analyze.add_argument("--limit", type=int, help="Appels au modèle au plus (défaut LLM_MAX_PER_RUN)")
+    analyze.add_argument("--retry-errors", action="store_true",
+                         help="Relancer UNE fois les textes en erreur (appel facturé)")
+    analyze.add_argument("--stats", action="store_true", help="Afficher le registre des lectures, sans appel")
+
+    quality = sub.add_parser("quality", help="Taux de remplissage des champs par site (santé de l'extraction)")
+    quality.add_argument("--days", type=int, help="Seulement les annonces enrichies ces N derniers jours")
 
     export = sub.add_parser("export", help="Exporter les annonces actives")
     export.add_argument("format", choices=["csv", "json"])
@@ -210,6 +219,48 @@ def cmd_notify_test() -> bool:
     return ok
 
 
+def cmd_analyze(limit: Optional[int] = None, retry_errors: bool = False, stats: bool = False) -> dict:
+    """Analyse LLM à la demande (indépendante de l'option « automatique »)."""
+    from analysis.llm import analyze_pending
+    from analysis.providers import load_settings
+    from scoring import rescore
+    from storage.sqlite import init_db, llm_stats
+
+    init_db()
+    if stats:
+        st = llm_stats()
+        settings = load_settings()
+        print(f"Fournisseur : {settings.label() if settings.provider else 'non configuré'}"
+              f"{' (' + settings.source + ')' if settings.source else ''}")
+        print(f"Textes lus : {st['texts']} (réussis {st['done']}, erreurs {st['errors']}, refus {st['refused']})")
+        print(f"Appels facturables : {st['calls']} — dont relances : {st['retried']}")
+        print(f"Annonces couvertes : {st['annonces']} (une analyse peut servir à plusieurs annonces)")
+        print(f"Jetons : {st['input_tokens']} en entrée, {st['output_tokens']} en sortie")
+        return st
+    summary = analyze_pending(limit=limit, retry_errors=retry_errors)
+    if summary["done"] or summary["reused"]:
+        rescore()
+    return summary
+
+
+def cmd_quality(days: Optional[int] = None) -> List[str]:
+    from storage.quality import check_fill_rates, enriched_rows, format_report, group_by_site
+    from storage.sqlite import init_db
+
+    init_db()
+    by_site = group_by_site(enriched_rows(days))
+    scope = f"enrichies ces {days} derniers jours" if days else "enrichies"
+    print(f"Taux de remplissage — annonces {scope}\n")
+    print(format_report(by_site))
+    alerts = check_fill_rates(by_site)
+    print()
+    for alert in alerts:
+        print(f"⚠ {alert}")
+    if not alerts:
+        print("✓ Aucun champ clé sous son seuil")
+    return alerts
+
+
 def cmd_scrape(args):
     from pipeline import run_scraping
 
@@ -252,6 +303,10 @@ def main(argv: Optional[List[str]] = None):
         cmd_export(args.format)
     elif args.command == "rescore":
         cmd_rescore()
+    elif args.command == "analyze":
+        cmd_analyze(args.limit, args.retry_errors, args.stats)
+    elif args.command == "quality":
+        cmd_quality(args.days)
     elif args.command == "notify-test":
         sys.exit(0 if cmd_notify_test() else 1)
     else:

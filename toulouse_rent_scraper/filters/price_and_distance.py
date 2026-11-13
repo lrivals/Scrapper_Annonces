@@ -118,7 +118,9 @@ def _rooms_ok(rooms: Optional[int], profile: SearchProfile) -> bool:
 
 
 def match_profiles(
-    annonce: Dict, profiles: Optional[List[SearchProfile]] = None
+    annonce: Dict,
+    profiles: Optional[List[SearchProfile]] = None,
+    known_coords: Optional[Tuple[float, float]] = None,
 ) -> Tuple[Optional[Dict], List[Tuple[SearchProfile, float]]]:
     """
     Teste une annonce brute contre chaque profil (budget, pièces, rayon).
@@ -126,6 +128,7 @@ def match_profiles(
     Retourne (annonce_enrichie, [(profil, distance_km), ...]).
     L'annonce enrichie (prix entier, lat/lon, distance_enac_km) vaut None si aucun profil ne matche.
     Le géocodage n'est fait que si au moins un profil accepte le prix et les pièces.
+    `known_coords` (point exact déjà connu, ex. GPS de l'annonce LBC) remplace le géocodage.
     """
     profiles = profiles if profiles is not None else enabled_profiles()
 
@@ -142,7 +145,10 @@ def match_profiles(
     if not candidates:
         return None, []
 
-    coords = geocode_address(location_raw)
+    coords = known_coords or geocode_address(location_raw)
+    if not coords and annonce.get("lat") is not None and annonce.get("lon") is not None:
+        # Adresse introuvable : position approximative fournie par le site (JSON LBC, 15.2)
+        coords = (annonce["lat"], annonce["lon"])
     if not coords:
         return None, []
 

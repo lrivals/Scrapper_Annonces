@@ -2,7 +2,7 @@
 
 > Document de suivi global des sprints. Mis à jour au fil de l'avancement.
 >
-> **Dernière mise à jour** : 2026-11-03 — audit : [AUDIT_2026-11.md](AUDIT_2026-11.md)
+> **Dernière mise à jour** : 2026-11-13 — Sprint 15 (15.1, 15.2, 15.4 et 15.7 livrés) ; audit : [AUDIT_2026-11.md](AUDIT_2026-11.md)
 
 ---
 
@@ -35,7 +35,9 @@ Sprint 12 (Refactor & sécurité)            ✅
     ↓
 Sprint 13 (Alerte & priorisation)          ✅
     ↓
-Sprint 4 (PAP.fr)  — profite du refactor 12
+Sprint 15 (Fiches détaillées & sources)    🔵  15.1 ✅ 15.2 ✅ 15.4 ✅ 15.7 ✅
+    ↓
+Sprint 4 (PAP.fr)  — profite du refactor 12 et du modèle commun 15.7
     ↓
 Sprint 5 (Rapports avancés)
     ↓
@@ -61,11 +63,29 @@ Sprint 2-bis (API REST & Dashboard)
 | 14 | Profils de recherche (ENAC + Blagnac) | ✅ Terminé | 8/8 (URL SeLoger Blagnac à capturer) | 2026-11-03 | 2026-11-03 |
 | 12 | Refactor & sécurité | ✅ Terminé | 8/8 (compteurs à revalider au prochain scraping réel) | 2026-11-03 | 2026-11-03 |
 | 13 | Alerte & priorisation | ✅ Terminé | 4/5 (13.5 reporté) | 2026-11-03 | 2026-11-03 |
+| 15 | Fiches détaillées, tri affiné, nouvelles sources | 🔵 En cours | 4/8 (à valider sur les vrais sites / avec une clé d'API) | 2026-11-12 | — |
 | 4 | Scraper PAP.fr | 🔲 À faire | 0/6 | — | — |
 | 5 | Rapports Markdown avancés | 🔲 À faire | 0/6 | — | — |
 | 2-bis | API REST & Dashboard | 🔲 À faire | 0/6 | — | — |
 
 **Légende** : 🔲 À faire | 🔵 En cours | ✅ Terminé | ⏸️ En pause
+
+---
+
+## Sprint 15 — Fiches détaillées, tri affiné, nouvelles sources
+
+📄 Détail : [SPRINT_15.md](SPRINT_15.md)
+
+| # | Tâche | Statut | Notes |
+|---|-------|--------|-------|
+| 15.1 | LBC : JSON `__NEXT_DATA__`, GPS exact, santé de l'extraction | ✅ | `main.py quality` ; valider les clés JSON sur une vraie page |
+| 15.2 | LBC : annonces complètes dès la recherche | ✅ | Moins de visites de détail ; JSON périmé détecté |
+| 15.3 | SeLoger : état JSON embarqué | 🔲 | |
+| 15.4 | Analyse de la description par LLM | ✅ | LLM et clé de l’utilisateur (page « Connexion LLM ») ; une seule lecture par texte ; malus arnaque |
+| 15.5 | Critères éliminatoires par profil | 🔲 | |
+| 15.6 | Retours ⭐/👎 → poids appris | 🔲 | |
+| 15.7 | Source Bien'ici (API JSON) + modèle `Listing` | ✅ | `ApiScraper` : sources sans navigateur |
+| 15.8 | Doublons par empreinte photo | 🔲 | |
 
 ---
 

@@ -36,6 +36,7 @@ class RunStats:
     updated: int = 0
     unchanged: int = 0
     duplicates: int = 0
+    prefilled: int = 0          # fiches remplies depuis le JSON de la recherche (15.2)
     new_by_profile: Counter = field(default_factory=Counter)
     # Événements à notifier : {"kind": "new" | "price_drop", "profile", "url", "old_price"?}
     events: List[Dict] = field(default_factory=list)
@@ -63,8 +64,64 @@ class RunStats:
         for key, count in self.new_by_profile.items():
             label = SEARCH_PROFILES[key].label if key in SEARCH_PROFILES else key
             logger.info(f"  - Nouvelles pour {label} : {count}")
+        if self.prefilled:
+            logger.info(f"  - Fiches pré-remplies depuis la recherche : {self.prefilled}")
         if self.duplicates:
             logger.warning(f"  - Doublons détectés : {self.duplicates}")
+
+
+def _exact_coords(annonce: Dict, get_coordinates) -> Optional[tuple]:
+    """
+    Point GPS exact de l'annonce, prioritaire sur le géocodage de l'adresse :
+    celui fourni par la recherche (JSON LBC, 15.2), sinon celui déjà connu en base (15.1).
+    """
+    if annonce.get("geo_precision") == "exact" and annonce.get("lat") is not None:
+        return annonce["lat"], annonce["lon"]
+    known = get_coordinates(annonce.get("url", ""))
+    if known and known.get("geo_precision") == "exact" and known.get("lat") is not None:
+        return known["lat"], known["lon"]
+    return None
+
+
+def _save_search_details(annonce: Dict) -> bool:
+    """
+    Détails lus dans la page de recherche (Sprint 15.2) : enregistrés tant que l'annonce
+    n'a pas été enrichie — une fiche déjà complète (page de détail) n'est pas écrasée.
+    Retourne True si des détails ont été enregistrés.
+    """
+    from storage.sqlite import get_enrichment_status, update_annonce_enrichment
+
+    details = annonce.get("details")
+    if not details:
+        return False
+    if get_enrichment_status(annonce["url"]) == "done":
+        return False
+    data = dict(details)
+    if annonce.get("geo_precision") and annonce.get("lat") is not None:
+        data.update(lat=annonce["lat"], lon=annonce["lon"], geo_precision=annonce["geo_precision"])
+    if data.get("enrichment_status") == "done":
+        data["enriched_at"] = datetime.now().isoformat()
+    return update_annonce_enrichment(annonce["url"], data)
+
+
+def search_health_rows(raw_annonces: Sequence[Dict], site_name: str) -> List[Dict]:
+    """
+    Lignes pour le contrôle de santé (storage.quality) à partir des annonces d'une recherche.
+    Seuls les sites qui fournissent un JSON de recherche sont jugés : une annonce venue
+    d'une carte DOM y compte comme extraction `dom` (le JSON a disparu ou est ignoré).
+    """
+    from config import QUALITY_MIN_JSON_RATE
+
+    if site_name not in QUALITY_MIN_JSON_RATE and not any(a.get("details") for a in raw_annonces):
+        return []
+    rows = []
+    for a in raw_annonces:
+        details = a.get("details")
+        if details:
+            rows.append({**details, "photos": details.get("photos") or None})
+        else:
+            rows.append({"extraction_source": "dom", "photos": a.get("photos")})
+    return rows
 
 
 def process_annonces(raw_annonces: Sequence[Dict], site_name: str) -> RunStats:
@@ -74,7 +131,8 @@ def process_annonces(raw_annonces: Sequence[Dict], site_name: str) -> RunStats:
     """
     from filters.price_and_distance import match_profiles
     from storage.sqlite import (
-        insert_annonce, find_potential_duplicates, get_price, set_duplicate_of, upsert_annonce_profile,
+        insert_annonce, find_potential_duplicates, get_coordinates, get_price, set_duplicate_of,
+        upsert_annonce_profile,
     )
     from utils.validation import validate_annonce
 
@@ -88,7 +146,7 @@ def process_annonces(raw_annonces: Sequence[Dict], site_name: str) -> RunStats:
             stats.rejected += 1
             continue
 
-        filtered, matches = match_profiles(annonce)
+        filtered, matches = match_profiles(annonce, known_coords=_exact_coords(annonce, get_coordinates))
         if not filtered:
             stats.rejected += 1
             continue
@@ -97,6 +155,8 @@ def process_annonces(raw_annonces: Sequence[Dict], site_name: str) -> RunStats:
         url = filtered["url"]
         old_price = get_price(url)
         result = insert_annonce(filtered)
+        if _save_search_details(filtered):
+            stats.prefilled += 1
         price_drop = (
             result == "updated" and old_price is not None
             and old_price - filtered["price"] >= NOTIFY_PRICE_DROP_EUR
@@ -113,7 +173,11 @@ def process_annonces(raw_annonces: Sequence[Dict], site_name: str) -> RunStats:
                                      "old_price": old_price})
 
         # Même bien publié sur un autre site
-        potential_dups = find_potential_duplicates(filtered)
+        # La surface des annonces lues en JSON (LBC, Bien'ici) est dans `details`
+        details = filtered.get("details") or {}
+        potential_dups = find_potential_duplicates(
+            {**filtered, "surface_m2": filtered.get("surface_m2") or details.get("surface_m2")}
+        )
         if potential_dups:
             original = potential_dups[0]
             if set_duplicate_of(filtered["url"], original["id"]):
@@ -164,6 +228,7 @@ def run_scraping(
     total = RunStats()
     runs = [(p, key) for p in profiles for key in site_keys]
     launched = 0
+    health_rows: Dict[str, List[Dict]] = {}
 
     for profile, site_key in runs:
         scraper = get_scraper_class(site_key)(profile, unattended=unattended)
@@ -184,7 +249,8 @@ def run_scraping(
             logger.warning(f"{site_name} a été bloqué le {blocked_at:%d/%m %H:%M} : risque de nouveau blocage")
 
         # Changement de recherche : pause longue pour limiter la détection anti-bot
-        if launched:
+        # (inutile avant une source API, qui n'ouvre pas de navigateur)
+        if launched and getattr(scraper, "requires_cooldown", True):
             pause = random.uniform(PROFILE_SWITCH_MIN_DELAY, PROFILE_SWITCH_MAX_DELAY)
             logger.info(f"Pause de {pause:.0f}s avant la recherche suivante")
             sleep(pause)
@@ -194,9 +260,19 @@ def run_scraping(
         raw_annonces = scraper.scrape()
         logger.info(f"🔍 {len(raw_annonces)} annonces brutes récupérées de {site_name}")
 
+        health_rows.setdefault(site_name, []).extend(search_health_rows(raw_annonces, site_name))
         stats = process_annonces(raw_annonces, site_name)
         stats.log_summary(f"Résumé {site_name} — {profile.label}")
         total += stats
+
+    # Santé de l'extraction depuis le JSON des recherches (15.2) : même alerte qu'à l'enrichissement
+    from scrapers.enricher import report_extraction_health
+    report_extraction_health({site: rows for site, rows in health_rows.items() if rows})
+
+    # Analyse LLM des nouvelles descriptions (15.4, si activée) : avant le score et les
+    # notifications, pour que le malus « risque d'arnaque » filtre les alertes
+    from analysis.llm import maybe_analyze
+    maybe_analyze("scraping")
 
     from scoring import rescore
     from notify import notify_events
