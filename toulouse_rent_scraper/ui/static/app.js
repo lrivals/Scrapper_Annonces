@@ -131,8 +131,9 @@ function updateDocUI() {
   }
 
   // Mettre à jour l'état de chaque bouton de carte
-  document.querySelectorAll('[id^="doc-btn-"]').forEach(function(btn) {
-    var id = parseInt(btn.id.replace('doc-btn-', ''));
+  // Liste et pile de la vue carte (Sprint 16) : même bouton, repéré par data-id
+  document.querySelectorAll('.btn-add-doc[data-id]').forEach(function(btn) {
+    var id = parseInt(btn.dataset.id);
     var card = btn.closest('article');
     if (ids.indexOf(id) !== -1) {
       swapText(btn, '✓ Dans le doc', instant);
@@ -252,7 +253,12 @@ document.querySelectorAll('form[action="/delete"], form[action="/restore"]').for
     .then(function(res) {
       if (res.ok) {
         var card = form.closest('article');
-        if (card) removeCard(card);
+        if (card) {
+          removeCard(card);
+          // Son résumé éventuel dans la pile de la carte disparaît aussi
+          var twin = document.querySelector('#map-stack-list article[data-id="' + card.dataset.id + '"]');
+          if (twin) removeCard(twin);
+        }
         var countEl = document.getElementById('annonce-count');
         if (countEl) {
           var n = parseInt(countEl.textContent) - 1;
@@ -278,18 +284,18 @@ function sendFeedback(btn) {
     .then(function(r) { return r.json(); })
     .then(function(res) {
       if (!res.ok) { showToast('err', res.msg); return; }
-      btn.parentNode.querySelectorAll('.btn-fb').forEach(function(b) {
+      // Même annonce dans la liste et dans la pile de la carte : on synchronise les deux
+      document.querySelectorAll('.btn-fb[data-id="' + btn.dataset.id + '"]').forEach(function(b) {
         var on = b.dataset.value === res.feedback;
         b.classList.toggle('is-on', on);
         b.setAttribute('aria-pressed', on ? 'true' : 'false');
       });
       if (res.feedback) pulse(btn);
       showToast('ok', res.msg);
-      // 👎 dans la vue par défaut (sans les 👎) : la carte sort de la liste
+      // 👎 dans la vue par défaut (sans les 👎) : la carte sort de la liste (et de la pile)
       var fb = new URLSearchParams(window.location.search).get('fb') || '';
       if (res.feedback === 'dislike' && fb === '') {
-        var card = btn.closest('article');
-        if (card) removeCard(card);
+        document.querySelectorAll('article.card[data-id="' + btn.dataset.id + '"]').forEach(removeCard);
       }
     })
     .catch(function() { showToast('err', 'Erreur réseau.'); });
@@ -306,6 +312,7 @@ function removeCard(card) {
     });
     var before = siblings.map(function(c) { return c.getBoundingClientRect(); });
     card.remove();
+    updateStackEmpty();
     if (reducedMotion()) return;
     siblings.forEach(function(c, i) {
       var after = c.getBoundingClientRect();
@@ -337,6 +344,10 @@ function showToast(type, msg) {
 /* ---- Vue carte OpenStreetMap ---- */
 var _mapInitialized = false;
 var _leafletMap = null;
+var _markers = {};       // id annonce → {marker, listing}
+var _activeId = null;    // annonce mise en avant (marqueur + résumé)
+var _apptIcon = null;    // fabrique d'icônes définie dans initMap
+var _mapTarget = null;   // cible du profil (pour le résumé de repli)
 
 /* Indicateur partagé Liste / Carte : un seul élément qui se déplace */
 function positionIndicator(instant) {
@@ -408,21 +419,23 @@ function initMap() {
     iconSize: [16, 16], iconAnchor: [8, 8]
   });
   // Couleur des marqueurs selon le score (mêmes seuils que les pastilles de la liste)
-  function apptIcon(score) {
+  function apptIcon(score, active) {
     var color = score === null || score === undefined ? '#9ca3af'
       : score >= 70 ? '#059669' : score >= 45 ? '#d97706' : '#9ca3af';
     return L.divIcon({
-      className: '',
+      className: active ? 'marker-active' : '',
       html: '<div style="width:12px;height:12px;background:' + color + ';border-radius:50%;border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,0.4)"></div>',
       iconSize: [12, 12], iconAnchor: [6, 6]
     });
   }
+  _apptIcon = apptIcon;
 
   var params = new URLSearchParams(window.location.search);
   fetch('/api/map-data?' + params)
     .then(function(r) { return r.json(); })
     .then(function(data) {
       var t = data.target;
+      _mapTarget = t;
       _leafletMap = L.map('map', {preferCanvas: true}).setView([t.lat, t.lon], 12);
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
@@ -438,16 +451,13 @@ function initMap() {
       var ungeolocated = 0;
       data.listings.forEach(function(l) {
         if (l.lat === null || l.lon === null) { ungeolocated++; return; }
-        var dist = l.distance_km !== null ? '<br>' + l.distance_km + ' km de ' + t.label : '';
-        var popup = '<b>' + (l.title || 'Annonce') + '</b>'
-          + '<br>' + (l.price ? l.price + ' €/mois' : '&mdash;')
-          + (l.location_raw ? '<br>' + l.location_raw : '')
-          + dist
-          + (l.score !== null && l.score !== undefined ? '<br>★ ' + Math.round(l.score) + '/100' : '')
-          + "<br><a href='" + l.url + "' target='_blank'>Voir l'annonce →</a>";
-        L.marker([l.lat, l.lon], {icon: apptIcon(l.score)})
+        // Clic sur un point : son résumé arrive en haut de la pile à droite
+        var marker = L.marker([l.lat, l.lon], {icon: apptIcon(l.score), riseOnHover: true})
           .addTo(_leafletMap)
-          .bindPopup(popup);
+          .bindTooltip(escapeHtml(l.title || 'Annonce') + ' · ' + (l.price ? l.price + ' €' : '—'),
+                       {direction: 'top', offset: [0, -6]})
+          .on('click', function() { pushToStack(l.id); });
+        _markers[l.id] = {marker: marker, listing: l};
       });
 
       if (ungeolocated > 0) {
@@ -460,6 +470,120 @@ function initMap() {
       document.getElementById('map-ungeolocated').textContent =
         '⚠ Impossible de charger les données carte.';
     });
+}
+
+/* ---- Pile des annonces consultées (Sprint 16) ----
+   Chaque clic sur un point empile son résumé en haut, sans doublon : un point déjà
+   consulté voit son résumé remonter. Cliquer un résumé recentre la carte sur son point. */
+function escapeHtml(text) {
+  var div = document.createElement('div');
+  div.textContent = text == null ? '' : String(text);
+  return div.innerHTML;
+}
+
+function updateStackEmpty() {
+  var list = document.getElementById('map-stack-list');
+  if (!list) return;
+  var empty = list.children.length === 0;
+  document.getElementById('map-stack-empty').hidden = !empty;
+  document.getElementById('map-stack-clear').hidden = empty;
+}
+
+/* Résumé = clone compact de la carte de la vue Liste ; repli sur les données de la carte */
+function buildStackCard(id) {
+  var source = document.querySelector('#card-grid article.card[data-id="' + id + '"]');
+  if (source) {
+    var card = source.cloneNode(true);
+    card.classList.remove('is-leaving');
+    card.style.removeProperty('--i');
+    // Masquer / Restaurer restent dans la vue Liste (gestion AJAX propre à celle-ci)
+    card.querySelectorAll('form').forEach(function(f) { f.remove(); });
+    card.querySelectorAll('[id]').forEach(function(el) { el.removeAttribute('id'); });
+    return card;
+  }
+  var l = _markers[id].listing;
+  var card = document.createElement('article');
+  card.className = 'card';
+  card.dataset.id = id;
+  var score = l.score !== null && l.score !== undefined ? Math.round(l.score) : null;
+  card.innerHTML =
+    '<div class="card-content">'
+    + '<div class="card-header">'
+    + (score !== null ? '<span class="score-pill ' + (score >= 70 ? 'score-high' : score >= 45 ? 'score-mid' : 'score-low') + '">★ ' + score + '</span>' : '')
+    + '<div class="price-tag">' + (l.price ? l.price + ' €' : '—') + '</div></div>'
+    + '<a class="card-title" target="_blank" href="' + escapeHtml(l.url) + '">' + escapeHtml(l.title || 'Annonce') + '</a>'
+    + '<div class="card-meta">'
+    + (l.location_raw ? '<div class="meta-item">' + escapeHtml(l.location_raw) + '</div>' : '')
+    + (l.distance_km !== null && l.distance_km !== undefined && _mapTarget
+        ? '<div class="meta-item">' + Number(l.distance_km).toFixed(1) + ' km de ' + escapeHtml(_mapTarget.label) + '</div>' : '')
+    + '</div>'
+    + '<a class="card-fallback-link" target="_blank" href="' + escapeHtml(l.url) + '">Voir l&rsquo;annonce →</a>'
+    + '</div>';
+  return card;
+}
+
+function setActive(id) {
+  if (_activeId !== null && _markers[_activeId]) {
+    var prev = _markers[_activeId];
+    prev.marker.setIcon(_apptIcon(prev.listing.score, false));
+    prev.marker.setZIndexOffset(0);
+  }
+  _activeId = id;
+  if (id !== null && _markers[id]) {
+    _markers[id].marker.setIcon(_apptIcon(_markers[id].listing.score, true));
+    _markers[id].marker.setZIndexOffset(1000);
+  }
+  document.querySelectorAll('#map-stack-list .card').forEach(function(c) {
+    c.classList.toggle('is-active', String(c.dataset.id) === String(id));
+  });
+}
+
+function pushToStack(id) {
+  var list = document.getElementById('map-stack-list');
+  var existing = list.querySelector('article[data-id="' + id + '"]');
+  if (existing) {
+    if (existing !== list.firstElementChild) {
+      // Remontée en tête, les autres résumés glissent à leur nouvelle place (FLIP)
+      var items = Array.prototype.slice.call(list.children);
+      var before = items.map(function(c) { return c.getBoundingClientRect(); });
+      list.prepend(existing);
+      if (!reducedMotion()) {
+        items.forEach(function(c, i) {
+          var after = c.getBoundingClientRect();
+          var dy = before[i].top - after.top;
+          if (dy) c.animate([{ transform: 'translateY(' + dy + 'px)' }, { transform: 'none' }],
+                            { duration: DUR_MOVE, easing: EASE_IN_OUT });
+        });
+      }
+    }
+  } else {
+    var card = buildStackCard(id);
+    card.addEventListener('click', function(e) {
+      if (e.target.closest('a, button, form')) return;  // liens et boutons gardent leur rôle
+      focusOnMap(id);
+    });
+    list.prepend(card);
+    updateStackEmpty();
+  }
+  list.scrollTo({ top: 0, behavior: reducedMotion() ? 'auto' : 'smooth' });
+  setActive(id);
+  updateDocUI(true);
+}
+
+/* Clic sur un résumé : la carte revient sur son point, sans réordonner la pile */
+function focusOnMap(id) {
+  var m = _markers[id];
+  if (!m) return;
+  var zoom = Math.max(_leafletMap.getZoom(), 15);
+  if (reducedMotion()) _leafletMap.setView(m.marker.getLatLng(), zoom);
+  else _leafletMap.flyTo(m.marker.getLatLng(), zoom, { duration: 0.6 });
+  setActive(id);
+}
+
+function clearStack() {
+  document.getElementById('map-stack-list').innerHTML = '';
+  setActive(null);
+  updateStackEmpty();
 }
 
 /* Auto-restore map view if URL contains ?view=map */
