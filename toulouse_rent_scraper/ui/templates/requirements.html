@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Critères des profils</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+</head>
+<body>
+  <div class="wrapper settings-page">
+    <header>
+      <h1>Critères éliminatoires</h1>
+      <nav class="profile-tabs">
+        <a href="/?profile={{ profile.key }}" class="btn-view">← Annonces</a>
+        {% for p in profiles %}
+        <a href="/settings/requirements?profile={{ p.key }}"
+           class="btn-view {% if p.key == profile.key %}active{% endif %}">{{ p.label }}</a>
+        {% endfor %}
+      </nav>
+    </header>
+
+    {% if flash %}
+    <div class="flash flash-{{ flash.type }}">{{ flash.msg }}</div>
+    {% endif %}
+
+    <section class="settings-card">
+      <p class="settings-intro">
+        Une annonce qui ne respecte pas un critère est <strong>exclue du profil</strong> : masquée par
+        défaut dans la liste (filtre « Critères » pour la revoir) et jamais notifiée.
+        Une information <strong>inconnue n'exclut jamais</strong> une annonce. Les exclusions sont
+        recalculées dès l'enregistrement, et un critère retiré fait revenir les annonces.
+      </p>
+      <p class="settings-status">
+        {{ profile.label }} :
+        {% if summary %}<strong>{{ summary | join(' · ') }}</strong>{% else %}aucun critère{% endif %}
+        · source : {{ source }}
+        · <a href="/?profile={{ profile.key }}&amp;excl=only">{{ excluded }} annonce{{ 's' if excluded != 1 else '' }} exclue{{ 's' if excluded != 1 else '' }}</a>
+      </p>
+
+      <form method="POST" action="/settings/requirements" class="settings-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="profile" value="{{ profile.key }}">
+        <input type="hidden" name="action" value="save">
+
+        <h2>Logement</h2>
+
+        <label>Surface minimale (m²)
+          <input type="number" name="min_surface_m2" min="1" max="999" step="any"
+                 value="{{ '%g' % req.min_surface_m2 if req.min_surface_m2 else '' }}" placeholder="aucune">
+        </label>
+
+        <label>Meublé
+          <select name="furnished">
+            <option value="" {% if req.furnished is none %}selected{% endif %}>Indifférent</option>
+            <option value="yes" {% if req.furnished == true %}selected{% endif %}>Meublé exigé</option>
+            <option value="no" {% if req.furnished == false %}selected{% endif %}>Non meublé exigé</option>
+          </select>
+        </label>
+
+        <label>DPE maximal <small>(exclut les étiquettes moins bonnes)</small>
+          <select name="max_dpe">
+            <option value="" {% if not req.max_dpe %}selected{% endif %}>Indifférent</option>
+            {% for letter in dpe_letters %}
+            <option value="{{ letter }}" {% if req.max_dpe and req.max_dpe.upper() == letter %}selected{% endif %}>{{ letter }} ou mieux</option>
+            {% endfor %}
+          </select>
+        </label>
+
+        <label class="settings-check">
+          <input type="checkbox" name="no_ground_floor" {% if req.no_ground_floor %}checked{% endif %}>
+          Pas de rez-de-chaussée
+        </label>
+
+        <h2>Bail et conditions <small>(lus dans la description : nécessitent l'<a href="/settings/llm">analyse LLM</a>)</small></h2>
+
+        <label>Disponible au plus tard le
+          <input type="date" name="available_before" value="{{ req.available_before or '' }}">
+        </label>
+
+        <label class="settings-check">
+          <input type="checkbox" name="apl_required" {% if req.apl_required %}checked{% endif %}>
+          APL acceptées (exclut les annonces qui les refusent)
+        </label>
+
+        <label class="settings-check">
+          <input type="checkbox" name="no_colocation" {% if req.no_colocation %}checked{% endif %}>
+          Pas de colocation
+        </label>
+
+        <fieldset class="settings-fieldset">
+          <legend>Types de bail exclus</legend>
+          {% for key, label in leases %}
+          <label class="settings-check">
+            <input type="checkbox" name="excluded_lease_types" value="{{ key }}"
+                   {% if key in req.excluded_lease_types %}checked{% endif %}>
+            {{ label | capitalize }}
+          </label>
+          {% endfor %}
+        </fieldset>
+
+        <div class="settings-actions">
+          <button type="submit" class="btn-scrape">Enregistrer et appliquer</button>
+        </div>
+      </form>
+
+      {% if source == 'interface' %}
+      <form method="POST" action="/settings/requirements" class="settings-actions"
+            onsubmit="return confirm('Revenir aux critères de config.py pour ce profil ?')">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="profile" value="{{ profile.key }}">
+        <input type="hidden" name="action" value="reset">
+        <button type="submit" class="btn-clear-db">
+          {% if has_config_defaults %}Revenir aux critères de config.py{% else %}Retirer tous les critères{% endif %}
+        </button>
+      </form>
+      {% endif %}
+    </section>
+  </div>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

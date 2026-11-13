@@ -2,7 +2,7 @@
 
 > Document de suivi global des sprints. Mis à jour au fil de l'avancement.
 >
-> **Dernière mise à jour** : 2026-11-13 — Sprint 15 (tout livré sauf 15.3), Sprint 16 rédigé ; audit : [AUDIT_2026-11.md](AUDIT_2026-11.md)
+> **Dernière mise à jour** : 2026-11-13 — Sprint 15 livré (15.3 SeLoger JSON, critères dans l’UI), Sprint 16 rédigé ; audit : [AUDIT_2026-11.md](AUDIT_2026-11.md)
 
 ---
 
@@ -35,7 +35,7 @@ Sprint 12 (Refactor & sécurité)            ✅
     ↓
 Sprint 13 (Alerte & priorisation)          ✅
     ↓
-Sprint 15 (Fiches détaillées & sources)    🔵  15.1 ✅ 15.2 ✅ 15.4 ✅ 15.5 ✅ 15.6 ✅ 15.7 ✅ 15.8 ✅
+Sprint 15 (Fiches détaillées & sources)    ✅
     ↓
 Sprint 16 (Fiches complètes dès le scraping) 🔲
     ↓
@@ -100,9 +100,9 @@ Une fois les liens récoltés, ouvrir les annonces retenues et extraire leur fic
 |---|-------|--------|-------|
 | 15.1 | LBC : JSON `__NEXT_DATA__`, GPS exact, santé de l'extraction | ✅ | `main.py quality` ; valider les clés JSON sur une vraie page |
 | 15.2 | LBC : annonces complètes dès la recherche | ✅ | Moins de visites de détail ; JSON périmé détecté |
-| 15.3 | SeLoger : état JSON embarqué | 🔲 | |
+| 15.3 | SeLoger : état JSON embarqué | ✅ | Recherche + détail ; URLs normalisées (migration 10) ; validé en réel |
 | 15.4 | Analyse de la description par LLM | ✅ | LLM et clé de l’utilisateur (page « Connexion LLM ») ; une seule lecture par texte ; malus arnaque |
-| 15.5 | Critères éliminatoires par profil | ✅ | Inconnu = conservé ; recalculé à chaque rescore |
+| 15.5 | Critères éliminatoires par profil | ✅ | Inconnu = conservé ; recalculé à chaque rescore ; saisie dans l’UI (page « Critères ») |
 | 15.6 | Retours ⭐/👎 → poids appris | ✅ | Appliqués sur confirmation ; suivi des favoris |
 | 15.7 | Source Bien'ici (API JSON) + modèle `Listing` | ✅ | `ApiScraper` : sources sans navigateur |
 | 15.8 | Doublons par empreinte photo | ✅ | dHash Pillow ; `python main.py dedupe` |

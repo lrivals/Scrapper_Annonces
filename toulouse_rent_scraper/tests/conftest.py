@@ -19,6 +19,8 @@ def isolated_state(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "NOTIFY_BACKEND", None)
     # Poids appris (15.6) : jamais le vrai fichier
     monkeypatch.setattr(config, "SCORE_WEIGHTS_FILE", tmp_path / "score_weights.json")
+    # Critères saisis dans l'interface (15.5) : jamais le vrai fichier
+    monkeypatch.setattr(config, "REQUIREMENTS_FILE", tmp_path / "profile_requirements.json")
     # Doublons par photo (15.8) : aucun téléchargement pendant les tests (activé au cas par cas)
     monkeypatch.setattr(config, "PHOTO_DEDUP_ENABLED", False)
 

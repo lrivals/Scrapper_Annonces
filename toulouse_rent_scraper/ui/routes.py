@@ -16,7 +16,7 @@ from storage.queries import (
     SORT_COLUMNS, ListingFilters, annonces_by_ids, count_excluded, list_annonces, list_sites,
     map_listings,
 )
-from filters.requirements import describe_requirements
+from filters.requirements import current_requirements, describe_requirements
 from storage.sqlite import clear_db, set_annonce_status
 from ui.export import build_candidature_markdown, candidature_filename
 from scoring import describe as describe_score
@@ -114,7 +114,7 @@ def index():
         current_dups=shown.dups,
         current_excl=shown.excl,
         current_fb=shown.fb,
-        requirements=describe_requirements(profile.requirements),
+        requirements=describe_requirements(current_requirements(profile)),
         excluded_url=_with_param(request.full_path, "excl", "only"),
         excluded_count=count_excluded(profile.key, shown) if shown.excl != "only" else len(annonces),
         current_prix_min=shown.prix_min,
@@ -232,6 +232,63 @@ def weights_apply():
     count = rescore()
     log.info("POST /settings/weights — poids appliqués %s", proposal.proposed)
     return redirect(_add_flash("/settings/weights", "ok", f"Poids appliqués — {count} scores recalculés."))
+
+
+@bp.route("/settings/requirements")
+def requirements_page():
+    """Critères éliminatoires par profil (15.5), modifiables sans toucher à config.py."""
+    from filters.requirements import DPE_ORDER, EXCLUDABLE_LEASES, LEASE_LABELS, requirements_source
+    from storage.queries import ListingFilters
+
+    profile = _current_profile(request.args.get("profile"))
+    flash = None
+    if request.args.get("flash") and request.args.get("flash_msg"):
+        flash = {"type": request.args["flash"], "msg": request.args["flash_msg"]}
+    req = current_requirements(profile)
+    return render_template(
+        "requirements.html",
+        profile=profile,
+        profiles=list(SEARCH_PROFILES.values()),
+        req=req,
+        summary=describe_requirements(req),
+        source=requirements_source(profile),
+        has_config_defaults=not profile.requirements.is_empty(),
+        excluded=count_excluded(profile.key, ListingFilters()),
+        leases=[(k, LEASE_LABELS[k]) for k in EXCLUDABLE_LEASES],
+        dpe_letters=DPE_ORDER[:-1],
+        flash=flash,
+    )
+
+
+@bp.route("/settings/requirements", methods=["POST"])
+def requirements_apply():
+    from filters.requirements import parse_requirements, reset_requirements, save_requirements
+    from scoring import rescore
+    from storage.queries import ListingFilters
+
+    key = request.form.get("profile", "")
+    if key not in SEARCH_PROFILES:
+        return redirect(_add_flash("/settings/requirements", "err", "Profil inconnu."))
+    page = f"/settings/requirements?profile={key}"
+    action = request.form.get("action")
+    if action == "reset":
+        if not reset_requirements(key):
+            return redirect(_add_flash(page, "ok", "Les critères de config.py sont déjà utilisés."))
+    elif action == "save":
+        req, errors = parse_requirements(request.form)
+        if errors:
+            return redirect(_add_flash(page, "err", "Critères non enregistrés : " + " ; ".join(errors)))
+        save_requirements(key, req)
+    else:
+        return redirect(_add_flash(page, "err", "Action inconnue."))
+
+    rescore([key])
+    excluded = count_excluded(key, ListingFilters())
+    label = SEARCH_PROFILES[key].label
+    log.info("POST /settings/requirements — profil=%s action=%s → %d exclue(s)", key, action, excluded)
+    what = "Critères de config.py rétablis" if action == "reset" else "Critères enregistrés"
+    plural = "s" if excluded != 1 else ""
+    return redirect(_add_flash(page, "ok", f"{what} pour {label} — {excluded} annonce{plural} exclue{plural}."))
 
 
 @bp.route("/clear-db", methods=["POST"])

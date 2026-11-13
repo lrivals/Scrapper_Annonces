@@ -468,6 +468,9 @@ FEEDBACK_MIN_PER_CLASS = 5     # au moins autant de positifs que de négatifs
 # Poids confirmés par l'utilisateur (`python main.py weights --apply` ou l'interface),
 # prioritaires sur SCORE_WEIGHTS ; supprimer le fichier pour revenir aux poids ci-dessus.
 SCORE_WEIGHTS_FILE = Path(__file__).resolve().parent / "data" / "score_weights.json"
+# Critères éliminatoires (15.5) saisis dans l'interface (page « Critères »), par profil :
+# prioritaires sur `SearchProfile.requirements` ; supprimer le fichier pour revenir à ceux-ci.
+REQUIREMENTS_FILE = Path(__file__).resolve().parent / "data" / "profile_requirements.json"
 
 
 # =========================

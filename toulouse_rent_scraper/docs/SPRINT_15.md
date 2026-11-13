@@ -1,7 +1,7 @@
 # Sprint 15 — Fiches détaillées, tri affiné, nouvelles sources
 
 > **Date** : 2026-11-12
-> **Statut** : 🔵 En cours — 15.1, 15.2, 15.4 à 15.8 livrés ; reste 15.3 (SeLoger, nécessite une capture réelle)
+> **Statut** : ✅ Livré (2026-11-13) — 15.1 à 15.8 livrés et validés en réel, sauf 15.4 (analyse LLM : à valider avec une clé de l'utilisateur)
 > **Origine** : réflexion « comment améliorer la récolte, le tri, l'automatisation et la couverture »
 > **Prérequis** : [Sprint 12](SPRINT_12.md) (migrations versionnées, `chrome_session`), [Sprint 13](SPRINT_13.md) (score, notifications), [Sprint 14](SPRINT_14.md) (profils)
 
@@ -26,13 +26,13 @@ Constat de départ :
 
 | # | Tâche | Statut | Notes |
 |---|-------|--------|-------|
-| 15.1 | LBC : extraction depuis `__NEXT_DATA__`, GPS exact, santé de l'extraction | ✅ | À valider sur une vraie page (voir bilan) |
-| 15.2 | LBC : annonces complètes dès la page de recherche | ✅ | À valider sur une vraie page (voir bilan) |
-| 15.3 | SeLoger : extraction depuis l'état JSON embarqué | 🔲 | Même principe que 15.1 |
+| 15.1 | LBC : extraction depuis `__NEXT_DATA__`, GPS exact, santé de l'extraction | ✅ | Validé en réel le 2026-11-13 |
+| 15.2 | LBC : annonces complètes dès la page de recherche | ✅ | Validé en réel ; la recherche LBC n'a pas de description |
+| 15.3 | SeLoger : extraction depuis l'état JSON embarqué | ✅ | Recherche + détail ; URLs SeLoger normalisées (migration 10) ; validé en réel |
 | 15.4 | Analyse de la description par LLM | ✅ | Optionnelle ; LLM et clé de l'utilisateur ; une seule lecture par texte (15.4-bis) |
-| 15.5 | Critères éliminatoires par profil | ✅ | Distincts des poids du score ; à remplir par profil |
+| 15.5 | Critères éliminatoires par profil | ✅ | Distincts des poids du score ; saisis dans l'UI (page « Critères ») |
 | 15.6 | Retours ⭐ / 👎 dans l'UI → poids appris | ✅ | Régression logistique ; appliqués sur confirmation |
-| 15.7 | Nouvelle source : Bien'ici (API JSON) + modèle `Listing` | ✅ | À valider sur la vraie API (voir bilan) ; puis PAP ([Sprint 4](SPRINT_4.md)) |
+| 15.7 | Nouvelle source : Bien'ici (API JSON) + modèle `Listing` | ✅ | Validé en réel ; puis PAP ([Sprint 4](SPRINT_4.md)) |
 | 15.8 | Doublons inter-sites par empreinte photo | ✅ | dHash avec Pillow (sans `imagehash`) |
 
 Hors sprint, à garder en tête : temps de trajet (13.5, désormais possible grâce au GPS
@@ -229,12 +229,63 @@ d'objets « annonce » trouvée dans l'arbre), au même format que la page de d�
     plus jugée sur la recherche LBC (`QUALITY_SEARCH_SKIP_FIELDS` dans `config.py`) ; elle
     reste contrôlée après `enrich`. Test : `test_search_health_ignores_description_absent_from_search_json`.
 
-## 15.3 — SeLoger : état JSON embarqué 🔲
+## 15.3 — SeLoger : état JSON embarqué ✅
 
-SeLoger embarque aussi l'état de la page dans un `<script>` (à identifier avec
-`scripts/debug/explore_seloger_structure.py`). Même architecture que 15.1 :
-`seloger_json.py` + repli DOM + `extraction_source`. Seuil `QUALITY_MIN_JSON_RATE["SeLoger"]`
-à ajouter une fois validé.
+**Fichiers** : `scrapers/detail_extractors/seloger_json.py` (nouveau),
+`scrapers/detail_extractors/seloger_detail.py`, `scrapers/seloger.py`, `storage/cleaner.py`,
+`storage/migrations.py` (migration 10), `config.py`, `tests/test_seloger_json.py` (nouveau)
+
+### Format constaté (capture réelle du 2026-11-13, profils ENAC et Blagnac)
+
+Les pages SeLoger (micro-frontends « UFRN ») embarquent leur état dans
+`<script>window["NOM"]=JSON.parse("…")</script>` : la chaîne passée à `JSON.parse` est
+elle-même un littéral JSON (double décodage, `json.JSONDecoder.raw_decode`).
+
+| Page | État | Contenu utile |
+|---|---|---|
+| Recherche | `__UFRN_FETCHER__` → `data["classified-serp-data"]` | `classifieds` (ordre), `classifiedsData` {id: annonce} : prix, surface, pièces, chambres, étage, photos, annonceur, quartier, CC/HC. Description **tronquée** (« … »), ni GPS ni DPE |
+| Détail | `__UFRN_LIFECYCLE_SERVERREQUEST__` → `app_cldp.data.classified` | `sections` : description complète, `hardFacts`, `energy` (DPE/GES `efficiencyClass.rating`), `price` (charges, dépôt, honoraires), `features` (meublé, ascenseur, balcon…), `location.geometry` |
+
+- **GPS** : `Point` + `isAddressPublished` → exact ; sinon `MultiPolygon` du quartier → centre, approximatif.
+- **Photos** : l'image classée `LOGO` (logo d'agence) est écartée — elle fausserait les doublons photo (15.8).
+- Code postal fictif `99000` (annonce sans adresse) retiré de `location_raw`.
+- `extra_attributes` : équipements (`features`), chauffage / énergie, honoraires, disponibilité,
+  année de construction, quartier — pour 15.4 / 15.5 sans re-scraper.
+
+### Recherche et détail
+
+- `SeLogerScraper.page_json_annonces` : annonces du JSON (`search_json`), jointes aux cartes par
+  l'identifiant de l'annonce (`26K5F58IG3TY`, ou l'ancien id numérique) ; les cartes absentes du
+  JSON passent par le DOM, comme pour LBC. La description de la recherche étant tronquée, elle
+  n'est pas enregistrée : la page de détail reste visitée (`QUALITY_SEARCH_SKIP_FIELDS["SeLoger"]`).
+- `seloger_detail.extract_detail` : JSON d'abord, DOM en secours (complété par le JSON partiel),
+  `field_sources` par champ. Corrigé au passage dans le DOM : « Non meublé » comptait comme meublé.
+- `page_shows_expired` reconnaît aussi l'état SeLoger (annonce en ligne).
+- `QUALITY_MIN_JSON_RATE["SeLoger"] = 0.5`.
+
+### URLs canoniques (migration 10)
+
+Les liens des cartes portaient toute la recherche, **numéro de page compris**
+(`…/26K5F58IG3TY?serp_view=list&search=…page%3D3…#ln=…`) ; or l'insertion dédoublonne sur l'URL
+exacte : une annonce revue sur une autre page devenait une nouvelle ligne. Les URLs SeLoger sont
+désormais coupées avant `?`/`#` (`canonical_url`, cartes comme JSON). La migration 10 nettoie la
+base ; deux lignes qui retombent sur la même URL sont fusionnées dans la plus ancienne (historique
+des prix, profils, retours, doublons rattachés). Base réelle : 293 URLs nettoyées, aucune collision.
+
+### Bilan
+
+- Tests : `tests/test_seloger_json.py` (40 tests : double décodage, détail complet, HC / adresse non
+  publiée / polygone, étages, DPE de secours, recherche, ordre et annonces suggérées ignorées,
+  identifiants des 3 formes d'URL, scraper, JSON d'abord / repli DOM, annonce en ligne, migration).
+  Suite complète verte.
+- **Validation réelle du 2026-11-13** :
+  - `scrape --site seloger --profile blagnac` (10 pages) : `30 annonces lues depuis le JSON de la page`
+    sur chaque page, 2 cartes par page hors JSON (DOM) ; 320 brutes, 208 conservées (144 nouvelles),
+    188 fiches pré-remplies.
+  - `enrich --site seloger --limit 5` : 5/5 `json`, 1 annonce repositionnée (GPS exact).
+    `quality --days 1` : JSON 100 %, surface / pièces / chambres / description / photos / charges /
+    caution / meublé / DPE / GES / annonceur / date 100 %, étage et ascenseur 80 %. Aucun champ sous
+    son seuil.
 
 ## 15.4 — Analyse de la description par LLM ✅
 
@@ -413,7 +464,14 @@ jamais. Le « meublé » d'une annonce non enrichie est ignoré (valeur par déf
   enrichissement, migration, exclusion par profil, réversibilité, champs LLM, notifications, UI,
   carte). Suite complète verte.
 - **À faire par l'utilisateur** : les profils ENAC et Blagnac n'ont pas encore de critères
-  (`Requirements()` vide, aucun effet). Les renseigner dans `config.py`, puis `python main.py rescore`.
+  (`Requirements()` vide, aucun effet). Les renseigner sur la page **Critères** de l'interface
+  (ci-dessous) ou dans `config.py` puis `python main.py rescore`.
+- **Saisie dans l'interface (2026-11-13)** : page `/settings/requirements` (bouton « Critères »,
+  lien « modifier » du bandeau), un onglet par profil. Enregistrer écrit
+  `data/profile_requirements.json` (prioritaire sur `SearchProfile.requirements`, profil par profil)
+  et recalcule aussitôt les exclusions du profil ; « Revenir aux critères de config.py » supprime
+  l'entrée. Valeurs invalides refusées sans rien enregistrer. `rescore` (CLI, timer) lit les mêmes
+  critères effectifs (`filters/requirements.py::current_requirements`). Tests : `tests/test_requirements.py`.
 - Les critères issus de la description (disponibilité, APL, colocation, bail) ne jouent que si
   l'analyse LLM (15.4) est activée.
 
@@ -618,3 +676,6 @@ ne sont pas modifiés.
 - ⚠️ **À valider en réel** : `python main.py dedupe`, puis dans l'UI filtrer un profil et vérifier
   2–3 liens « aussi sur … » créés par la photo (log `📷 Doublon par photo`). Si les CDN d'images
   répondent 403 (log en DEBUG), il faudra ajouter un en-tête `Referer` du site.
+- **Validation réelle du 2026-11-13** : `dedupe --limit 60` → 60 empreintes, 0 échec (aucun 403),
+  6 doublons rattachés, tous cohérents (Bien'ici ↔ LBC / SeLoger : même prix, même surface, même
+  quartier). Au scrape SeLoger suivant : 150 empreintes, 36 doublons.
