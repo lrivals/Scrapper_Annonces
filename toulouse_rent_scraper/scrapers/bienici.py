@@ -12,6 +12,11 @@
 # zone via l'autocomplétion du site (res.bienici.com/suggest.json?q=Toulouse), puis
 # mises en cache dans data/bienici_zones.json.
 #
+# Recherche par URL (bienici_search_url) : l'URL copiée du site
+#   /recherche/location/toulouse-31000,blagnac-31700?chambres-min=1&balcon-ou-terrasse=oui&tri=publication-desc
+# est traduite en filtres de l'API (table du site : chambres-min → minBedrooms,
+# balcon-ou-terrasse → hasBalconyOrTerrace…) et paginée par 24 comme la liste du site.
+#
 # Chaque annonce de l'API est complète (description, surface, DPE, photos, position) :
 # elle est marquée enrichie d'emblée, sans visite de page.
 # =========================
@@ -21,7 +26,8 @@ import json
 import re
 import unicodedata
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import parse_qs, unquote, urlparse
 
 from config import (
     BIENICI_BASE_URL,
@@ -30,9 +36,11 @@ from config import (
     BIENICI_MIN_DELAY,
     BIENICI_PAGE_SIZE,
     BIENICI_SEARCH_API,
+    BIENICI_SITE_PAGE_SIZE,
     BIENICI_SUGGEST_API,
     BIENICI_TIMEOUT,
     BIENICI_ZONE_CACHE_FILE,
+    MAX_PAGES_PER_SITE,
     SearchProfile,
 )
 from scrapers.api_base import ApiScraper
@@ -219,11 +227,105 @@ def parse_ad(ad: Dict) -> Optional[Listing]:
 # Recherche
 # ---------------------------------------------------------------------------
 
-def build_filters(profile: SearchProfile, zone_ids: List[str], page: int) -> Dict[str, Any]:
-    """Filtres de recherche de l'API pour un profil (budget, pièces, types, zones)."""
+# Paramètres d'URL du site → filtres de l'API (extrait de la table du JS de bienici.com)
+_URL_NUMBER_PARAMS = {
+    "prix-min": "minPrice", "prix-max": "maxPrice",
+    "surface-min": "minArea", "surface-max": "maxArea",
+    "chambres-min": "minBedrooms", "chambres-max": "maxBedrooms",
+}
+_URL_FLAG_PARAMS = {
+    "balcon": "hasBalcony", "terrasse": "hasTerrace", "balcon-ou-terrasse": "hasBalconyOrTerrace",
+    "jardin": "hasGarden", "parking": "hasParking", "cave": "hasCellar", "ascenseur": "hasElevator",
+    "piscine": "hasPool", "meuble": "isFurnished", "non-meuble": "isNotFurnished",
+    "dernier-etage": "isOnLastFloor", "rez-de-chaussee": "isGroundFloor",
+    "pas-au-rez-de-chaussee": "isNotGroundFloor", "colocation-autorisee": "flatSharing",
+    "duplex": "isDuplex", "toilettes-separees": "hasSeparateToilet", "pmr": "isDisabledPeopleFriendly",
+    "residence-etudiants": "isInStudentResidence", "pas-en-residence": "isNotInResidence",
+    "photo": "hasPhoto",
+}
+_URL_SORTS = {
+    "publication": "publicationDate", "modification": "modificationDate", "prix": "price",
+    "prixm2": "pricePerSquareMeter", "surface": "surfaceArea", "pieces": "roomsQuantity",
+    "pertinence": "relevance",
+}
+# Segment de type de bien de l'URL (/recherche/location/<lieux>/<types>) → types de l'API
+_URL_PROPERTY_TYPES = {
+    "appartement": "flat", "maisonvilla": "house", "loft": "loft", "chateau": "castle",
+    "hotel-particulier": "townhouse", "batiment": "building",
+}
+# Types interrogés par le site quand l'URL n'en précise aucun
+_DEFAULT_URL_PROPERTY_TYPES = ("flat", "house", "loft", "castle", "townhouse")
+
+
+def parse_search_url(url: str) -> Tuple[List[Tuple[str, Optional[str]]], Dict[str, Any]]:
+    """
+    URL de recherche du site → ([(commune, code postal), …], filtres de l'API hors
+    zones et pagination). Les paramètres inconnus (mode, carte, page…) sont ignorés.
+    """
+    parsed = urlparse(url)
+    segments = [unquote(s) for s in parsed.path.split("/") if s]
+    if len(segments) < 3 or segments[0] != "recherche":
+        raise ValueError(f"URL Bien'ici inattendue : {url}")
+    filter_type = {"location": "rent", "achat": "buy"}.get(segments[1])
+    if not filter_type:
+        raise ValueError(f"URL Bien'ici : type de transaction inconnu « {segments[1]} »")
+
+    places: List[Tuple[str, Optional[str]]] = []
+    for raw in segments[2].split(","):
+        m = re.fullmatch(r"(.+?)-(\d{5})", raw.strip())
+        name, postal = (m.group(1), m.group(2)) if m else (raw.strip(), None)
+        if name:
+            places.append((name.replace("-", " "), postal))
+
+    types: List[str] = []
+    if len(segments) > 3:
+        for slug in segments[3].split(","):
+            t = _URL_PROPERTY_TYPES.get(slug)
+            if t and t not in types:
+                types.append(t)
+
     filters: Dict[str, Any] = {
-        "size": BIENICI_PAGE_SIZE,
-        "from": (page - 1) * BIENICI_PAGE_SIZE,
+        "filterType": filter_type,
+        "propertyType": types or list(_DEFAULT_URL_PROPERTY_TYPES),
+        "sortBy": "publicationDate",
+        "sortOrder": "desc",
+    }
+    query = {k: v[-1] for k, v in parse_qs(parsed.query).items()}
+    for key, value in query.items():
+        if key in _URL_NUMBER_PARAMS:
+            number = _number(value)
+            if number is not None:
+                filters[_URL_NUMBER_PARAMS[key]] = int(number) if number.is_integer() else number
+        elif key in _URL_FLAG_PARAMS and value.lower() == "oui":
+            filters[_URL_FLAG_PARAMS[key]] = True
+    sort = query.get("tri")
+    if sort:
+        field, _, order = sort.partition("-")
+        if field in _URL_SORTS:
+            filters["sortBy"] = _URL_SORTS[field]
+            filters["sortOrder"] = "asc" if order == "asc" else "desc"
+    return places, filters
+
+
+def page_size(profile: SearchProfile) -> int:
+    return BIENICI_SITE_PAGE_SIZE if profile.bienici_search_url else BIENICI_PAGE_SIZE
+
+
+def max_pages(profile: SearchProfile) -> int:
+    if profile.bienici_max_pages:
+        return profile.bienici_max_pages
+    return MAX_PAGES_PER_SITE if profile.bienici_search_url else BIENICI_MAX_PAGES
+
+
+def build_filters(profile: SearchProfile, zone_ids: List[str], page: int) -> Dict[str, Any]:
+    """
+    Filtres de recherche de l'API pour un profil : ceux de bienici_search_url s'il
+    est fourni, sinon budget, pièces et types du profil.
+    """
+    size = page_size(profile)
+    filters: Dict[str, Any] = {
+        "size": size,
+        "from": (page - 1) * size,
         "page": page,
         "showAllModels": False,
         "filterType": "rent",
@@ -233,6 +335,9 @@ def build_filters(profile: SearchProfile, zone_ids: List[str], page: int) -> Dic
         "onTheMarket": [True],
         "zoneIdsByTypes": {"zoneIds": list(zone_ids)},
     }
+    if profile.bienici_search_url:
+        filters.update(parse_search_url(profile.bienici_search_url)[1])
+        return filters
     if profile.min_rent_eur is not None:
         filters["minPrice"] = profile.min_rent_eur
     if profile.max_rent_eur is not None:
@@ -250,18 +355,23 @@ def _read_zone_cache(path: Path) -> Dict[str, List[str]]:
         return {}
 
 
-def pick_zone_ids(place: str, suggestions: Any) -> List[str]:
+def pick_zone_ids(place: str, suggestions: Any, postal_code: Optional[str] = None) -> List[str]:
     """
     Identifiants de zone d'une commune parmi les suggestions de l'autocomplétion :
-    la suggestion dont le nom correspond exactement, sinon la première.
+    la suggestion dont le nom (et le code postal, s'il est connu) correspond exactement,
+    sinon celle dont le nom correspond, sinon la première.
     """
     if not isinstance(suggestions, list):
         return []
     candidates = [s for s in suggestions if isinstance(s, dict) and s.get("zoneIds")]
     wanted = normalize_place(place)
-    for s in candidates:
-        if normalize_place(str(s.get("name") or "")) == wanted:
-            return [str(z) for z in s["zoneIds"]]
+    named = [s for s in candidates if normalize_place(str(s.get("name") or "")) == wanted]
+    if postal_code:
+        for s in named:
+            if postal_code in [str(c) for c in s.get("postalCodes") or []]:
+                return [str(z) for z in s["zoneIds"]]
+    if named:
+        return [str(z) for z in named[0]["zoneIds"]]
     return [str(z) for z in candidates[0]["zoneIds"]] if candidates else []
 
 
@@ -272,6 +382,8 @@ class BienIciScraper(ApiScraper):
         return SITE_NAME
 
     def search_url(self) -> Optional[str]:
+        if self.profile.bienici_search_url:
+            return self.profile.bienici_search_url
         if not (self.profile.bienici_zone_ids or self.profile.bienici_places):
             return None
         return BIENICI_SEARCH_API
@@ -282,18 +394,26 @@ class BienIciScraper(ApiScraper):
     # --- Zones ---
 
     def zone_ids(self, cache_file: Path = BIENICI_ZONE_CACHE_FILE) -> List[str]:
-        """Zones du profil : identifiants fournis, sinon communes résolues (cache disque)."""
+        """
+        Zones du profil : identifiants fournis, sinon communes de bienici_search_url,
+        sinon bienici_places — résolues via l'autocomplétion (cache disque).
+        """
         if self.profile.bienici_zone_ids:
             return list(self.profile.bienici_zone_ids)
+        if self.profile.bienici_search_url:
+            places = parse_search_url(self.profile.bienici_search_url)[0]
+        else:
+            places = [(p, None) for p in self.profile.bienici_places]
         cache = _read_zone_cache(cache_file)
         ids: List[str] = []
         changed = False
-        for place in self.profile.bienici_places:
-            key = normalize_place(place)
+        for place, postal in places:
+            key = normalize_place(f"{place} {postal}" if postal else place)
             if key not in cache:
                 self.polite_delay(BIENICI_MIN_DELAY, BIENICI_MAX_DELAY)
                 found = pick_zone_ids(
-                    place, self.get_json(BIENICI_SUGGEST_API, {"q": place}, timeout=BIENICI_TIMEOUT)
+                    place, self.get_json(BIENICI_SUGGEST_API, {"q": place}, timeout=BIENICI_TIMEOUT),
+                    postal_code=postal,
                 )
                 if not found:
                     self.logger.warning(f"Bien'ici : commune introuvable « {place} », ignorée")
@@ -313,7 +433,8 @@ class BienIciScraper(ApiScraper):
             self.logger.error("Bien'ici : aucune zone de recherche résolue, recherche annulée")
             return
         seen = set()
-        for page in range(1, BIENICI_MAX_PAGES + 1):
+        size = page_size(self.profile)
+        for page in range(1, max_pages(self.profile) + 1):
             self.polite_delay(BIENICI_MIN_DELAY, BIENICI_MAX_DELAY)
             data = self.get_json(
                 BIENICI_SEARCH_API,
@@ -336,5 +457,5 @@ class BienIciScraper(ApiScraper):
                     added += 1
             total = data.get("total")
             self.logger.info(f"  Page {page} : {added} annonces (total annoncé : {total})")
-            if len(ads) < BIENICI_PAGE_SIZE or (isinstance(total, int) and page * BIENICI_PAGE_SIZE >= total):
+            if len(ads) < size or (isinstance(total, int) and page * size >= total):
                 break

@@ -279,14 +279,21 @@ toulouse_rent_scraper/
 
 Modifiez `config.py` pour ajuster :
 
-- `SEARCH_PROFILES` : profils de recherche (cible, budget, rayon, pièces, URLs LeBonCoin/SeLoger,
-  communes Bien'ici `bienici_places`).
+- `SEARCH_PROFILES` : profils de recherche (cible, budget, rayon, pièces, URLs LeBonCoin/SeLoger/Bien'ici,
+  ou communes Bien'ici `bienici_places`).
   Ajouter un profil = ajouter une entrée. `min_rent_eur`, `max_rent_eur` et `rooms` sont
   optionnels (`None` = pas de filtre). Deux façons de décrire une recherche :
   - **URL construite** : `lbc_location` / `seloger_locations` (+ budget), comme `enac` ;
   - **URL copiée du site** : `lbc_search_url` / `seloger_search_url`, utilisée telle quelle et
     paginée par `&page=2…` jusqu'à `MAX_PAGES_PER_SITE`, avec en option des recherches de
     **warm-up** (`lbc_warmup_urls` / `seloger_warmup_urls`) visitées avant, comme `blagnac`.
+  - **Bien'ici** : `bienici_search_url` = URL de recherche copiée de bienici.com (ex. `blagnac` :
+    `/recherche/location/toulouse-31000,blagnac-31700?chambres-min=1&chambres-max=2&balcon-ou-terrasse=oui&tri=publication-desc`).
+    Pas de navigateur : communes, chambres, prix, surface, types, options (`balcon-ou-terrasse`,
+    `meuble`, `jardin`…) et tri sont traduits en filtres de l'API JSON du site, paginée par 24
+    comme la liste du site jusqu'à `bienici_max_pages` (défaut `MAX_PAGES_PER_SITE`). Les
+    paramètres `page`/`mode` de l'URL sont ignorés. Sans URL : communes `bienici_places`
+    (50 annonces × `BIENICI_MAX_PAGES`), comme `enac`.
 - `MAX_RENT_EUR` / `MAX_DISTANCE_KM` : budget et rayon du profil historique `enac`
 - `CHROME_BINARY` / `CHROME_DEBUG_PORT` : Chrome utilisé et port CDP (`0` = port libre)
 - `MAX_PAGES_PER_SITE` : Nombre de pages à scraper (défaut : 10)
