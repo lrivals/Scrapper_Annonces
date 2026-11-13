@@ -113,6 +113,7 @@ def index():
         current_status=shown.status,
         current_dups=shown.dups,
         current_excl=shown.excl,
+        current_fb=shown.fb,
         requirements=describe_requirements(profile.requirements),
         excluded_url=_with_param(request.full_path, "excl", "only"),
         excluded_count=count_excluded(profile.key, shown) if shown.excl != "only" else len(annonces),
@@ -157,6 +158,80 @@ def delete():
 @bp.route("/restore", methods=["POST"])
 def restore():
     return _set_status_from_form("active", "restaurée")
+
+
+@bp.route("/feedback", methods=["POST"])
+def feedback():
+    """⭐ / 📞 / 👎 (15.6) : un second clic sur le même bouton efface le retour."""
+    from storage.feedback import FEEDBACK_VALUES, LABELS, get_feedback, set_feedback
+
+    is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+    annonce_id = request.form.get("id", "").strip()
+    value = request.form.get("value", "").strip()
+    profile = request.form.get("profile", "")
+
+    def reply(ok: bool, msg: str, current=None, status=200):
+        if is_ajax:
+            return jsonify({"ok": ok, "msg": msg, "feedback": current}), status
+        return redirect(_add_flash(_back(), "ok" if ok else "err", msg))
+
+    if not annonce_id.isdigit():
+        return reply(False, "ID invalide.", status=400)
+    if profile not in SEARCH_PROFILES:
+        return reply(False, "Profil inconnu.", status=400)
+    if value and value not in FEEDBACK_VALUES:
+        return reply(False, "Retour inconnu.", status=400)
+    if value and get_feedback(int(annonce_id), profile) == value:
+        value = ""   # bascule : re-cliquer retire le retour
+    result = set_feedback(int(annonce_id), profile, value or None)
+    if result is None:
+        return reply(False, "Annonce introuvable.", status=404)
+    log.info("POST /feedback — id=%s profil=%s retour=%s", annonce_id, profile, value or "effacé")
+    title = result["title"][:50]
+    msg = f"« {title} » : {LABELS[value]}." if value else f"Retour retiré pour « {title} »."
+    return reply(True, msg, current=result["feedback"])
+
+
+@bp.route("/settings/weights")
+def weights_page():
+    from analysis.weights import propose_weights, weights_source
+    from scoring import LABELS
+    from storage.feedback import feedback_counts
+
+    flash = None
+    if request.args.get("flash") and request.args.get("flash_msg"):
+        flash = {"type": request.args["flash"], "msg": request.args["flash_msg"]}
+    return render_template(
+        "weights.html",
+        proposal=propose_weights(),
+        counts=feedback_counts(),
+        labels=LABELS,
+        source=weights_source(),
+        flash=flash,
+    )
+
+
+@bp.route("/settings/weights", methods=["POST"])
+def weights_apply():
+    from analysis.weights import propose_weights, reset_weights, save_weights
+    from scoring import rescore
+
+    action = request.form.get("action")
+    if action == "reset":
+        changed = reset_weights()
+        count = rescore()
+        msg = (f"Poids de config.py rétablis — {count} scores recalculés." if changed
+               else "Les poids de config.py sont déjà utilisés.")
+        return redirect(_add_flash("/settings/weights", "ok", msg))
+    if action != "apply":
+        return redirect(_add_flash("/settings/weights", "err", "Action inconnue."))
+    proposal = propose_weights()
+    if not proposal.ready:
+        return redirect(_add_flash("/settings/weights", "err", proposal.message))
+    save_weights(proposal.proposed, proposal.samples)
+    count = rescore()
+    log.info("POST /settings/weights — poids appliqués %s", proposal.proposed)
+    return redirect(_add_flash("/settings/weights", "ok", f"Poids appliqués — {count} scores recalculés."))
 
 
 @bp.route("/clear-db", methods=["POST"])

@@ -17,6 +17,8 @@ def isolated_state(tmp_path, monkeypatch):
     monkeypatch.setattr(utils.lock, "SCRAPE_LOCK_FILE", tmp_path / ".scrape.lock")
     monkeypatch.setattr(scrapers.antibot, "BLOCK_STATE_FILE", tmp_path / ".last_block.json")
     monkeypatch.setattr(config, "NOTIFY_BACKEND", None)
+    # Poids appris (15.6) : jamais le vrai fichier
+    monkeypatch.setattr(config, "SCORE_WEIGHTS_FILE", tmp_path / "score_weights.json")
 
 
 @pytest.fixture

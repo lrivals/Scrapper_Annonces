@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Poids du score</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+</head>
+<body>
+  <div class="wrapper settings-page">
+    <header>
+      <h1>Poids du score</h1>
+      <nav class="profile-tabs"><a href="/" class="btn-view">← Annonces</a></nav>
+    </header>
+
+    {% if flash %}
+    <div class="flash flash-{{ flash.type }}">{{ flash.msg }}</div>
+    {% endif %}
+
+    <section class="settings-card">
+      <p class="settings-intro">
+        Vos ⭐ favoris et 📞 contactés comptent comme « intéressant », vos 👎 comme « pas intéressé ».
+        À partir de ces retours, une régression logistique estime l'importance de chaque critère du score.
+        Les poids proposés ne sont appliqués <strong>que si vous les confirmez</strong>.
+      </p>
+      <p class="settings-status">
+        Retours : ⭐ {{ counts.favorite }} · 📞 {{ counts.contacted }} · 👎 {{ counts.dislike }}
+        · poids actuels : {{ source }}
+      </p>
+      <p class="{{ 'settings-status' if proposal.ready else 'settings-warn' }}">{{ proposal.message }}</p>
+
+      <table class="weights-table">
+        <thead>
+          <tr><th>Critère</th><th>Actuel</th>{% if proposal.ready %}<th>Proposé</th>{% endif %}</tr>
+        </thead>
+        <tbody>
+          {% for key, weight in proposal.current.items() %}
+          <tr>
+            <td>{{ labels.get(key, key) }}</td>
+            <td>{{ weight | round | int }}</td>
+            {% if proposal.ready %}
+            {% set new = proposal.proposed.get(key, 0) %}
+            <td class="{{ 'up' if new > weight else ('down' if new < weight else '') }}">{{ new }}</td>
+            {% endif %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      {% if proposal.ready %}
+      <p class="settings-intro">
+        Concordance avec vos retours : {{ (proposal.accuracy * 100) | round | int }} %
+        (en répondant toujours pareil : {{ (proposal.baseline * 100) | round | int }} %).
+        Un écart faible signifie que les critères du score expliquent mal vos choix.
+      </p>
+      {% endif %}
+
+      <div class="settings-actions">
+        {% if proposal.ready %}
+        <form method="POST" action="/settings/weights">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="action" value="apply">
+          <button type="submit" class="btn-scrape">Appliquer et recalculer les scores</button>
+        </form>
+        {% endif %}
+        {% if source != 'config.py' %}
+        <form method="POST" action="/settings/weights" onsubmit="return confirm('Revenir aux poids de config.py ?')">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="action" value="reset">
+          <button type="submit" class="btn-clear-db">Revenir aux poids par défaut</button>
+        </form>
+        {% endif %}
+      </div>
+    </section>
+  </div>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

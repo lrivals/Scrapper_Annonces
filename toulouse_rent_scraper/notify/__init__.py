@@ -65,6 +65,16 @@ def notify_events(events: Iterable[dict]) -> int:
     return sent
 
 
+def notify_favorites_gone(annonces: Iterable[dict]) -> int:
+    """Favoris (⭐) devenus expirés (check-links, purge). Retourne le nombre de messages."""
+    from notify.messages import favorite_gone_messages
+
+    sent = 0
+    for message in favorite_gone_messages(list(annonces)):
+        sent += send(**message)
+    return sent
+
+
 def notify_captcha(site_name: str, timeout_seconds: int) -> bool:
     minutes = max(1, round(timeout_seconds / 60))
     return send(

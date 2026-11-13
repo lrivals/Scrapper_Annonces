@@ -260,6 +260,21 @@ def _m7_profile_requirements(cur: sqlite3.Cursor):
         cur.execute("ALTER TABLE annonce_profiles ADD COLUMN excluded_reasons TEXT")
 
 
+def _m8_feedback(cur: sqlite3.Cursor):
+    """Sprint 15.6 — retours de l'utilisateur sur une annonce, par profil."""
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS annonce_feedback (
+            annonce_id  INTEGER NOT NULL REFERENCES annonces(id) ON DELETE CASCADE,
+            profile     TEXT    NOT NULL,
+            feedback    TEXT    NOT NULL,      -- 'favorite' | 'contacted' | 'dislike'
+            price       INTEGER,               -- prix au moment du retour
+            updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (annonce_id, profile)
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_feedback_profile ON annonce_feedback(profile, feedback)")
+
+
 MIGRATIONS = [
     _m1_base_schema,
     _m2_indexes_and_price_history,
@@ -268,6 +283,7 @@ MIGRATIONS = [
     _m5_llm_analysis,
     _m6_llm_registry,
     _m7_profile_requirements,
+    _m8_feedback,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)

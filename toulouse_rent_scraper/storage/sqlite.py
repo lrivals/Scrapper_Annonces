@@ -235,7 +235,8 @@ def get_price(url: str) -> Optional[int]:
 def annonces_for_notification(profile: str, urls: List[str]) -> Dict[str, Dict]:
     """
     Titre, prix, distance et score des annonces d'un profil, indexés par URL
-    (actives et non exclues par les critères du profil — 15.5).
+    (actives et non exclues par les critères du profil — 15.5 ; jamais les 👎, toujours
+    les ⭐ — 15.6).
     """
     if not urls:
         return {}
@@ -244,11 +245,13 @@ def annonces_for_notification(profile: str, urls: List[str]) -> Dict[str, Dict]:
         rows = conn.execute(
             f"""
             SELECT a.url, a.title, a.price, a.location_raw, a.surface_m2, a.nb_rooms, a.dpe_rating,
-                   a.scam_risk, a.available_from, ap.distance_km, ap.score
+                   a.scam_risk, a.available_from, ap.distance_km, ap.score, f.feedback
             FROM annonces a
             JOIN annonce_profiles ap ON ap.annonce_id = a.id AND ap.profile = ?
+            LEFT JOIN annonce_feedback f ON f.annonce_id = a.id AND f.profile = ap.profile
             WHERE a.url IN ({placeholders}) AND COALESCE(a.status, 'active') = 'active'
-              AND ap.excluded_reasons IS NULL
+              AND (ap.excluded_reasons IS NULL OR f.feedback = 'favorite')
+              AND COALESCE(f.feedback, '') != 'dislike'
             """,
             [profile] + list(urls),
         ).fetchall()
@@ -419,6 +422,7 @@ def clear_db() -> int:
     cur.execute("DELETE FROM annonces")
     cur.execute("DELETE FROM annonce_profiles")
     cur.execute("DELETE FROM price_history")
+    cur.execute("DELETE FROM annonce_feedback")
     conn.commit()
     conn.close()
     return count

@@ -436,6 +436,13 @@ SCORE_WEIGHTS = {
 # Valeur (0–1) de chaque étiquette DPE ; inconnu = 0.5 (neutre)
 DPE_SCORES = {"A": 1.0, "B": 1.0, "C": 1.0, "D": 0.6, "E": 0.3, "F": 0.0, "G": 0.0}
 
+# Sprint 15.6 — poids appris des retours ⭐ / 📞 / 👎 de l'interface
+FEEDBACK_MIN_SAMPLES = 30      # retours (positifs + négatifs) avant de proposer des poids
+FEEDBACK_MIN_PER_CLASS = 5     # au moins autant de positifs que de négatifs
+# Poids confirmés par l'utilisateur (`python main.py weights --apply` ou l'interface),
+# prioritaires sur SCORE_WEIGHTS ; supprimer le fichier pour revenir aux poids ci-dessus.
+SCORE_WEIGHTS_FILE = Path(__file__).resolve().parent / "data" / "score_weights.json"
+
 
 # =========================
 # 🔔 NOTIFICATIONS (Sprint 13)

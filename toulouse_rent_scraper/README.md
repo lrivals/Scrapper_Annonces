@@ -90,6 +90,7 @@ python main.py check-links [--limit 50]            # vérifier les liens (Chromi
 python main.py purge                               # vérification HEAD (peu fiable sur SeLoger/LBC)
 python main.py export csv|json                     # export des annonces actives
 python main.py rescore                             # recalculer les scores (après un changement de poids)
+python main.py weights [--apply|--reset]           # poids du score appris de vos ⭐ / 📞 / 👎
 python main.py notify-test                         # vérifier la configuration des notifications
 python main.py quality [--days 7]                  # taux de remplissage des champs par site (santé de l’extraction)
 python main.py analyze [--limit 20]                # analyse LLM des nouvelles descriptions (une lecture par texte) — voir SPRINT_15
@@ -130,6 +131,14 @@ Chaque annonce reçoit, pour chaque profil, un score sur 100 (pastille ★ dans 
 
 Un critère inconnu (annonce pas encore enrichie) vaut 0.5 : il ne pénalise pas. Poids réglables via
 `SCORE_WEIGHTS` dans `config.py`, puis `python main.py rescore`.
+
+### Retours et poids appris
+
+Chaque carte a trois boutons : ⭐ favori, 📞 contacté, 👎 pas intéressé (par profil ; 👎 retire
+l'annonce de la liste par défaut). Après ~30 retours (dont 5 👎), la page « Poids du score » (ou
+`python main.py weights`) propose des poids estimés par régression logistique, à côté des poids
+actuels ; ils ne s'appliquent qu'après confirmation (`data/score_weights.json`). Un favori qui
+baisse de prix ou disparaît du site est toujours notifié.
 
 ### Critères éliminatoires
 
