@@ -376,45 +376,36 @@ def _location_label(ad: Dict) -> Optional[str]:
     return " ".join(parts) or None
 
 
-# Sans ces champs, l'annonce de la recherche ne remplace pas la visite de la page de détail
-SEARCH_COMPLETE_FIELDS = ("description", "surface_m2")
+def search_ad_to_listing(ad: Dict):
+    """Annonce de la recherche → `Listing` (modèle commun, Sprint 15.7), ou None sans URL/prix."""
+    from scrapers.listing import Listing
+
+    url = ad_url(ad)
+    price = _first_price(ad)
+    if not url or price is None:
+        return None
+    d = parse_ad(ad)
+    d.pop("price", None)
+    return Listing(
+        site="LeBonCoin",
+        url=url,
+        title=ad.get("subject") or "",
+        price=price,
+        location_raw=_location_label(ad) or "",
+        source="search_json",
+        **{k: v for k, v in d.items() if k in Listing.__dataclass_fields__},
+    )
 
 
 def search_ad_to_annonce(ad: Dict) -> Optional[Dict]:
     """
     Annonce de la recherche → annonce brute du pipeline (mêmes clés que les cartes DOM),
     plus `details` : les champs d'enrichissement déjà connus.
-    `details["enrichment_status"] == "done"` si la fiche est assez complète pour se passer
-    de la visite de la page de détail.
+    `details["enrichment_status"] == "done"` si la fiche est assez complète (description +
+    surface) pour se passer de la visite de la page de détail.
     """
-    url = ad_url(ad)
-    price = _first_price(ad)
-    if not url or price is None:
-        return None
-    details = parse_ad(ad)
-    details.pop("price", None)
-    lat, lon, precision = details.pop("lat", None), details.pop("lon", None), details.pop("geo_precision", None)
-
-    photos = details.get("photos")
-    annonce = {
-        "site": "LeBonCoin",
-        "title": (ad.get("subject") or "").strip(),
-        "price": price,
-        "location_raw": _location_label(ad) or "",
-        "url": url,
-        "photos": json.dumps(photos[:1]) if photos else None,
-    }
-    if lat is not None and lon is not None:
-        annonce.update(lat=lat, lon=lon, geo_precision=precision)
-    if details.get("nb_rooms"):
-        annonce["nb_rooms"] = details["nb_rooms"]   # filtre « pièces » des profils (guess_rooms)
-
-    details["field_sources"] = {k: "search_json" for k, v in details.items() if v is not None}
-    details["extraction_source"] = "search_json"
-    if all(details.get(f) is not None for f in SEARCH_COMPLETE_FIELDS):
-        details["enrichment_status"] = "done"
-    annonce["details"] = details
-    return annonce
+    listing = search_ad_to_listing(ad)
+    return listing.to_annonce() if listing else None
 
 
 def search_annonces_from_html(html: Optional[str]) -> List[Dict]:

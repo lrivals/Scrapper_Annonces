@@ -35,6 +35,9 @@ from utils.logger import setup_logger
 class BaseScraper(ABC):
     """Classe de base pour tous les scrapers d'annonces immobilières."""
 
+    # Longue pause avant cette recherche dans un run multi-recherches (anti-bot)
+    requires_cooldown = True
+
     def __init__(self, profile: Optional[SearchProfile] = None, unattended: bool = False):
         self.profile = profile or SEARCH_PROFILES[DEFAULT_PROFILE]
         # Mode planifié : attente de captcha plus longue (le temps de voir la notification)

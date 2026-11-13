@@ -173,7 +173,11 @@ def process_annonces(raw_annonces: Sequence[Dict], site_name: str) -> RunStats:
                                      "old_price": old_price})
 
         # Même bien publié sur un autre site
-        potential_dups = find_potential_duplicates(filtered)
+        # La surface des annonces lues en JSON (LBC, Bien'ici) est dans `details`
+        details = filtered.get("details") or {}
+        potential_dups = find_potential_duplicates(
+            {**filtered, "surface_m2": filtered.get("surface_m2") or details.get("surface_m2")}
+        )
         if potential_dups:
             original = potential_dups[0]
             if set_duplicate_of(filtered["url"], original["id"]):
@@ -245,7 +249,8 @@ def run_scraping(
             logger.warning(f"{site_name} a été bloqué le {blocked_at:%d/%m %H:%M} : risque de nouveau blocage")
 
         # Changement de recherche : pause longue pour limiter la détection anti-bot
-        if launched:
+        # (inutile avant une source API, qui n'ouvre pas de navigateur)
+        if launched and getattr(scraper, "requires_cooldown", True):
             pause = random.uniform(PROFILE_SWITCH_MIN_DELAY, PROFILE_SWITCH_MAX_DELAY)
             logger.info(f"Pause de {pause:.0f}s avant la recherche suivante")
             sleep(pause)

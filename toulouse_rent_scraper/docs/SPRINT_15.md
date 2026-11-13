@@ -1,7 +1,7 @@
 # Sprint 15 — Fiches détaillées, tri affiné, nouvelles sources
 
 > **Date** : 2026-11-12
-> **Statut** : 🔵 En cours — 15.1 et 15.2 livrés, 15.3 → 15.8 planifiés
+> **Statut** : 🔵 En cours — 15.1, 15.2 et 15.7 livrés ; 15.3 → 15.6 et 15.8 planifiés
 > **Origine** : réflexion « comment améliorer la récolte, le tri, l'automatisation et la couverture »
 > **Prérequis** : [Sprint 12](SPRINT_12.md) (migrations versionnées, `chrome_session`), [Sprint 13](SPRINT_13.md) (score, notifications), [Sprint 14](SPRINT_14.md) (profils)
 
@@ -32,7 +32,7 @@ Constat de départ :
 | 15.4 | Analyse de la description par LLM | 🔲 | Disponibilité, APL/Visale, bail, arnaques, résumé |
 | 15.5 | Critères éliminatoires par profil | 🔲 | Distincts des poids du score |
 | 15.6 | Retours ⭐ / 👎 dans l'UI → poids appris | 🔲 | Régression logistique simple |
-| 15.7 | Nouvelle source : Bien'ici (API JSON) | 🔲 | Puis PAP ([Sprint 4](SPRINT_4.md)) |
+| 15.7 | Nouvelle source : Bien'ici (API JSON) + modèle `Listing` | ✅ | À valider sur la vraie API (voir bilan) ; puis PAP ([Sprint 4](SPRINT_4.md)) |
 | 15.8 | Doublons inter-sites par empreinte photo | 🔲 | `imagehash` |
 
 Hors sprint, à garder en tête : temps de trajet (13.5, désormais possible grâce au GPS
@@ -245,19 +245,80 @@ profil, réversible) au lieu d'être seulement moins bien notée. Inconnu = cons
   confirmation (`rescore`).
 - Bonus : notification si une annonce ⭐ baisse de prix ou disparaît.
 
-## 15.7 — Nouvelle source : Bien'ici 🔲
+## 15.7 — Nouvelle source : Bien'ici ✅
 
-Bien'ici agrège un grand nombre d'agences et son interface consomme une API JSON
-(`realEstateAds.json?filters=…`) qui renvoie surface, pièces, DPE, charges, photos et
-position. Scraper sans navigateur (requests), donc à côté de `BaseScraper` :
+**Fichiers** : `scrapers/listing.py`, `scrapers/api_base.py`, `scrapers/bienici.py` (nouveaux),
+`scrapers/__init__.py`, `scrapers/base.py`, `scrapers/detail_extractors/lbc_json.py`,
+`config.py`, `pipeline.py`, `tests/test_bienici.py` (nouveau), README
 
-- introduire un modèle commun `Listing` (dataclass) que chaque source produit ;
-- deux familles de sources : **API JSON** (Bien'ici, puis PAP) et **navigateur + anti-bot**
-  (LBC, SeLoger) ;
-- rythme raisonnable (une requête par page de résultats, pauses), usage personnel.
+Bien'ici agrège un grand nombre d'agences ; son site consomme une API JSON qui renvoie des
+annonces complètes. Pas de navigateur, pas de DataDome.
 
-Ensuite : PAP ([Sprint 4](SPRINT_4.md)), Logic-Immo (même groupe que SeLoger), et pour le
-profil ENAC Lokaviz (CROUS) / Studapart.
+### Modèle commun `Listing`
+
+`scrapers/listing.py` : dataclass d'annonce (prix, position + précision, surface, pièces,
+DPE/GES, charges, photos, description…). `to_annonce()` produit le format historique du
+pipeline + `details` (champs d'enrichissement) + `lat/lon/geo_precision` + `nb_rooms`.
+`details.enrichment_status = "done"` si l'annonce est complète (description + surface) ou si
+la source fait foi (`authoritative`, cas d'une API).
+La recherche LBC (15.2) produit désormais aussi des `Listing` (`search_ad_to_listing`) :
+un seul format de sortie pour toutes les sources JSON. Les cartes DOM restent des dicts.
+
+### Deux familles de sources
+
+| Famille | Base | Sites | Particularités |
+|---|---|---|---|
+| Navigateur + anti-bot | `BaseScraper` | SeLoger, LeBonCoin | Chrome, warm-up, captcha, `requires_cooldown = True` |
+| API JSON | `ApiScraper` (`api_base.py`) | Bien'ici (puis PAP…) | `requests`, pause polie entre requêtes, `requires_cooldown = False` |
+
+`ApiScraper` : session HTTP avec User-Agent de navigateur, `get_json` (403/429 →
+`ApiBlocked` → `record_block` : le site est sauté par les runs planifiés pendant le cooldown
+anti-ban habituel), résultats ajoutés page par page (une erreur en page 3 garde les pages 1–2).
+`run_scraping` ne fait plus la pause de 60–120 s avant une source API.
+
+### Bien'ici
+
+- **Recherche** : `GET realEstateAds.json?filters={…}` — `filterType: rent`, types de bien du
+  profil, budget (`minPrice`/`maxPrice`), pièces (`minRooms`/`maxRooms`), zones, tri par date
+  de publication décroissante ; 50 annonces par page, 4 pages max (`BIENICI_*` dans `config.py`).
+- **Zones** : `SearchProfile.bienici_places` (communes) résolues via l'autocomplétion du site
+  (`res.bienici.com/suggest.json?q=…`, nom exact sinon 1ʳᵉ suggestion), cache
+  `data/bienici_zones.json`. `bienici_zone_ids` permet de forcer des identifiants.
+  ENAC : Toulouse + 6 communes du sud-est ; Blagnac : Blagnac, Toulouse + 5 communes, maisons
+  incluses (`bienici_property_types = ("flat", "house")`). Le rayon exact reste filtré en local.
+- **Annonce** → `Listing` : surface, pièces, chambres, étage, ascenseur, meublé, DPE/GES
+  (« NS »/« VI » → inconnu), charges, dépôt de garantie, photos, annonceur, date, description
+  (HTML nettoyé), position `blurInfo` (`type: exact` → exacte, sinon centre de zone floutée →
+  approximative), et dans `extra_attributes` : honoraires, date de disponibilité, balcon,
+  terrasse, parking, chauffage…
+- **Charges comprises** : par défaut oui (affichage du loyer CC obligatoire, loi ALUR) ; un
+  indicateur explicite de l'API (`isPriceIncludingCharges`…) prime.
+- **URL** : `/annonce/location/<commune>/<type>/<n>pieces/<id>`, sinon `/annonce/<id>`.
+- Annonces marquées enrichies d'emblée (`extraction_source = "api"`) : jamais de visite.
+
+### Pipeline
+
+- Doublons inter-sites : la surface des annonces JSON (dans `details`) est maintenant transmise
+  à `find_potential_duplicates` → un T2 publié sur LBC et Bien'ici est rattaché, un bien de
+  même prix mais de surface différente ne l'est pas.
+- `--site bienici` dans la CLI ; « Bien'ici » apparaît dans le filtre de sites de l'UI.
+
+### Bilan
+
+- Tests : `tests/test_bienici.py` (21 tests : conversion, valeurs atypiques, `Listing`, filtres,
+  zones et cache, pagination, blocage, format inattendu, pipeline, doublon inter-sites, pas de
+  pause avant une API, CLI). Suite complète verte.
+- ⚠️ **Validation manuelle à faire** (réseau de développement sans accès à bienici.com) :
+  1. `python main.py scrape --site bienici --profile enac` → `bienici.log` doit montrer des
+     pages d'annonces ; `data/bienici_zones.json` doit contenir une zone par commune ;
+  2. ouvrir 2–3 annonces depuis l'UI : **le lien doit mener à la bonne page** (sinon ajuster
+     `ad_url`) ;
+  3. vérifier sur une annonce que le prix affiché par Bien'ici est bien charges comprises ;
+  4. `python main.py quality` → colonne JSON à 100 % pour Bien'ici, surface/photos remplies ;
+  5. si l'API répond 400 : un nom de filtre a changé — comparer avec la requête
+     `realEstateAds.json` visible dans l'onglet Réseau du navigateur sur bienici.com.
+- Annonces retirées : `check-links` utilise les marqueurs génériques (« annonce n'est plus
+  disponible »…) ; à confirmer sur une annonce Bien'ici expirée.
 
 ## 15.8 — Doublons inter-sites par empreinte photo 🔲
 

@@ -10,6 +10,7 @@ from importlib import import_module
 SCRAPER_PATHS = {
     "seloger": "scrapers.seloger:SeLogerScraper",
     "leboncoin": "scrapers.leboncoin:LeBonCoinScraper",
+    "bienici": "scrapers.bienici:BienIciScraper",       # API JSON, sans navigateur (15.7)
 }
 
 
@@ -17,6 +18,7 @@ SCRAPER_PATHS = {
 SITE_NAMES = {
     "seloger": "SeLoger",
     "leboncoin": "LeBonCoin",
+    "bienici": "Bien'ici",
 }
 
 

@@ -16,7 +16,7 @@ Le projet contient une implémentation fonctionnelle pour un cas d'usage spécif
 
 Ce module permet de :
 
-- Scraper **SeLoger** et **LeBonCoin** avec contournement des protections anti-bot.
+- Scraper **SeLoger** et **LeBonCoin** avec contournement des protections anti-bot, et **Bien'ici** via son API JSON.
 - Filtrer automatiquement par prix (≤ 500€) et distance de l'ENAC (≤ 10 km).
 - Stocker les résultats en base SQLite locale avec déduplication.
 - Consulter les annonces via une **interface web Flask** (`--ui`).

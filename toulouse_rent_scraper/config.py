@@ -145,6 +145,11 @@ class SearchProfile:
     seloger_search_url: Optional[str] = None    # URL SeLoger brute (copiée du site), prioritaire
     seloger_warmup_urls: Tuple[str, ...] = ()   # recherches visitées avant celle scannée
     seloger_sub_types: str = "Studio"
+    # Bien'ici (Sprint 15.7) : communes interrogées (résolues en zones via l'autocomplétion
+    # du site, mises en cache) ou identifiants de zone directs, prioritaires s'ils sont fournis.
+    bienici_places: Tuple[str, ...] = ()
+    bienici_zone_ids: Tuple[str, ...] = ()
+    bienici_property_types: Tuple[str, ...] = ("flat",)   # flat, house, loft, castle, townhouse
     enabled: bool = True
 
     @property
@@ -194,6 +199,11 @@ SEARCH_PROFILES: Dict[str, SearchProfile] = {
         target_rent_eur=350,
         lbc_location=_LEBONCOIN_LOCATION_TOULOUSE,
         seloger_locations=_SELOGER_LOCATIONS,
+        # Communes à ≤ 10 km de l'ENAC ; le rayon exact est filtré en local
+        bienici_places=(
+            "Toulouse", "Ramonville-Saint-Agne", "Auzeville-Tolosane", "Castanet-Tolosan",
+            "Labège", "Saint-Orens-de-Gameville", "Balma",
+        ),
     ),
     "blagnac": SearchProfile(
         key="blagnac",
@@ -237,6 +247,11 @@ SEARCH_PROFILES: Dict[str, SearchProfile] = {
             "&method=form&numberOfBedroomsMin=1&numberOfRoomsMax=3&projectTypes=Stock"
             "&order=DateDesc"
         ),
+        # Communes à ≤ 8 km de la cible ; appartements et maisons comme la recherche LBC
+        bienici_places=(
+            "Blagnac", "Toulouse", "Beauzelle", "Cornebarrieu", "Colomiers", "Aussonne", "Seilh",
+        ),
+        bienici_property_types=("flat", "house"),
     ),
 }
 
@@ -352,6 +367,20 @@ ENRICHMENT_RETRY_DELAY_HOURS = 24
 # page de recherche est marquée enrichie : pas de visite de sa page de détail.
 # False : le JSON de la recherche sert seulement à pré-remplir, la visite reste faite.
 LBC_SEARCH_JSON_SKIPS_DETAIL = True
+
+# =========================
+# 🌐 BIEN'ICI (Sprint 15.7) — API JSON, sans navigateur
+# =========================
+
+BIENICI_BASE_URL = "https://www.bienici.com"
+BIENICI_SEARCH_API = "https://www.bienici.com/realEstateAds.json"
+BIENICI_SUGGEST_API = "https://res.bienici.com/suggest.json"
+BIENICI_PAGE_SIZE = 50
+BIENICI_MAX_PAGES = 4                 # 200 annonces max par profil, triées des plus récentes
+BIENICI_MIN_DELAY = 2.0               # pause entre deux requêtes (s) — usage personnel, rythme humain
+BIENICI_MAX_DELAY = 4.0
+BIENICI_TIMEOUT = 30
+BIENICI_ZONE_CACHE_FILE = DATA_DIR / "bienici_zones.json"
 
 # Santé de l'extraction (Sprint 15.1) : taux de remplissage minimal attendu par champ
 # sur les annonces enrichies d'un run. En dessous → alerte « sélecteurs probablement cassés ».

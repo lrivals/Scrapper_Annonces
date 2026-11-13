@@ -69,7 +69,8 @@ python main.py scrape        # ou simplement : python main.py
 
 Le script va :
 
-1. Lancer une recherche par profil (ENAC, Blagnac…) et par site (SeLoger, LeBonCoin)
+1. Lancer une recherche par profil (ENAC, Blagnac…) et par site (SeLoger, LeBonCoin via navigateur ;
+   Bien'ici via son API JSON, sans navigateur)
 2. Filtrer les annonces par budget, nombre de pièces et distance à la cible de chaque profil
    (un critère absent du profil n'est pas filtré)
 3. Stocker les nouvelles annonces dans `data/annonces.sqlite`
@@ -80,7 +81,7 @@ Le script va :
 
 ```bash
 python main.py scrape                              # tous les sites, tous les profils
-python main.py scrape --site leboncoin             # un site (répétable)
+python main.py scrape --site leboncoin             # un site (répétable) : seloger, leboncoin, bienici
 python main.py scrape --profile blagnac            # un profil (répétable)
 python main.py scrape --enrich --limit 20          # + enrichissement des nouvelles annonces
 python main.py scrape --export csv                 # + export CSV (ou json)
@@ -255,7 +256,8 @@ toulouse_rent_scraper/
 
 Modifiez `config.py` pour ajuster :
 
-- `SEARCH_PROFILES` : profils de recherche (cible, budget, rayon, pièces, URLs LeBonCoin/SeLoger).
+- `SEARCH_PROFILES` : profils de recherche (cible, budget, rayon, pièces, URLs LeBonCoin/SeLoger,
+  communes Bien'ici `bienici_places`).
   Ajouter un profil = ajouter une entrée. `min_rent_eur`, `max_rent_eur` et `rooms` sont
   optionnels (`None` = pas de filtre). Deux façons de décrire une recherche :
   - **URL construite** : `lbc_location` / `seloger_locations` (+ budget), comme `enac` ;
@@ -378,6 +380,7 @@ Les logs sont créés dans `logs/` :
 
 - `main.log` : Pipeline principal
 - `seloger.log` : Scraper SeLoger
+- `bienici.log` : Source Bien'ici (API)
 - `geo.log` : Géolocalisation
 
 ---
@@ -392,7 +395,7 @@ Les logs sont créés dans `logs/` :
 
 ## Améliorations
 
-- [x] Scraper multi-sites (SeLoger, LeBonCoin)
+- [x] Scraper multi-sites (SeLoger, LeBonCoin, Bien'ici)
 - [x] Rapports Markdown automatiques
 - [x] Export CSV/JSON (`--export`)
 - [x] Interface Web Flask (`--ui`)
