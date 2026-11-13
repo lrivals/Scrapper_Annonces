@@ -246,3 +246,23 @@ def test_search_health_rows():
     assert any("JSON" in a for a in alerts)
 
     assert search_health_rows(cards_only, "SeLoger") == []   # site sans JSON de recherche : pas jugé
+
+
+def test_search_health_ignores_description_absent_from_search_json():
+    """La recherche LBC n'a pas de `body` : 0 % de descriptions ne doit pas alerter (constat réel 2026-11-13)."""
+    from config import QUALITY_SEARCH_SKIP_FIELDS
+    from pipeline import search_health_rows
+    from storage.quality import check_fill_rates
+
+    no_body = []
+    for i in range(6):
+        ad = _ad(2000000 + i)
+        ad.pop("body", None)
+        no_body.append(search_ad_to_annonce(ad))
+    rows = {"LeBonCoin": search_health_rows(no_body, "LeBonCoin")}
+
+    assert any("descr." in a for a in check_fill_rates(rows))           # sans exception : alerte
+    assert check_fill_rates(rows, QUALITY_SEARCH_SKIP_FIELDS) == []     # avec : rien
+
+    no_surface = {"LeBonCoin": [{**r, "surface_m2": None} for r in rows["LeBonCoin"]]}
+    assert any("surface" in a for a in check_fill_rates(no_surface, QUALITY_SEARCH_SKIP_FIELDS))

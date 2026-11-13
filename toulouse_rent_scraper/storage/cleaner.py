@@ -50,10 +50,30 @@ _EXPIRED_PATTERNS = [
 ]
 
 
-def is_expired_content(html_or_text: str) -> bool:
-    """True si la page indique que l'annonce a été retirée (SeLoger, LeBonCoin)."""
-    lowered = (html_or_text or "").lower()
+def is_expired_content(text: str) -> bool:
+    """
+    True si le texte indique que l'annonce a été retirée (SeLoger, LeBonCoin).
+    ⚠️ Passer le texte **visible** (`page.inner_text("body")`), pas le HTML : les pages LBC
+    embarquent tous leurs messages d'erreur (« annonce introuvable », « page introuvable »…)
+    dans leurs scripts, même quand l'annonce est en ligne (constaté le 2026-11-13).
+    """
+    lowered = (text or "").lower()
     return any(pat in lowered for pat in _EXPIRED_PATTERNS)
+
+
+def page_shows_expired(page) -> bool:
+    """
+    True si la page ouverte montre une annonce retirée.
+    Une page dont le JSON embarqué contient l'annonce (LBC) est en ligne, quel que soit le texte.
+    """
+    from scrapers.detail_extractors.lbc_json import extract_from_html
+
+    try:
+        if extract_from_html(page.content()):
+            return False
+    except Exception:
+        pass
+    return is_expired_content(page.inner_text("body"))
 
 
 def _check_url_alive(url: str) -> bool:
@@ -190,8 +210,7 @@ def check_links_playwright(limit: int = None) -> dict:
                 delay_ms = random.uniform(3.0, 5.0) * 1000
                 page.wait_for_timeout(delay_ms)
 
-                content = page.content().lower()
-                is_expired = any(pat in content for pat in _EXPIRED_PATTERNS)
+                is_expired = page_shows_expired(page)
 
                 if is_expired:
                     with connect() as c:

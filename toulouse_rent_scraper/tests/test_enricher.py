@@ -191,9 +191,11 @@ class TestRetry:
             from scrapers.enricher import enrich_annonces
             return enrich_annonces(limit=10)
 
-    def _page(self, html="<html>Studio 20 m²</html>"):
+    def _page(self, html="<html>Studio 20 m²</html>", text=None):
+        import re
         page = MagicMock()
         page.content.return_value = html
+        page.inner_text.return_value = text if text is not None else re.sub(r"<[^>]+>", "", html)
         return page
 
     def test_failure_counts_attempts_then_failed(self, temp_db):
@@ -234,3 +236,20 @@ class TestRetry:
         assert result["expired"] == 1
         row = _row(temp_db, "https://lbc.fr/1")
         assert (row["status"], row["enrichment_status"]) == ("expired", "skipped")
+
+    def test_error_strings_hidden_in_scripts_do_not_expire_live_ad(self, temp_db):
+        """
+        Régression 2026-11-13 : une page LBC en ligne embarque « annonce introuvable »,
+        « page introuvable »… dans ses scripts. Seul le texte visible doit compter.
+        """
+        from storage.sqlite import init_db
+        init_db()
+        _insert("https://lbc.fr/1")
+        html = ('<html><script>{"errors":{"notFound":"Annonce introuvable","404":"Page introuvable"}}'
+                '</script><p>T3 duplex 68 m²</p></html>')
+        extractor = MagicMock(return_value={"enrichment_status": "done", "surface_m2": 68})
+        result = self._run(self._page(html, text="T3 duplex 68 m²"), extractor)
+        extractor.assert_called_once()
+        assert result["expired"] == 0
+        row = _row(temp_db, "https://lbc.fr/1")
+        assert row["status"] != "expired"

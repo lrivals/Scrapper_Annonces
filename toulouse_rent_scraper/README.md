@@ -376,9 +376,25 @@ LeBonCoin mélange parfois les attributs des cartes (`data-qa-id="aditem_contain
 Si le log affiche encore « 5 cartes trouvées », capturer la page avec
 `scripts/debug/capture_cards_leboncoin.py` et vérifier les sélecteurs de `scrapers/leboncoin.py`.
 
-### Problème : `--purge` ne fonctionne pas pour SeLoger/LeBonCoin
+### Problème : `purge` ne fonctionne pas pour SeLoger/LeBonCoin
 
-Ces sites sont des SPAs — les requêtes HEAD ne permettent pas de détecter les annonces expirées. Utiliser `--check-links` à la place (vérification via Playwright).
+Ces sites sont des SPAs — les requêtes HEAD ne permettent pas de détecter les annonces expirées. Utiliser `python main.py check-links` à la place (vérification via Playwright).
+
+### Problème : des annonces en ligne sont marquées « retirées »
+
+`enrich` et `check-links` décident qu'une annonce est retirée via `storage/cleaner.py::page_shows_expired` :
+une page dont le JSON embarqué contient l'annonce est en ligne ; sinon, seul le **texte visible** est
+comparé aux motifs (« cette annonce n'est plus en ligne »…). Ne jamais chercher ces motifs dans le HTML
+complet : les pages LBC embarquent tous leurs messages d'erreur dans leurs scripts (bug corrigé le
+2026-11-13). Pour remettre des annonces marquées à tort :
+`UPDATE annonces SET status = 'active', enrichment_status = 'pending', enrichment_attempts = 0 WHERE id IN (…);`
+
+### Alerte « Extraction dégradée » après un scrape
+
+Le contrôle de santé compare le taux de remplissage des champs clés aux seuils de
+`QUALITY_MIN_FILL_RATES` (`config.py`). Après un scrape, il juge les fiches lues depuis le JSON de la
+page de recherche, **sans** les champs que cette page ne fournit pas (`QUALITY_SEARCH_SKIP_FIELDS` :
+la recherche LBC n'a pas de description, contrôlée après `enrich`). Détail : `python main.py quality`.
 
 ### Problème : Aucune coordonnée trouvée pour une adresse
 

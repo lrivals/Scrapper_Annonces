@@ -265,9 +265,14 @@ def run_scraping(
         stats.log_summary(f"Résumé {site_name} — {profile.label}")
         total += stats
 
-    # Santé de l'extraction depuis le JSON des recherches (15.2) : même alerte qu'à l'enrichissement
+    # Santé de l'extraction depuis le JSON des recherches (15.2) : même alerte qu'à l'enrichissement,
+    # sans juger les champs absents du JSON de recherche (description LBC : contrôlée après enrich)
+    from config import QUALITY_SEARCH_SKIP_FIELDS
     from scrapers.enricher import report_extraction_health
-    report_extraction_health({site: rows for site, rows in health_rows.items() if rows})
+    report_extraction_health(
+        {site: rows for site, rows in health_rows.items() if rows},
+        skip_fields=QUALITY_SEARCH_SKIP_FIELDS,
+    )
 
     # Doublons inter-sites par empreinte photo (15.8) : avant l'analyse LLM (un doublon
     # réutilise l'analyse de l'original) et les notifications (un bien déjà connu n'est
