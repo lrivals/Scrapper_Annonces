@@ -2,7 +2,7 @@
 
 > Document de suivi global des sprints. Mis à jour au fil de l'avancement.
 >
-> **Dernière mise à jour** : 2026-11-13 — Sprint 15 livré (15.3 SeLoger JSON, critères dans l’UI), Sprint 16 rédigé ; audit : [AUDIT_2026-11.md](AUDIT_2026-11.md)
+> **Dernière mise à jour** : 2026-11-13 — Sprint 15 livré (15.3 SeLoger JSON, critères dans l’UI), Sprint 16 codé (validation réelle à faire) ; audit : [AUDIT_2026-11.md](AUDIT_2026-11.md)
 
 ---
 
@@ -37,7 +37,7 @@ Sprint 13 (Alerte & priorisation)          ✅
     ↓
 Sprint 15 (Fiches détaillées & sources)    ✅
     ↓
-Sprint 16 (Fiches complètes dès le scraping) 🔲
+Sprint 16 (Fiches complètes dès le scraping) 🔵
     ↓
 Sprint 4 (PAP.fr)  — profite du refactor 12 et du modèle commun 15.7
     ↓
@@ -66,7 +66,7 @@ Sprint 2-bis (API REST & Dashboard)
 | 12 | Refactor & sécurité | ✅ Terminé | 8/8 (compteurs à revalider au prochain scraping réel) | 2026-11-03 | 2026-11-03 |
 | 13 | Alerte & priorisation | ✅ Terminé | 4/5 (13.5 reporté) | 2026-11-03 | 2026-11-03 |
 | 15 | Fiches détaillées, tri affiné, nouvelles sources | 🔵 En cours | 4/8 (à valider sur les vrais sites / avec une clé d'API) | 2026-11-12 | — |
-| 16 | Fiches complètes dès le scraping | 🔲 À faire | 0/6 | — | — |
+| 16 | Fiches complètes dès le scraping | 🔵 En cours | 6/6 codées (scraping réel à valider) | 2026-11-13 | — |
 | 4 | Scraper PAP.fr | 🔲 À faire | 0/6 | — | — |
 | 5 | Rapports Markdown avancés | 🔲 À faire | 0/6 | — | — |
 | 2-bis | API REST & Dashboard | 🔲 À faire | 0/6 | — | — |
@@ -83,12 +83,12 @@ Une fois les liens récoltés, ouvrir les annonces retenues et extraire leur fic
 
 | # | Tâche | Statut | Notes |
 |---|-------|--------|-------|
-| 16.1 | Ouverture des fiches intégrée au pipeline | 🔲 | Par défaut ; `scrape --no-enrich` pour s'en passer |
-| 16.2 | Sélection des annonces retenues | 🔲 | Annonces du run d'abord, par score ; doublons / exclues écartés |
-| 16.3 | Budget par site et anti-ban | 🔲 | `DETAIL_VISITS_PER_RUN` ; un site bloqué n'arrête pas l'autre |
-| 16.4 | Notifications avec la fiche complète | 🔲 | Surface, charges, DPE, distance exacte |
-| 16.5 | UI, timer et résumé | 🔲 | systemd : `scrape --unattended` |
-| 16.6 | Tests | 🔲 | |
+| 16.1 | Ouverture des fiches intégrée au pipeline | ✅ | Par défaut ; `scrape --no-enrich` pour s'en passer |
+| 16.2 | Sélection des annonces retenues | ✅ | Annonces du run d'abord, par score ; doublons / exclues écartés |
+| 16.3 | Budget par site et anti-ban | ✅ | `DETAIL_VISITS_PER_RUN` ; un site bloqué n'arrête pas l'autre |
+| 16.4 | Notifications avec la fiche complète | ✅ | Surface, charges, DPE, distance exacte |
+| 16.5 | UI, timer et résumé | ✅ | systemd : `scrape --unattended` |
+| 16.6 | Tests | ✅ | 607 tests verts |
 
 ---
 

@@ -89,7 +89,7 @@ def test_run_scraping_loops_profiles_and_pauses_between_searches(db):
     sleep = MagicMock()
     with patch("scrapers.get_scraper_class", return_value=Fake), \
          patch("reporting.generator.generate_summary_reports") as reports:
-        total = run_scraping([ENAC, BLAGNAC], ["leboncoin"], sleep=sleep)
+        total = run_scraping([ENAC, BLAGNAC], ["leboncoin"], sleep=sleep, enrich=False)
     assert total.inserted == 2
     assert total.new_by_profile == {"enac": 1, "blagnac": 1}
     assert sleep.call_count == 1          # une pause entre les deux recherches
@@ -102,7 +102,7 @@ def test_run_scraping_skips_unconfigured_site_without_pause(db):
     sleep = MagicMock()
     with patch("scrapers.get_scraper_class", return_value=Fake), \
          patch("reporting.generator.generate_summary_reports"):
-        total = run_scraping([unconfigured, ENAC], ["leboncoin"], sleep=sleep)
+        total = run_scraping([unconfigured, ENAC], ["leboncoin"], sleep=sleep, enrich=False)
     assert total.inserted == 1
     sleep.assert_not_called()
 
@@ -123,9 +123,116 @@ def test_run_scraping_rescores_and_notifies(db):
     with patch("scrapers.get_scraper_class", return_value=Fake), \
          patch("reporting.generator.generate_summary_reports"), \
          patch("notify.notify_events", return_value=1) as notify_events:
-        run_scraping([ENAC], ["leboncoin"], sleep=MagicMock())
+        run_scraping([ENAC], ["leboncoin"], sleep=MagicMock(), enrich=False)
     events = notify_events.call_args.args[0]
     assert events == [{"kind": "new", "profile": "enac", "url": "https://lbc.fr/LeBonCoin/1"}]
     import sqlite3
     with sqlite3.connect(db) as con:
         assert con.execute("SELECT score FROM annonce_profiles").fetchone()[0] is not None
+
+
+# ---- Sprint 16 — ouverture des fiches dans le pipeline ----
+
+def _fake_open(calls, details=None):
+    """open_annonces simulé : enregistre l'appel et écrit `details` dans chaque fiche."""
+    from scrapers.enricher import EnrichStats
+    from storage.sqlite import update_annonce_enrichment
+
+    def fake(annonces, unattended=False, budget=None, blocked_since=None, label=""):
+        calls.append(("open", [a["url"] for a in annonces]))
+        for a in annonces:
+            update_annonce_enrichment(a["url"], {"enrichment_status": "done", **(details or {})})
+        return EnrichStats(total=len(annonces), opened=len(annonces), enriched=len(annonces))
+    return fake
+
+
+def _run(calls, details=None, **kwargs):
+    from notify.messages import build_messages
+    Fake = _fake_scraper_class({"enac": [_raw(1)]})
+    sent = []
+
+    def notify_events(events):
+        calls.append(("notify", None))
+        sent.extend(build_messages(events))
+        return len(sent)
+
+    with patch("scrapers.get_scraper_class", return_value=Fake), \
+         patch("reporting.generator.generate_summary_reports"), \
+         patch("scrapers.enricher.open_annonces", side_effect=_fake_open(calls, details)), \
+         patch("scoring.rescore", side_effect=lambda *a: calls.append(("rescore", None))), \
+         patch("notify.notify_events", side_effect=notify_events):
+        total = run_scraping([ENAC], ["leboncoin"], sleep=MagicMock(), **kwargs)
+    return total, sent
+
+
+def test_run_opens_details_before_rescore_and_notify(db):
+    calls = []
+    total, _ = _run(calls)
+    assert [c[0] for c in calls] == ["rescore", "open", "rescore", "notify"]
+    assert calls[1][1] == ["https://lbc.fr/LeBonCoin/1"]
+    assert (total.opened, total.enriched) == (1, 1)
+    assert total.retained_urls == ["https://lbc.fr/LeBonCoin/1"]
+
+
+def test_no_enrich_opens_nothing(db):
+    calls = []
+    total, _ = _run(calls, enrich=False)
+    assert [c[0] for c in calls] == ["rescore", "notify"]
+    assert total.opened == 0
+
+
+def test_exclusion_revealed_by_detail_page_is_not_notified(db, monkeypatch):
+    import config
+    from config import Requirements
+    from filters.requirements import save_requirements
+    monkeypatch.setattr(config, "NOTIFY_MIN_SCORE", 0)
+    save_requirements("enac", Requirements(max_dpe="E"))
+
+    calls = []
+    # vrai rescore (critères), open_annonces simulé qui révèle un DPE G
+    from scoring import rescore as real_rescore
+
+    def rescore(*a):
+        calls.append(("rescore", None))
+        return real_rescore(*a)
+
+    from notify.messages import build_messages
+    Fake = _fake_scraper_class({"enac": [_raw(1)]})
+    sent = []
+    with patch("scrapers.get_scraper_class", return_value=Fake), \
+         patch("reporting.generator.generate_summary_reports"), \
+         patch("scrapers.enricher.open_annonces", side_effect=_fake_open(calls, {"dpe_rating": "G"})), \
+         patch("scoring.rescore", side_effect=rescore), \
+         patch("notify.notify_events", side_effect=lambda ev: sent.extend(build_messages(ev)) or 0):
+        total = run_scraping([ENAC], ["leboncoin"], sleep=MagicMock())
+    assert total.events and total.opened == 1
+    assert sent == []
+
+    # Contre-épreuve : même annonce avec un DPE C → notifiée, fiche complète dans le message
+    calls.clear()
+    sent.clear()
+    import sqlite3
+    with sqlite3.connect(db) as con:
+        con.execute("DELETE FROM annonce_profiles")
+        con.execute("DELETE FROM annonces")
+    with patch("scrapers.get_scraper_class", return_value=Fake), \
+         patch("reporting.generator.generate_summary_reports"), \
+         patch("scrapers.enricher.open_annonces",
+               side_effect=_fake_open(calls, {"dpe_rating": "C", "surface_m2": 38, "nb_rooms": 2, "charges": 40})), \
+         patch("scoring.rescore", side_effect=rescore), \
+         patch("notify.notify_events", side_effect=lambda ev: sent.extend(build_messages(ev)) or 0):
+        run_scraping([ENAC], ["leboncoin"], sleep=MagicMock())
+    assert len(sent) == 1
+    assert "T2 · 38 m² · 450 € (+40 € ch.) · DPE C" in sent[0]["body"]
+
+
+def test_browser_failure_during_opening_still_notifies(db):
+    calls = []
+    Fake = _fake_scraper_class({"enac": [_raw(1)]})
+    with patch("scrapers.get_scraper_class", return_value=Fake), \
+         patch("reporting.generator.generate_summary_reports"), \
+         patch("scrapers.enricher.open_annonces", side_effect=RuntimeError("Chrome absent")), \
+         patch("notify.notify_events", return_value=0) as notify_events:
+        total = run_scraping([ENAC], ["leboncoin"], sleep=MagicMock())
+    notify_events.assert_called_once()
+    assert total.opened == 0

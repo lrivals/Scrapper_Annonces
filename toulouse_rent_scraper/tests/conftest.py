@@ -23,6 +23,13 @@ def isolated_state(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "REQUIREMENTS_FILE", tmp_path / "profile_requirements.json")
     # Doublons par photo (15.8) : aucun téléchargement pendant les tests (activé au cas par cas)
     monkeypatch.setattr(config, "PHOTO_DEDUP_ENABLED", False)
+    # Ouverture des fiches (Sprint 16) : jamais le vrai Chrome — un test qui ouvre des
+    # fiches remplace chrome_session lui-même
+    import scrapers.enricher
+
+    def _no_chrome(*args, **kwargs):
+        raise AssertionError("chrome_session appelé dans un test sans navigateur simulé")
+    monkeypatch.setattr(scrapers.enricher, "chrome_session", _no_chrome)
 
 
 @pytest.fixture

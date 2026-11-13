@@ -1,7 +1,8 @@
 # pipeline.py
 # =========================
 # Pipeline de scraping : recherches (profil × site) → validation → filtre
-# par profil → stockage → doublons → rapports.
+# par profil → stockage → doublons → ouverture des fiches retenues (Sprint 16)
+# → dedup photo, LLM, scores → notifications → rapports.
 # Utilisé par la CLI (main.py) et, via la CLI, par le bouton de l'UI.
 # =========================
 
@@ -37,6 +38,13 @@ class RunStats:
     unchanged: int = 0
     duplicates: int = 0
     prefilled: int = 0          # fiches remplies depuis le JSON de la recherche (15.2)
+    # Sprint 16 — pages de détail ouvertes pendant le run
+    opened: int = 0
+    enriched: int = 0
+    expired: int = 0
+    relocated: int = 0
+    # URL des annonces conservées (≥ 1 profil) : ouvertes en priorité (16.2)
+    retained_urls: List[str] = field(default_factory=list)
     new_by_profile: Counter = field(default_factory=Counter)
     # Événements à notifier : {"kind": "new" | "price_drop", "profile", "url", "old_price"?}
     events: List[Dict] = field(default_factory=list)
@@ -45,8 +53,8 @@ class RunStats:
         for name in self.__dataclass_fields__:
             if name == "new_by_profile":
                 self.new_by_profile.update(other.new_by_profile)
-            elif name == "events":
-                self.events.extend(other.events)
+            elif name in ("events", "retained_urls"):
+                getattr(self, name).extend(getattr(other, name))
             else:
                 setattr(self, name, getattr(self, name) + getattr(other, name))
         return self
@@ -66,6 +74,11 @@ class RunStats:
             logger.info(f"  - Nouvelles pour {label} : {count}")
         if self.prefilled:
             logger.info(f"  - Fiches pré-remplies depuis la recherche : {self.prefilled}")
+        if self.opened:
+            logger.info(
+                f"  - Fiches ouvertes : {self.opened} — enrichies {self.enriched}, "
+                f"retirées {self.expired}, repositionnées GPS {self.relocated}"
+            )
         if self.duplicates:
             logger.warning(f"  - Doublons détectés : {self.duplicates}")
 
@@ -153,6 +166,7 @@ def process_annonces(raw_annonces: Sequence[Dict], site_name: str) -> RunStats:
         stats.kept += 1
 
         url = filtered["url"]
+        stats.retained_urls.append(url)
         old_price = get_price(url)
         result = insert_annonce(filtered)
         if _save_search_details(filtered):
@@ -206,18 +220,63 @@ def process_annonces(raw_annonces: Sequence[Dict], site_name: str) -> RunStats:
     return stats
 
 
+def open_retained(
+    total: RunStats,
+    site_names: List[str],
+    unattended: bool = False,
+    limit: Optional[int] = None,
+    since: Optional[datetime] = None,
+) -> Dict[str, List[Dict]]:
+    """
+    Sprint 16 — ouvre les fiches des annonces retenues (celles du run d'abord, par score),
+    dans la limite du budget par site. Met à jour `total` ; retourne les fiches lues par
+    site (contrôle de santé). Les favoris retirés sont notifiés.
+    """
+    from scoring import rescore
+    from scrapers.enricher import open_annonces, select_annonces_to_open
+
+    # Score provisoire (et critères éliminatoires connus) pour choisir les fiches à ouvrir
+    rescore()
+    to_open = select_annonces_to_open(total.retained_urls, site_names, limit=limit)
+    if not to_open:
+        logger.info("Ouverture des fiches : aucune annonce retenue à compléter")
+        return {}
+    in_run = sum(1 for a in to_open if a.get("in_run"))
+    logger.info(
+        f"Ouverture des fiches : {len(to_open)} annonce(s) "
+        f"({in_run} de ce run, {len(to_open) - in_run} en attente d'avant)"
+    )
+    try:
+        stats = open_annonces(to_open, unattended=unattended, blocked_since=since)
+    except Exception as e:
+        # Les annonces de la recherche sont enregistrées : on notifie quand même
+        logger.error(f"Ouverture des fiches impossible ({e}) — notifications avec les cartes seules")
+        return {}
+    total.opened += stats.opened
+    total.enriched += stats.enriched
+    total.expired += stats.expired
+    total.relocated += stats.relocated
+    if stats.gone:
+        from storage.cleaner import _notify_gone
+        _notify_gone(stats.gone)
+    return stats.done_by_site
+
+
 def run_scraping(
     profiles: List[SearchProfile],
     site_keys: List[str],
     sleep=time.sleep,
     unattended: bool = False,
+    enrich: bool = True,
+    limit: Optional[int] = None,
 ) -> RunStats:
     """
-    Lance une recherche par couple (profil, site), traite les résultats, recalcule les
-    scores, notifie et génère les rapports. Les annonces trouvées sont testées contre
-    TOUS les profils actifs.
+    Lance une recherche par couple (profil, site), traite les résultats, ouvre les fiches
+    des annonces retenues (`enrich`, Sprint 16), recalcule les scores, notifie et génère
+    les rapports. Les annonces trouvées sont testées contre TOUS les profils actifs.
     `unattended` (run planifié) : captcha notifié et attendu plus longtemps, et un site
     bloqué récemment est sauté (anti-ban).
+    `limit` : plafond global de fiches ouvertes (en plus de DETAIL_VISITS_PER_RUN par site).
     """
     from scrapers.antibot import recently_blocked
     from reporting.generator import generate_summary_reports
@@ -231,6 +290,7 @@ def run_scraping(
     runs = [(p, key) for p in profiles for key in site_keys]
     launched = 0
     health_rows: Dict[str, List[Dict]] = {}
+    searched_sites: List[str] = []
 
     for profile, site_key in runs:
         scraper = get_scraper_class(site_key)(profile, unattended=unattended)
@@ -257,6 +317,8 @@ def run_scraping(
             logger.info(f"Pause de {pause:.0f}s avant la recherche suivante")
             sleep(pause)
         launched += 1
+        if site_name not in searched_sites:
+            searched_sites.append(site_name)
 
         logger.info(f"--- Scraping {site_name} — profil {profile.label} ---")
         raw_annonces = scraper.scrape()
@@ -267,13 +329,23 @@ def run_scraping(
         stats.log_summary(f"Résumé {site_name} — {profile.label}")
         total += stats
 
-    # Santé de l'extraction depuis le JSON des recherches (15.2) : même alerte qu'à l'enrichissement,
-    # sans juger les champs absents du JSON de recherche (description LBC : contrôlée après enrich)
+    # Ouverture des fiches retenues (Sprint 16) : avant dedup photo, LLM, score et
+    # notifications, pour que les alertes portent la fiche complète et respectent les
+    # critères qu'elle révèle (DPE, surface…)
+    detail_rows: Dict[str, List[Dict]] = {}
+    if enrich:
+        detail_rows = open_retained(total, searched_sites, unattended, limit, since=run_start)
+    elif total.retained_urls:
+        logger.info("Ouverture des fiches désactivée (--no-enrich)")
+
+    # Santé de l'extraction : JSON des recherches (15.2), sans juger les champs absents du
+    # JSON de recherche (description LBC), et pages de détail ouvertes ci-dessus
     from config import QUALITY_SEARCH_SKIP_FIELDS
     from scrapers.enricher import report_extraction_health
     report_extraction_health(
         {site: rows for site, rows in health_rows.items() if rows},
         skip_fields=QUALITY_SEARCH_SKIP_FIELDS,
+        detail_rows_by_site=detail_rows,
     )
 
     # Doublons inter-sites par empreinte photo (15.8) : avant l'analyse LLM (un doublon

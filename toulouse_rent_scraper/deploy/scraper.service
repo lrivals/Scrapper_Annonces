@@ -9,7 +9,7 @@ After=graphical-session.target network-online.target
 [Service]
 Type=oneshot
 WorkingDirectory=%h/Documents/Perso/Scrapper_Annonces/toulouse_rent_scraper
-ExecStart=%h/Documents/Perso/Scrapper_Annonces/venv/bin/python main.py scrape --enrich --limit 20 --unattended
+ExecStart=%h/Documents/Perso/Scrapper_Annonces/venv/bin/python main.py scrape --unattended
 # Chrome n'est pas headless (DataDome) : il a besoin de la session graphique.
 # DISPLAY / XAUTHORITY / WAYLAND_DISPLAY viennent de l'environnement systemd utilisateur
 # (vérifier : systemctl --user show-environment | grep DISPLAY).

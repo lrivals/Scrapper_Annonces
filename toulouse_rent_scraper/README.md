@@ -74,16 +74,20 @@ Le script va :
 2. Filtrer les annonces par budget, nombre de pièces et distance à la cible de chaque profil
    (un critère absent du profil n'est pas filtré)
 3. Stocker les nouvelles annonces dans `data/annonces.sqlite`
-4. Générer des rapports Markdown dans `reports/`
-5. Générer des logs dans `logs/`
+4. Ouvrir la page de chaque annonce retenue (SeLoger, LeBonCoin) pour lire la fiche complète
+   (surface, charges, DPE, description, GPS exact) — celles du run d'abord, par score, au plus
+   `DETAIL_VISITS_PER_RUN` par site ; un site bloqué n'empêche pas l'autre (`--no-enrich` pour s'en passer)
+5. Recalculer les scores et critères, puis notifier — l'alerte porte donc la fiche complète
+6. Générer des rapports Markdown dans `reports/` et des logs dans `logs/`
 
 ### Commandes
 
 ```bash
-python main.py scrape                              # tous les sites, tous les profils
+python main.py scrape                              # tous les sites, tous les profils, puis ouverture des fiches retenues
 python main.py scrape --site leboncoin             # un site (répétable) : seloger, leboncoin, bienici
 python main.py scrape --profile blagnac            # un profil (répétable)
-python main.py scrape --enrich --limit 20          # + enrichissement des nouvelles annonces
+python main.py scrape --no-enrich                  # recherche seule, sans ouvrir les fiches
+python main.py scrape --limit 10                   # au plus 10 fiches ouvertes ce run (en plus de DETAIL_VISITS_PER_RUN)
 python main.py scrape --export csv                 # + export CSV (ou json)
 python main.py enrich [--site seloger] [--limit 20]  # enrichir les annonces en attente
 python main.py enrich --ids 1035,1126              # revisiter des annonces précises (ex. prix à vérifier)
@@ -164,7 +168,8 @@ modifiant un critère. Critères : `available_before`, `apl_required`, `no_groun
 
 Nouvelles annonces et baisses de loyer (≥ 20 €) au-dessus du score minimal (`NOTIFY_MIN_SCORE`, 55)
 envoyées sur le téléphone ; récapitulatif unique au-delà de 3 annonces par profil. Un captcha à
-résoudre est aussi signalé.
+résoudre est aussi signalé. Les fiches sont ouvertes avant l'envoi : une ligne ressemble à
+`T2 · 38 m² · 690 € (+40 € ch.) · DPE C · 5,2 km · ★ 80` (« ≈ » devant une distance estimée depuis la commune).
 
 1. Installer l'appli **ntfy** (Android / iOS) et s'abonner à un topic long et aléatoire.
 2. `cp .env.example .env` puis renseigner `NOTIFY_BACKEND=ntfy` et `NTFY_TOPIC=…` (ou Telegram).
@@ -334,10 +339,11 @@ pages) prend environ 25 minutes.
 ### Avec systemd (recommandé) — 8h, 13h et 19h, ± 20 min
 
 Les unités sont dans `deploy/` (chemins prévus pour `~/Documents/Perso/Scrapper_Annonces`, à adapter sinon).
-Le service lance `main.py scrape --enrich --limit 20 --unattended` :
+Le service lance `main.py scrape --unattended` (fiches ouvertes dans la limite de
+`DETAIL_VISITS_PER_RUN`, `config.py`) :
 
 - un captcha est **notifié** et attendu 10 min, puis le site est abandonné sans réessayer ;
-- un site bloqué dans les 6 dernières heures est sauté (anti-ban) ;
+- un site bloqué dans les 6 dernières heures est sauté (anti-ban), fiches comprises ;
 - un verrou empêche deux runs simultanés (timer + bouton de l'UI).
 
 ```bash

@@ -164,3 +164,29 @@ def test_env_file_loader(tmp_path, monkeypatch):
     assert os.environ["NTFY_DEJA"] == "existant"   # l'environnement réel prime
     monkeypatch.delenv("NTFY_TOPIC_TEST")
     monkeypatch.delenv("AUTRE", raising=False)
+
+
+class TestLine:
+    """Sprint 16.4 — ligne de notification avec la fiche complète."""
+
+    def test_full_detail(self):
+        from notify.messages import _line
+        line = _line({"title": "T2 Blagnac", "price": 690, "nb_rooms": 2, "surface_m2": 38.0, "charges": 40,
+                      "dpe_rating": "C", "distance_km": 5.23, "geo_precision": "exact", "score": 81.6})
+        assert line == "T2 Blagnac — T2 · 38 m² · 690 € (+40 € ch.) · DPE C · 5,2 km · ★ 82"
+
+    def test_missing_fields_omitted_and_approx_distance(self):
+        from notify.messages import _line
+        line = _line({"title": "Studio", "price": 450, "distance_km": 3.0, "geo_precision": "approx"})
+        assert line == "Studio — 450 € · ≈ 3,0 km"
+
+    def test_charges_included(self):
+        from notify.messages import _line
+        assert _line({"title": "X", "price": 700, "charges": 50, "charges_included": 1}) == "X — 700 € CC"
+
+    def test_query_returns_detail_columns(self, temp_db):
+        from storage.sqlite import annonces_for_notification
+        init_db()
+        _add("https://a/1", "enac", 420, 1.0, 90)
+        row = annonces_for_notification("enac", ["https://a/1"])["https://a/1"]
+        assert {"charges", "charges_included", "geo_precision", "surface_m2", "dpe_rating"} <= set(row)

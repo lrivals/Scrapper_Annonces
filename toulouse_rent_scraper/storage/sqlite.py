@@ -246,7 +246,7 @@ def annonces_for_notification(profile: str, urls: List[str]) -> Dict[str, Dict]:
         rows = conn.execute(
             f"""
             SELECT a.url, a.title, a.price, a.location_raw, a.surface_m2, a.nb_rooms, a.dpe_rating,
-                   a.scam_risk, a.available_from, a.duplicate_of, ap.distance_km, ap.score, f.feedback
+                   a.charges, a.charges_included, a.geo_precision, a.scam_risk, a.available_from, a.duplicate_of, ap.distance_km, ap.score, f.feedback
             FROM annonces a
             JOIN annonce_profiles ap ON ap.annonce_id = a.id AND ap.profile = ?
             LEFT JOIN annonce_feedback f ON f.annonce_id = a.id AND f.profile = ap.profile
@@ -519,6 +519,51 @@ def get_pending_annonces(site_filter: Optional[str] = None, limit: int = 50) -> 
 
     conn.close()
     return result
+
+
+def get_annonces_to_open(urls: List[str], limit: int, sites: List[str]) -> List[Dict]:
+    """
+    Sprint 16 — annonces dont la page de détail est à ouvrir pendant le scraping, dans l'ordre :
+    annonces du run (`urls`) d'abord, puis stock plus ancien ; chaque groupe par meilleur
+    score de profil décroissant, puis les plus récentes.
+    Écartées : inactives, doublons (on ouvre l'original), déjà enrichies ou en échec
+    définitif, sites sans page de détail (`sites`), et annonces exclues par tous leurs
+    profils (sauf favori ⭐). Un critère inconnu n'exclut pas (15.5) : elles sont ouvertes.
+    Chaque ligne porte `in_run` (0/1) et `best_score`.
+    """
+    if not sites or limit <= 0:
+        return []
+    retry_before = (datetime.now() - timedelta(hours=ENRICHMENT_RETRY_DELAY_HOURS)).isoformat()
+    urls = list(dict.fromkeys(urls or []))
+    in_run = f"a.url IN ({','.join('?' * len(urls))})" if urls else "0"
+    query = f"""
+        SELECT a.*, ({in_run}) AS in_run, (
+            SELECT MAX(ap.score) FROM annonce_profiles ap
+            WHERE ap.annonce_id = a.id AND ap.excluded_reasons IS NULL
+        ) AS best_score
+        FROM annonces a
+        WHERE COALESCE(a.status, 'active') = 'active'
+          AND a.duplicate_of IS NULL
+          AND a.site IN ({','.join('?' * len(sites))})
+          AND (
+                a.enrichment_status = 'pending'
+             OR (a.enrichment_status = 'error'
+                 AND COALESCE(a.enrichment_attempts, 0) < ?
+                 AND (a.enriched_at IS NULL OR a.enriched_at < ?))
+          )
+          AND EXISTS (
+            SELECT 1 FROM annonce_profiles ap
+            LEFT JOIN annonce_feedback f ON f.annonce_id = ap.annonce_id AND f.profile = ap.profile
+            WHERE ap.annonce_id = a.id
+              AND (ap.excluded_reasons IS NULL OR f.feedback = 'favorite')
+          )
+        ORDER BY in_run DESC, best_score IS NULL, best_score DESC, a.created_at DESC, a.id DESC
+        LIMIT ?
+    """
+    params = [*urls, *sites, ENRICHMENT_MAX_ATTEMPTS, retry_before, limit]
+    with connect() as conn:
+        conn.row_factory = sqlite3.Row
+        return [dict(r) for r in conn.execute(query, params).fetchall()]
 
 
 def get_annonces_by_ids(ids: List[int]) -> List[Dict]:
