@@ -155,7 +155,7 @@
 
     <main class="grid" id="card-grid">
       {% for a in annonces %}
-      <article class="card" style="--i: {{ [loop.index0, 10]|min }}">
+      <article class="card" data-id="{{ a.id }}" style="--i: {{ [loop.index0, 10]|min }}">
         <a href="{{ a.url }}" target="_blank" class="card-image">
           {% if a.thumbnail %}
             <img src="{{ a.thumbnail }}" alt="{{ a.title }}" loading="lazy" referrerpolicy="no-referrer"
@@ -264,7 +264,7 @@
                     aria-pressed="{{ 'true' if a.feedback == value else 'false' }}" title="{{ label }}" onclick="sendFeedback(this)">{{ icon }}</button>
             {% endfor %}
           </div>
-          <button class="btn-add-doc" id="doc-btn-{{ a.id }}" onclick="toggleAnnonce({{ a.id }}, this)">+ Doc</button>
+          <button class="btn-add-doc" id="doc-btn-{{ a.id }}" data-id="{{ a.id }}" onclick="toggleAnnonce({{ a.id }}, this)">+ Doc</button>
           {% if s == 'hidden' %}
           <form method="post" action="/restore" style="display:inline">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -295,7 +295,17 @@
     </main>
 
     <div id="map-view" style="display:none">
-      <div id="map"></div>
+      <div class="map-layout">
+        <div id="map"></div>
+        <aside id="map-stack" class="map-stack" aria-label="Annonces consultées">
+          <div class="map-stack-head">
+            <span>Annonces consultées</span>
+            <button type="button" id="map-stack-clear" class="btn-stack-clear" onclick="clearStack()" hidden>Vider</button>
+          </div>
+          <p class="map-stack-empty" id="map-stack-empty">Cliquez sur un point de la carte pour afficher le résumé de l&rsquo;annonce ici.</p>
+          <div id="map-stack-list"></div>
+        </aside>
+      </div>
       <p id="map-ungeolocated"></p>
     </div>
   </div>

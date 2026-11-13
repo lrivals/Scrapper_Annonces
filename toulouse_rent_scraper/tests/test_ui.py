@@ -241,3 +241,12 @@ def test_map_data_includes_score(client):
     _add("https://ex.com/1")
     rescore(["enac"])
     assert client.get("/api/map-data").get_json()["listings"][0]["score"] is not None
+
+
+def test_map_view_has_summary_stack(client):
+    """Sprint 16 : pile de résumés à côté de la carte, cartes de la liste repérables par id."""
+    _add("https://ex.com/1")
+    page = client.get("/").get_data(as_text=True)
+    assert 'id="map-stack"' in page and 'id="map-stack-list"' in page
+    assert '<article class="card" data-id="1"' in page
+    assert 'class="btn-add-doc" id="doc-btn-1" data-id="1"' in page
