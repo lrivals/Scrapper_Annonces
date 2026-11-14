@@ -260,6 +260,8 @@ SEARCH_PROFILES: Dict[str, SearchProfile] = {
             "&locations=Blagnac_31700__43.63458_1.39684_5000%2C"
             "Toulouse__43.599373754597394_1.435619856703149_9864__d31"
             "&real_estate_type=2%2C1&outside_access=balcony%2Cterrace%2Cgarden"
+            # Tri « Plus récentes » : les nouvelles annonces sortent sur les premières pages.
+            "&sort=time&order=desc"
         ),
         # SeLoger (2026-11-04) : accueil onglet Louer → Toulouse → recherche scannée
         # (appartement, balcon/terrasse, Toulouse + Blagnac, 1+ chambre, ≤ 3 pièces).

@@ -339,7 +339,7 @@ pages) prend environ 25 minutes.
 ### Avec systemd (recommandé) — 8h, 13h et 19h, ± 20 min
 
 Les unités sont dans `deploy/` (chemins prévus pour `~/Documents/Perso/Scrapper_Annonces`, à adapter sinon).
-Le service lance `main.py scrape --unattended` (fiches ouvertes dans la limite de
+Le service lance `main.py scrape --unattended --profile blagnac` (fiches ouvertes dans la limite de
 `DETAIL_VISITS_PER_RUN`, `config.py`) :
 
 - un captcha est **notifié** et attendu 10 min, puis le site est abandonné sans réessayer ;
