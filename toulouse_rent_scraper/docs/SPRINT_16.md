@@ -1,7 +1,7 @@
 # Sprint 16 — Fiches complètes dès le scraping
 
 > **Date** : 2026-11-13
-> **Statut** : 🔵 Codé — validation sur un scraping réel à faire (voir fin du document)
+> **Statut** : ✅ Terminé — validé sur un scraping réel (profil Blagnac), 2026-11-13/14
 > **Origine** : question « le scraping ouvre-t-il les annonces une à une ? Peut-on le faire sur les liens récoltés ? »
 > **Prérequis** : [Sprint 15](SPRINT_15.md) (extracteurs JSON 15.1/15.2, critères 15.5, dedup photo 15.8), [Sprint 13](SPRINT_13.md) (score, notifications), [Sprint 12](SPRINT_12.md) (`chrome_session`, verrou, anti-ban)
 
@@ -235,3 +235,16 @@ Validation sur le profil **Blagnac** uniquement (ENAC n'est plus prioritaire, 20
   deux sites) et un challenge non résolu n'arrête plus que le site concerné.
 - Si Chrome est indisponible pendant l'ouverture, le run continue : notifications avec les cartes seules.
 - Les tests ne peuvent plus lancer le vrai Chrome depuis l'enricher (`tests/conftest.py`).
+
+## Résultats de la validation (2026-11-13/14, profil Blagnac)
+
+| # | Vérification | Résultat |
+|---|---|---|
+| 1 | `pytest` | ✅ 607 passés, 1 ignoré |
+| 2 | `scrape --profile blagnac --site leboncoin` | ✅ 15 fiches ouvertes (plafond LBC), 15 enrichies (JSON), 4 repositionnées GPS ; exclusions 131 → 137 après lecture des fiches ; message : `T2 · 42 m² · 605 € CC · DPE B · ≈ 4,5 km · ★ 66` (non envoyé : pas de `.env` sur la machine de dev) |
+| 3 | `scrape --profile blagnac --no-enrich` | ✅ « Ouverture des fiches désactivée » ; aucune page de détail visitée (seules 4 annonces Bien'ici passées `done` via l'API) |
+| 4 | Bouton UI (Blagnac, 3 sites) | ✅ `/scraping-status` affiche `Ouverture des fiches N/30 (SeLoger|LeBonCoin)` ; 30/30 enrichies, 0 erreur, pas d'alerte de santé |
+| 5 | Timer systemd | ⏸ non installé sur la machine de dev |
+
+Constats hors Sprint 16 (recherche) : `ERR_ABORTED` sur le warm-up SeLoger (`/?tab=rent`) au run 3
+(0 annonce SeLoger ce run-là) ; « browser has been closed » en page 8 de la pagination LBC au run 1.
