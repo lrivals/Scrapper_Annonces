@@ -253,3 +253,120 @@ class TestRetry:
         assert result["expired"] == 0
         row = _row(temp_db, "https://lbc.fr/1")
         assert row["status"] != "expired"
+
+
+# ---- Sprint 16.3 — ouverture des fiches : budget par site et anti-ban ----
+
+class TestOpenAnnonces:
+    def _annonces(self, temp_db, n_lbc, n_sl):
+        from storage.sqlite import init_db
+        init_db()
+        out = []
+        for i in range(n_lbc):
+            _insert(f"https://lbc.fr/{i}")
+            out.append(_row(temp_db, f"https://lbc.fr/{i}"))
+        for i in range(n_sl):
+            _insert(f"https://seloger.com/{i}", site="SeLoger")
+            out.append(_row(temp_db, f"https://seloger.com/{i}"))
+        return out
+
+    def _page(self):
+        page = MagicMock()
+        page.content.return_value = "<html>T2 40 m²</html>"
+        page.inner_text.return_value = "T2 40 m²"
+        return page
+
+    def _patches(self, page, blocked=lambda p: False, challenge=True):
+        done = lambda page, url: {"enrichment_status": "done", "surface_m2": 40}  # noqa: E731
+        return [
+            patch("scrapers.enricher.chrome_session", _fake_session(page)),
+            patch("scrapers.enricher.is_page_blocked", side_effect=blocked),
+            patch("scrapers.enricher.wait_for_challenge", return_value=challenge),
+            patch("scrapers.enricher.time.sleep"),
+            patch("scrapers.detail_extractors.leboncoin_detail.extract_detail", side_effect=done),
+            patch("scrapers.detail_extractors.seloger_detail.extract_detail", side_effect=done),
+        ]
+
+    def _open(self, annonces, page, **kwargs):
+        from contextlib import ExitStack
+        from scrapers.enricher import open_annonces
+        blocked = kwargs.pop("blocked", lambda p: False)
+        challenge = kwargs.pop("challenge", True)
+        with ExitStack() as stack:
+            for p in self._patches(page, blocked, challenge):
+                stack.enter_context(p)
+            return open_annonces(annonces, **kwargs)
+
+    def test_budget_per_site(self, temp_db):
+        page = self._page()
+        stats = self._open(self._annonces(temp_db, 5, 3), page, budget={"LeBonCoin": 2, "SeLoger": 2})
+        assert (stats.opened, stats.enriched) == (4, 4)
+        visited = [c.args[0] for c in page.goto.call_args_list]
+        assert visited == ["https://lbc.fr/0", "https://lbc.fr/1", "https://seloger.com/0", "https://seloger.com/1"]
+        assert _row(temp_db, "https://lbc.fr/2")["enrichment_status"] == "pending"
+
+    def test_unresolved_challenge_stops_only_that_site(self, temp_db):
+        from scrapers.antibot import recently_blocked
+        page = self._page()
+        # Challenge sur toute page LeBonCoin, jamais résolu
+        page_url = {"u": ""}
+        page.goto.side_effect = lambda url, **kw: page_url.update(u=url)
+        stats = self._open(self._annonces(temp_db, 3, 2), page,
+                           blocked=lambda p: "lbc.fr" in page_url["u"], challenge=False)
+        visited = [c.args[0] for c in page.goto.call_args_list]
+        assert visited == ["https://lbc.fr/0", "https://seloger.com/0", "https://seloger.com/1"]
+        assert stats.enriched == 2 and stats.skipped_sites == ["LeBonCoin"]
+        assert recently_blocked("LeBonCoin")
+        # la fiche bloquée n'est pas pénalisée : elle reste à ouvrir
+        assert _row(temp_db, "https://lbc.fr/0")["enrichment_status"] == "pending"
+
+    def test_site_blocked_during_run_not_opened(self, temp_db):
+        from datetime import datetime, timedelta
+        from scrapers.antibot import record_block
+        annonces = self._annonces(temp_db, 2, 1)
+        start = datetime.now() - timedelta(minutes=5)
+        record_block("LeBonCoin")
+        page = self._page()
+        stats = self._open(annonces, page, blocked_since=start)
+        assert [c.args[0] for c in page.goto.call_args_list] == ["https://seloger.com/0"]
+        assert stats.skipped_sites == ["LeBonCoin"]
+
+    def test_old_block_ignored_when_attended_but_skipped_unattended(self, temp_db):
+        from datetime import datetime, timedelta
+        from scrapers.antibot import record_block
+        annonces = self._annonces(temp_db, 1, 0)
+        record_block("LeBonCoin", now=datetime.now() - timedelta(hours=1))
+        since = datetime.now() - timedelta(minutes=5)
+        assert self._open(annonces, self._page(), blocked_since=since).opened == 1
+        assert self._open(annonces, self._page(), blocked_since=since, unattended=True).opened == 0
+
+    def test_select_respects_budget_and_global_limit(self, temp_db):
+        from scrapers.enricher import select_annonces_to_open
+        from storage.sqlite import upsert_annonce_profile
+        for a in self._annonces(temp_db, 4, 4):
+            upsert_annonce_profile(a["url"], "enac", 1.0)
+        _insert("https://bienici.com/1", site="Bien'ici")
+        upsert_annonce_profile("https://bienici.com/1", "enac", 1.0)
+        sites = ["LeBonCoin", "SeLoger", "Bien'ici"]
+        chosen = select_annonces_to_open(["https://seloger.com/3"], sites,
+                                         budget={"LeBonCoin": 3, "SeLoger": 2, "Bien'ici": 5})
+        by_site = [a["site"] for a in chosen]
+        assert by_site.count("LeBonCoin") == 3 and by_site.count("SeLoger") == 2
+        assert "Bien'ici" not in by_site                      # pas de page de détail
+        limited = select_annonces_to_open(["https://seloger.com/3"], sites, limit=1,
+                                          budget={"LeBonCoin": 3, "SeLoger": 2})
+        assert [a["url"] for a in limited] == ["https://seloger.com/3"]   # annonce du run d'abord
+
+    def test_enrich_annonces_still_post_processes(self, temp_db):
+        self._annonces(temp_db, 1, 0)
+        from contextlib import ExitStack
+        with ExitStack() as stack:
+            for p in self._patches(self._page()):
+                stack.enter_context(p)
+            rescore = stack.enter_context(patch("scoring.rescore"))
+            llm = stack.enter_context(patch("analysis.llm.maybe_analyze"))
+            from scrapers.enricher import enrich_annonces
+            result = enrich_annonces(limit=10)
+        assert result["enriched"] == 1 and "opened" not in result
+        rescore.assert_called_once()
+        llm.assert_called_once()

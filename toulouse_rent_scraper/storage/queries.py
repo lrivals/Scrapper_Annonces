@@ -146,6 +146,8 @@ def map_listings(profile: str, filters: ListingFilters) -> List[Dict]:
     where_sql, params = filters.where()
     query = f"""
         SELECT a.id, a.title, a.price, a.location_raw, ap.distance_km, ap.score, a.url,
+               a.surface_m2, a.nb_rooms, a.nb_bedrooms, a.floor, a.charges, a.charges_included,
+               a.dpe_rating, a.ges_rating, a.geo_precision,
                COALESCE(a.lat, g.latitude) AS lat,
                COALESCE(a.lon, g.longitude) AS lon
         FROM annonces a

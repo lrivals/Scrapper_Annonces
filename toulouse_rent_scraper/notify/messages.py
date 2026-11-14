@@ -10,22 +10,31 @@ from typing import Dict, List
 
 import config
 from config import SEARCH_PROFILES
+from utils.formatting import km_label
 
 
 def _line(a: Dict) -> str:
-    parts = [f"{a['price']} €"]
-    # Caractéristiques connues dès la recherche (Sprint 15.2) ou après enrichissement
-    specs = []
+    """
+    « Titre — T2 · 38 m² · 690 € (+40 € ch.) · DPE C · 5,2 km · ★ 80 » ; champs absents omis.
+    Sprint 16 : les fiches sont ouvertes avant l'envoi, surface / charges / DPE sont connus.
+    « ≈ » devant une distance calculée depuis la commune (pas le point GPS de l'annonce).
+    """
+    parts = []
     if a.get("nb_rooms"):
-        specs.append(f"T{a['nb_rooms']}")
+        parts.append(f"T{a['nb_rooms']}")
     if a.get("surface_m2"):
-        specs.append(f"{a['surface_m2']:g} m²")
+        parts.append(f"{a['surface_m2']:g} m²")
+    price = f"{a['price']} €"
+    if a.get("charges_included"):
+        price += " CC"
+    elif a.get("charges"):
+        price += f" (+{a['charges']} € ch.)"
+    parts.append(price)
     if a.get("dpe_rating"):
-        specs.append(f"DPE {a['dpe_rating']}")
-    if specs:
-        parts.append(" ".join(specs))
-    if a.get("distance_km") is not None:
-        parts.append(f"{a['distance_km']:.1f} km")
+        parts.append(f"DPE {a['dpe_rating']}")
+    distance = km_label(a.get("distance_km"), a.get("geo_precision"))
+    if distance:
+        parts.append(distance)
     if a.get("score") is not None:
         parts.append(f"★ {round(a['score'])}")
     # Analyse LLM (15.4)

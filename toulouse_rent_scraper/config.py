@@ -407,6 +407,10 @@ ENRICHMENT_DEFAULT_LIMIT = 50
 ENRICHMENT_MAX_ATTEMPTS = 3
 ENRICHMENT_RETRY_DELAY_HOURS = 24
 
+# Sprint 16 — visites de pages de détail par run de scraping (le reste attend le run suivant).
+# Seuls ces sites ont une page de détail à ouvrir (Bien'ici : l'API donne l'annonce entière).
+DETAIL_VISITS_PER_RUN = {"LeBonCoin": 15, "SeLoger": 15}
+
 # Sprint 15.2 — une annonce LBC lue complète (description + surface) dans le JSON de la
 # page de recherche est marquée enrichie : pas de visite de sa page de détail.
 # False : le JSON de la recherche sert seulement à pré-remplir, la visite reste faite.

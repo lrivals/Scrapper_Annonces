@@ -2,7 +2,7 @@
 # =========================
 # Point d'entrée CLI
 #
-#   python main.py scrape [--site leboncoin] [--profile blagnac] [--enrich] [--export csv]
+#   python main.py scrape [--site leboncoin] [--profile blagnac] [--no-enrich] [--limit 20] [--export csv]
 #   python main.py enrich [--site seloger] [--limit 20]
 #   python main.py check-links [--limit 50]
 #   python main.py purge
@@ -48,8 +48,12 @@ def build_parser() -> argparse.ArgumentParser:
     scrape.add_argument("--site", **site_opt)
     scrape.add_argument("--profile", action="append", choices=sorted(SEARCH_PROFILES),
                         help="Profil de recherche (répétable). Défaut : tous les profils actifs")
-    scrape.add_argument("--enrich", action="store_true", help="Enrichir les annonces après le scraping")
-    scrape.add_argument("--limit", type=int, help="Nombre max d'annonces à enrichir (avec --enrich)")
+    scrape.add_argument("--no-enrich", action="store_false", dest="open_details",
+                        help="Recherche seule : ne pas ouvrir les fiches des annonces retenues")
+    scrape.add_argument("--enrich", action="store_true",
+                        help="Sans effet (les fiches sont ouvertes par défaut, Sprint 16) — compatibilité")
+    scrape.add_argument("--limit", type=int,
+                        help="Nombre max de fiches ouvertes pendant le run (en plus du plafond par site)")
     scrape.add_argument("--export", choices=["csv", "json"], help="Exporter après le scraping")
     scrape.add_argument("--purge", action="store_true",
                         help="Vérifier les annonces expirées après le scraping (requêtes HEAD)")
@@ -350,10 +354,12 @@ def cmd_scrape(args):
         + " — sites: " + ", ".join(SITE_NAMES[k] for k in site_keys)
     )
 
+    if args.enrich:
+        logger.debug("--enrich : sans effet, les fiches sont ouvertes par défaut (Sprint 16)")
+
     try:
-        run_scraping(profiles, site_keys, unattended=args.unattended)
-        if args.enrich:
-            cmd_enrich(args.sites, args.limit, unattended=args.unattended)
+        run_scraping(profiles, site_keys, unattended=args.unattended,
+                     enrich=args.open_details, limit=args.limit)
         if args.purge:
             cmd_purge()
         if args.export:

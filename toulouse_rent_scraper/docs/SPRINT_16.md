@@ -1,7 +1,7 @@
 # Sprint 16 — Fiches complètes dès le scraping
 
 > **Date** : 2026-11-13
-> **Statut** : 🔲 À faire
+> **Statut** : ✅ Terminé — validé sur un scraping réel (profil Blagnac), 2026-11-13/14
 > **Origine** : question « le scraping ouvre-t-il les annonces une à une ? Peut-on le faire sur les liens récoltés ? »
 > **Prérequis** : [Sprint 15](SPRINT_15.md) (extracteurs JSON 15.1/15.2, critères 15.5, dedup photo 15.8), [Sprint 13](SPRINT_13.md) (score, notifications), [Sprint 12](SPRINT_12.md) (`chrome_session`, verrou, anti-ban)
 
@@ -43,12 +43,12 @@ Mais :
 
 | # | Tâche | Statut | Notes |
 |---|-------|--------|-------|
-| 16.1 | Ouverture des fiches intégrée au pipeline | 🔲 | Avant dedup photo / LLM / rescore / notifications ; activée par défaut |
-| 16.2 | Sélection des annonces retenues | 🔲 | Annonces du run d'abord, par score ; doublons et exclues écartés |
-| 16.3 | Budget par site et anti-ban | 🔲 | Plafond de visites par site ; un site bloqué n'arrête pas l'autre |
-| 16.4 | Notifications avec la fiche complète | 🔲 | Surface, charges, DPE, distance exacte dans l'alerte |
-| 16.5 | UI, timer et résumé | 🔲 | Bouton UI et systemd suivent le défaut ; avancement visible |
-| 16.6 | Tests | 🔲 | Ordre du pipeline, sélection, budget, CLI |
+| 16.1 | Ouverture des fiches intégrée au pipeline | ✅ | Avant dedup photo / LLM / rescore / notifications ; activée par défaut |
+| 16.2 | Sélection des annonces retenues | ✅ | Annonces du run d'abord, par score ; doublons et exclues écartés |
+| 16.3 | Budget par site et anti-ban | ✅ | Plafond de visites par site ; un site bloqué n'arrête pas l'autre |
+| 16.4 | Notifications avec la fiche complète | ✅ | Surface, charges, DPE, distance exacte dans l'alerte |
+| 16.5 | UI, timer et résumé | ✅ | Bouton UI et systemd suivent le défaut ; avancement visible |
+| 16.6 | Tests | ✅ | Ordre du pipeline, sélection, budget, CLI |
 
 Hors périmètre :
 - **15.3 SeLoger JSON embarqué** : livré (Sprint 15). Comme pour LBC, la recherche SeLoger n'a
@@ -214,8 +214,37 @@ doublons écartés). Il devient juste car il s'applique maintenant **après** l'
 
 ## Vérification de fin de sprint
 
+Validation sur le profil **Blagnac** uniquement (ENAC n'est plus prioritaire, 2026-11-13).
+
 1. `pytest` vert.
-2. `python main.py scrape --profile enac --site leboncoin` réel : logs « Ouverture des
-   fiches », fiches `done` en base, notification reçue avec surface / DPE.
-3. `python main.py scrape --no-enrich` : aucune fiche ouverte.
-4. Bouton UI : avancement visible pendant l'ouverture.
+2. `python main.py scrape --profile blagnac --site leboncoin` réel : logs « Ouverture des
+   fiches », fiches `done` en base, notification avec surface / DPE (sans `.env`, message
+   vérifié via `notify.messages.build_messages`, pas d'envoi).
+3. `python main.py scrape --profile blagnac --no-enrich` : aucune fiche ouverte.
+4. Bouton UI (profil Blagnac) : avancement visible pendant l'ouverture.
+5. Timer systemd : non installé sur la machine de dev — `deploy/scraper.service` ne prendra
+   effet qu'une fois installé (`systemctl --user link …`, voir README).
+
+## Notes de livraison (2026-11-13)
+
+- `scrapers/enricher.py` : `open_annonces` (visites, sans post-traitement) groupées par site,
+  `select_annonces_to_open` (budget par site puis `--limit`), `post_process_details` (commande `enrich`).
+- Un blocage détecté pendant la recherche du run (`recently_blocked` postérieur au début du run)
+  empêche l'ouverture des fiches de ce site, même en mode manuel.
+- Effet de bord assumé sur `main.py enrich` : visites aussi groupées par site (pause longue entre
+  deux sites) et un challenge non résolu n'arrête plus que le site concerné.
+- Si Chrome est indisponible pendant l'ouverture, le run continue : notifications avec les cartes seules.
+- Les tests ne peuvent plus lancer le vrai Chrome depuis l'enricher (`tests/conftest.py`).
+
+## Résultats de la validation (2026-11-13/14, profil Blagnac)
+
+| # | Vérification | Résultat |
+|---|---|---|
+| 1 | `pytest` | ✅ 607 passés, 1 ignoré |
+| 2 | `scrape --profile blagnac --site leboncoin` | ✅ 15 fiches ouvertes (plafond LBC), 15 enrichies (JSON), 4 repositionnées GPS ; exclusions 131 → 137 après lecture des fiches ; message : `T2 · 42 m² · 605 € CC · DPE B · ≈ 4,5 km · ★ 66` (non envoyé : pas de `.env` sur la machine de dev) |
+| 3 | `scrape --profile blagnac --no-enrich` | ✅ « Ouverture des fiches désactivée » ; aucune page de détail visitée (seules 4 annonces Bien'ici passées `done` via l'API) |
+| 4 | Bouton UI (Blagnac, 3 sites) | ✅ `/scraping-status` affiche `Ouverture des fiches N/30 (SeLoger|LeBonCoin)` ; 30/30 enrichies, 0 erreur, pas d'alerte de santé |
+| 5 | Timer systemd | ⏸ non installé sur la machine de dev |
+
+Constats hors Sprint 16 (recherche) : `ERR_ABORTED` sur le warm-up SeLoger (`/?tab=rent`) au run 3
+(0 annonce SeLoger ce run-là) ; « browser has been closed » en page 8 de la pagination LBC au run 1.

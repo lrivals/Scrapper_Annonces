@@ -312,3 +312,85 @@ def test_delete_expired_annonces(temp_db):
         assert con.execute(f"SELECT COUNT(*) FROM {table} WHERE annonce_id IN (1, 2)").fetchone() == (0,)
     assert delete_expired_annonces() == 0
     con.close()
+
+
+# ---- Sprint 16.2 — annonces dont la fiche est ouverte pendant le scraping ----
+
+class TestAnnoncesToOpen:
+    SITES = ["LeBonCoin", "SeLoger"]
+
+    def _add(self, db, url, site="LeBonCoin", score=50, profile="enac", **cols):
+        import sqlite3
+        from storage.sqlite import insert_annonce, upsert_annonce_profile
+        insert_annonce({"site": site, "title": "Studio", "price": 450, "location_raw": "Rangueil", "url": url})
+        upsert_annonce_profile(url, profile, 1.0)
+        with sqlite3.connect(db) as con:
+            con.execute("UPDATE annonce_profiles SET score = ? WHERE annonce_id = "
+                        "(SELECT id FROM annonces WHERE url = ?)", (score, url))
+            if cols:
+                sets = ", ".join(f"{k} = ?" for k in cols)
+                con.execute(f"UPDATE annonces SET {sets} WHERE url = ?", (*cols.values(), url))
+
+    def _exclude(self, db, url, profile="enac"):
+        import sqlite3
+        with sqlite3.connect(db) as con:
+            con.execute("UPDATE annonce_profiles SET excluded_reasons = '[\"DPE G\"]' WHERE profile = ? "
+                        "AND annonce_id = (SELECT id FROM annonces WHERE url = ?)", (profile, url))
+
+    def _id(self, db, url):
+        import sqlite3
+        with sqlite3.connect(db) as con:
+            return con.execute("SELECT id FROM annonces WHERE url = ?", (url,)).fetchone()[0]
+
+    def test_exclusion_rules(self, temp_db):
+        from datetime import datetime, timedelta
+        from storage.feedback import set_feedback
+        from storage.sqlite import get_annonces_to_open, init_db, set_duplicate_of
+        init_db()
+        old = (datetime.now() - timedelta(hours=30)).isoformat()
+        self._add(temp_db, "https://x/ok")
+        self._add(temp_db, "https://x/orig")
+        self._add(temp_db, "https://x/dup")
+        set_duplicate_of("https://x/dup", self._id(temp_db, "https://x/orig"))
+        self._add(temp_db, "https://x/hidden", status="hidden")
+        self._add(temp_db, "https://x/expired", status="expired")
+        self._add(temp_db, "https://x/done", enrichment_status="done")
+        self._add(temp_db, "https://x/err", enrichment_status="error", enrichment_attempts=1, enriched_at=old)
+        self._add(temp_db, "https://x/err_recent", enrichment_status="error", enrichment_attempts=1,
+                  enriched_at=datetime.now().isoformat())
+        self._add(temp_db, "https://x/bienici", site="Bien'ici")
+        self._add(temp_db, "https://x/excluded")
+        self._exclude(temp_db, "https://x/excluded")
+        # exclue d'un profil seulement : toujours utile pour l'autre
+        self._add(temp_db, "https://x/half")
+        self._add(temp_db, "https://x/half", profile="blagnac")
+        self._exclude(temp_db, "https://x/half")
+        # exclue mais favorite ⭐ : ouverte quand même
+        self._add(temp_db, "https://x/fav")
+        self._exclude(temp_db, "https://x/fav")
+        set_feedback(self._id(temp_db, "https://x/fav"), "enac", "favorite")
+
+        urls = {a["url"] for a in get_annonces_to_open([], 50, self.SITES)}
+        assert urls == {"https://x/ok", "https://x/orig", "https://x/err", "https://x/half", "https://x/fav"}
+
+    def test_order_run_first_then_score_then_stock(self, temp_db):
+        from storage.sqlite import get_annonces_to_open, init_db
+        init_db()
+        self._add(temp_db, "https://x/stock_high", score=95)
+        self._add(temp_db, "https://x/run_low", score=40)
+        self._add(temp_db, "https://x/run_high", score=80)
+        self._add(temp_db, "https://x/stock_low", score=20)
+        run = ["https://x/run_low", "https://x/run_high"]
+        rows = get_annonces_to_open(run, 10, self.SITES)
+        assert [a["url"] for a in rows] == [
+            "https://x/run_high", "https://x/run_low", "https://x/stock_high", "https://x/stock_low"]
+        assert [a["in_run"] for a in rows] == [1, 1, 0, 0]
+        assert [a["url"] for a in get_annonces_to_open(run, 1, self.SITES)] == ["https://x/run_high"]
+
+    def test_site_filter(self, temp_db):
+        from storage.sqlite import get_annonces_to_open, init_db
+        init_db()
+        self._add(temp_db, "https://x/lbc")
+        self._add(temp_db, "https://x/sl", site="SeLoger")
+        assert [a["url"] for a in get_annonces_to_open([], 10, ["SeLoger"])] == ["https://x/sl"]
+        assert get_annonces_to_open([], 10, []) == []

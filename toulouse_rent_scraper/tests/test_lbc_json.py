@@ -320,8 +320,10 @@ def test_ui_shows_feature_badges(db):
                                     "lat": 43.58, "lon": 1.45, "geo_precision": "exact"})
     app.config["TESTING"] = True
     html = app.test_client().get("/?profile=enac").get_data(as_text=True)
-    for label in ("DPE D", "GES B", "Vide", "CC", "T2", "📍 GPS"):
+    # Étiquettes énergie colorées, ligne clé, prix CC ; distance exacte = sans « ≈ » (ui/cards.py)
+    for label in ("energy-D\">D</span>DPE", "energy-B\">B</span>GES", "Vide", "CC", "T2"):
         assert label in html
+    assert "≈" not in html.split('class="card-meta"')[1].split("</div>")[0]
 
 
 def test_json_rate_counts_api_source():

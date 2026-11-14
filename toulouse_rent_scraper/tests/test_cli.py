@@ -39,6 +39,7 @@ def test_new_syntax_untouched():
 def test_scrape_defaults():
     args = build_parser().parse_args(["scrape"])
     assert args.sites is None and args.profile is None and not args.enrich
+    assert args.open_details is True
 
 
 def test_invalid_site_rejected():
@@ -69,8 +70,22 @@ def test_scrape_runs_pipeline_then_post_steps():
     with patch("pipeline.run_scraping") as run, \
          patch.object(main, "cmd_enrich") as enrich, \
          patch.object(main, "cmd_export") as export:
-        main.main(["scrape", "--site", "leboncoin", "--profile", "blagnac", "--enrich", "--export", "csv"])
+        main.main(["scrape", "--site", "leboncoin", "--profile", "blagnac", "--export", "csv"])
     profiles, sites = run.call_args.args
     assert [p.key for p in profiles] == ["blagnac"] and sites == ["leboncoin"]
-    enrich.assert_called_once_with(["leboncoin"], None, unattended=False)
+    enrich.assert_not_called()          # Sprint 16 : les fiches sont ouvertes dans le pipeline
     export.assert_called_once_with("csv")
+
+
+@pytest.mark.parametrize("argv,enrich,limit", [
+    (["scrape"], True, None),                                   # ouvre les fiches par défaut
+    (["scrape", "--no-enrich"], False, None),                   # recherche seule
+    (["scrape", "--enrich", "--limit", "20"], True, 20),        # --enrich toléré, --limit global
+    (["scrape", "--unattended"], True, None),                   # timer systemd
+])
+def test_scrape_opens_details_by_default(argv, enrich, limit):
+    with patch("pipeline.run_scraping") as run, patch.object(main, "cmd_enrich") as cmd_enrich:
+        main.main(argv)
+    assert run.call_args.kwargs["enrich"] is enrich
+    assert run.call_args.kwargs["limit"] == limit
+    cmd_enrich.assert_not_called()

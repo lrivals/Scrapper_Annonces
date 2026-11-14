@@ -231,7 +231,7 @@ def test_notification_shows_specs():
     from notify.messages import _line
     line = _line({"title": "T2", "price": 450, "nb_rooms": 2, "surface_m2": 38.0,
                   "dpe_rating": "D", "distance_km": 2.4, "score": 71})
-    assert "T2 38 m² DPE D" in line
+    assert "T2 · 38 m² · 450 € · DPE D" in line
 
 
 def test_search_health_rows():
