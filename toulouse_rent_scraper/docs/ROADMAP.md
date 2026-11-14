@@ -61,7 +61,7 @@ Sprint 2-bis (API REST & Dashboard)
 | 3 | Enrichissement annonces | ✅ Terminé | 6/6 | 2026-03-25 | 2026-03-25 |
 | 9 | Photos & Thumbnails | ✅ Terminé | 5/5 | 2026-03-25 | 2026-03-25 |
 | 10 | Vue Carte OpenStreetMap | ✅ Terminé | 6/6 | 2026-03-25 | 2026-03-25 |
-| 11 | Fiabilité des données (bugs audit) | ✅ Terminé | 7/7 (2 validations manuelles SeLoger) | 2026-11-03 | 2026-11-03 |
+| 11 | Fiabilité des données (bugs audit) | ✅ Terminé | 7/7 (validations SeLoger ENAC abandonnées : profil Blagnac prioritaire) | 2026-11-03 | 2026-11-03 |
 | 14 | Profils de recherche (ENAC + Blagnac) | ✅ Terminé | 8/8 (URL SeLoger Blagnac à capturer) | 2026-11-03 | 2026-11-03 |
 | 12 | Refactor & sécurité | ✅ Terminé | 8/8 (compteurs validés en réel) | 2026-11-03 | 2026-11-03 |
 | 13 | Alerte & priorisation | ✅ Terminé | 4/5 (13.5 reporté) | 2026-11-03 | 2026-11-03 |
