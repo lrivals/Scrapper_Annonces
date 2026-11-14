@@ -246,6 +246,8 @@
           {% endif %}
         </div>
 
+        <div class="card-details" hidden></div>
+
         <div class="card-footer">
           <div class="status-pill">
             {% set s = a.status or 'active' %}
@@ -260,6 +262,7 @@
           </div>
 
           <div style="display:flex;align-items:center;gap:8px">
+          <button type="button" class="btn-details" aria-expanded="false" title="Description, particularités, photos">Détails ▾</button>
           <div class="feedback" role="group" aria-label="Votre avis">
             {% for value, icon, label in [('favorite', '⭐', 'Favori'), ('contacted', '📞', 'Contacté'), ('dislike', '👎', 'Pas intéressé')] %}
             <button type="button" class="btn-fb {% if a.feedback == value %}is-on{% endif %}" data-id="{{ a.id }}" data-value="{{ value }}"

@@ -270,3 +270,20 @@ def test_card_shows_full_detail(client, temp_db):
                    if l["url"] == "https://ex.com/full")
     assert listing["key_facts"] == ["T2", "42 m²", "2ᵉ ét."]
     assert listing["price_note"] == "CC" and listing["energy"] == [["DPE", "B"]]
+
+
+def test_card_details_panel(client, temp_db):
+    from storage.sqlite import update_annonce_enrichment
+    _add("https://ex.com/d", price=600, profile="blagnac")
+    update_annonce_enrichment("https://ex.com/d", {
+        "enrichment_status": "done", "description": "Lumineux, proche du tram T1",
+        "photos": '["https://img.ex/1.jpg", "https://img.ex/2.jpg"]',
+    })
+    page = client.get("/?profile=blagnac").get_data(as_text=True)
+    assert 'class="btn-details"' in page and 'class="card-details" hidden' in page
+
+    html = client.get("/annonce/1/details?profile=blagnac").get_data(as_text=True)
+    assert "Lumineux, proche du tram T1" in html and "https://img.ex/2.jpg" in html
+    assert "Voir l’annonce sur SeLoger" in html
+    assert client.get("/annonce/1/details?profile=enac").status_code == 404     # autre profil
+    assert client.get("/annonce/999/details?profile=blagnac").status_code == 404

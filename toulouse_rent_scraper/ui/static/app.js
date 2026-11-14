@@ -498,6 +498,9 @@ function buildStackCard(id) {
     card.style.removeProperty('--i');
     // Masquer / Restaurer restent dans la vue Liste (gestion AJAX propre à celle-ci)
     card.querySelectorAll('form').forEach(function(f) { f.remove(); });
+    // Panneau « Détails » : vue liste seulement
+    card.classList.remove('is-expanded');
+    card.querySelectorAll('.btn-details, .card-details').forEach(function(el) { el.remove(); });
     card.querySelectorAll('[id]').forEach(function(el) { el.removeAttribute('id'); });
     return card;
   }
@@ -591,6 +594,72 @@ function clearStack() {
   setActive(null);
   updateStackEmpty();
 }
+
+/* ---- Carte dépliable (vue liste) : description, particularités, photos ---- */
+var _expandedCard = null;
+
+function setExpanded(card, open) {
+  var btn = card.querySelector('.btn-details');
+  var panel = card.querySelector('.card-details');
+  card.classList.toggle('is-expanded', open);
+  panel.hidden = !open;
+  if (btn) {
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    btn.textContent = open ? 'Détails ▴' : 'Détails ▾';
+  }
+}
+
+function toggleDetails(card) {
+  var open = !card.classList.contains('is-expanded');
+  if (_expandedCard && _expandedCard !== card) setExpanded(_expandedCard, false);
+  setExpanded(card, open);
+  _expandedCard = open ? card : null;
+  if (!open) return;
+
+  var panel = card.querySelector('.card-details');
+  if (!panel.dataset.loaded) {
+    panel.dataset.loaded = 'loading';
+    panel.innerHTML = '<p class="details-empty">Chargement…</p>';
+    fetch('/annonce/' + card.dataset.id + '/details?profile=' + encodeURIComponent(document.body.dataset.profile))
+      .then(function(r) { if (!r.ok) throw new Error(r.status); return r.text(); })
+      .then(function(html) {
+        panel.innerHTML = html;
+        panel.dataset.loaded = 'yes';
+        if (canAnimate(panel)) panel.animate([{ opacity: 0 }, { opacity: 1 }], { duration: DUR_ENTER, easing: EASE_OUT });
+      })
+      .catch(function() {
+        delete panel.dataset.loaded;   // nouvel essai au prochain dépliage
+        panel.innerHTML = '<p class="details-empty">Détails indisponibles — réessayer plus tard.</p>';
+      });
+  }
+  // Haut de la carte juste sous la barre de filtres collante
+  var bar = document.querySelector('.filter-bar');
+  var top = card.getBoundingClientRect().top + window.scrollY - (bar ? bar.offsetHeight : 0) - 12;
+  window.scrollTo({ top: top, behavior: reducedMotion() ? 'auto' : 'smooth' });
+}
+
+(function initCardDetails() {
+  var grid = document.getElementById('card-grid');
+  if (!grid) return;
+  grid.addEventListener('click', function(e) {
+    var card = e.target.closest('article.card');
+    if (!card) return;
+    if (e.target.closest('.btn-details')) { toggleDetails(card); return; }
+    // Liens, boutons, formulaires et le panneau lui-même gardent leur rôle
+    if (e.target.closest('a, button, form, input, select, .card-details')) return;
+    if (window.getSelection && String(window.getSelection()).length) return;   // sélection de texte
+    toggleDetails(card);
+  });
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape' && _expandedCard) {
+      var card = _expandedCard;
+      setExpanded(card, false);
+      _expandedCard = null;
+      var btn = card.querySelector('.btn-details');
+      if (btn) btn.focus();
+    }
+  });
+})();
 
 /* Auto-restore map view if URL contains ?view=map */
 (function() {

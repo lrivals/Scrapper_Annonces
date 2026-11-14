@@ -976,3 +976,132 @@ body.doc-mode-active .btn-add-doc { display: inline-block; animation: reveal var
 .energy-E { background: #f0b50f; color: #1f2937; }
 .energy-F { background: #eb8235; }
 .energy-G { background: #d7221f; }
+
+/* ---- Carte dépliable (vue liste) : panneau « Détails » (ui/details.py) ---- */
+#card-grid .card { cursor: pointer; }
+#card-grid .card .card-details { cursor: auto; }
+#card-grid > .card { min-width: 0; }
+#card-grid .card-footer { flex-wrap: wrap; gap: 8px; }
+
+/* Carte dépliée : résumé à gauche (largeur d'une carte), détails à droite, pied sur toute la largeur */
+.card.is-expanded {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 360px) minmax(0, 1fr);
+  grid-template-rows: auto 1fr auto;     /* l'espace en trop va sous le résumé, pas sous la photo */
+  column-gap: 32px;
+  align-items: start;
+}
+.card.is-expanded > .card-image { grid-column: 1; grid-row: 1; }
+.card.is-expanded > .card-content { grid-column: 1; grid-row: 2; }
+.card.is-expanded > .card-details {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  border-top: 0;
+  border-left: 1px solid #f3f4f6;
+  padding: 0 0 0 28px;
+}
+.card.is-expanded > .card-footer { grid-column: 1 / -1; grid-row: 3; }
+
+.btn-details {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-main);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn-details:hover { background: #f9fafb; }
+.btn-details:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+
+.card-details { padding: 16px 24px 4px; border-top: 1px solid #f3f4f6; }
+.details-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: 28px;
+}
+.details-title {
+  margin: 14px 0 6px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.details-photos {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  padding-bottom: 6px;
+}
+.details-photos a { flex: 0 0 auto; scroll-snap-align: start; }
+.details-photos img {
+  display: block;
+  height: 160px;
+  width: auto;
+  max-width: 260px;
+  object-fit: cover;
+  border-radius: 8px;
+  background: #f3f4f6;
+}
+.details-description {
+  white-space: pre-line;
+  font-size: 0.875rem;
+  line-height: 1.55;
+  color: var(--text-main);
+  max-height: 22rem;
+  overflow-y: auto;
+  padding-right: 6px;
+}
+.details-empty { font-size: 0.85rem; color: var(--text-muted); font-style: italic; }
+.details-llm { margin-top: 12px; font-size: 0.85rem; line-height: 1.45; }
+.details-llm p { margin: 4px 0; }
+.details-warn { color: #92400e; }
+
+.details-group dl, .details-meta { margin: 0; display: flex; flex-direction: column; gap: 4px; }
+.details-group dl > div, .details-meta > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.82rem;
+  border-bottom: 1px dashed #f3f4f6;
+  padding-bottom: 3px;
+}
+.details-group dt, .details-meta dt { color: var(--text-muted); flex-shrink: 0; }
+.details-group dd, .details-meta dd { margin: 0; text-align: right; color: var(--text-main); }
+.details-group .details-tag dd { text-align: left; }
+.details-meta { margin-top: 14px; }
+.details-meta a { color: var(--text-main); font-weight: 600; }
+
+.score-bar {
+  display: grid;
+  grid-template-columns: 7.5rem 1fr 1.5rem;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8rem;
+  margin: 3px 0;
+}
+.score-bar-track { height: 6px; background: #f3f4f6; border-radius: 999px; overflow: hidden; }
+.score-bar-fill { display: block; height: 100%; background: var(--primary); border-radius: 999px; }
+.score-bar-value { text-align: right; font-weight: 700; }
+
+.details-history { margin: 0; padding-left: 18px; font-size: 0.82rem; }
+.details-history span { color: var(--text-muted); margin-right: 6px; }
+.details-link {
+  display: inline-block;
+  margin: 16px 0 8px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+@media (max-width: 900px) {
+  .details-layout { grid-template-columns: 1fr; gap: 8px; }
+  .card-details { padding: 12px 0 4px; }
+  .card.is-expanded { display: flex; }
+  .card.is-expanded > .card-details { border-left: 0; border-top: 1px solid #f3f4f6; padding: 12px 0 4px; }
+}

@@ -160,6 +160,21 @@ def map_listings(profile: str, filters: ListingFilters) -> List[Dict]:
         return [dict(r) for r in conn.execute(query, [profile] + params).fetchall()]
 
 
+def annonce_detail(annonce_id: int, profile: str) -> Optional[Dict]:
+    """Une annonce rattachée au profil, avec son score détaillé (panneau « Détails » de la carte)."""
+    with connect() as conn:
+        row = conn.execute(
+            """
+            SELECT a.*, ap.distance_km AS distance_km, ap.score AS score, ap.score_detail AS score_detail
+            FROM annonces a
+            JOIN annonce_profiles ap ON ap.annonce_id = a.id AND ap.profile = ?
+            WHERE a.id = ?
+            """,
+            (profile, annonce_id),
+        ).fetchone()
+    return dict(row) if row else None
+
+
 def annonces_by_ids(ids: List[int], profile: str) -> List[Dict]:
     """Annonces sélectionnées pour l'export, avec leur distance au profil."""
     if not ids:
