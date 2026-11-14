@@ -29,7 +29,6 @@ from utils.logger import setup_logger
 
 logger = setup_logger("main")
 
-COMMANDS = ("scrape", "enrich", "check-links", "purge", "export", "rescore", "notify-test", "quality", "analyze", "weights", "dedupe", "ui")
 
 # Code de sortie quand un autre run tient le verrou (EX_TEMPFAIL)
 EXIT_ALREADY_RUNNING = 75
@@ -98,6 +97,15 @@ def build_parser() -> argparse.ArgumentParser:
     quality = sub.add_parser("quality", help="Taux de remplissage des champs par site (santé de l'extraction)")
     quality.add_argument("--days", type=int, help="Seulement les annonces enrichies ces N derniers jours")
 
+    report = sub.add_parser("report", help="Regénérer les rapports Markdown (et PDF) sans scraper")
+    report.add_argument("--profile", action="append", choices=sorted(SEARCH_PROFILES),
+                        help="Profil (répétable). Défaut : tous les profils actifs")
+    report.add_argument("--pdf", action="store_true", help="Assembler aussi les rapports principaux en PDF")
+    report.add_argument("--since-hours", type=int, default=24,
+                        help="« Nouvelles » = rattachées depuis N heures (défaut 24)")
+    report.add_argument("--send-top10", action="store_true",
+                        help="Envoyer le Top 10 par notification, quel que soit NOTIFY_TOP10")
+
     export = sub.add_parser("export", help="Exporter les annonces actives")
     export.add_argument("format", choices=["csv", "json"])
 
@@ -115,7 +123,9 @@ def translate_legacy_args(argv: List[str]) -> List[str]:
     """
     if not argv:
         return ["scrape"]
-    if argv[0] in COMMANDS or argv[0] in ("-h", "--help"):
+    # Ancienne syntaxe = options seules. Un premier mot qui n'est pas une option (sous-commande,
+    # même inconnue) part tel quel à argparse : jamais traduit en scraping.
+    if not argv[0].startswith("-") or argv[0] in ("-h", "--help"):
         return argv
 
     def take_value(flag: str) -> List[str]:
@@ -343,6 +353,35 @@ def cmd_quality(days: Optional[int] = None) -> List[str]:
     return alerts
 
 
+def cmd_report(profile_keys=None, pdf: bool = False, since_hours: int = 24,
+               send_top10: bool = False) -> dict:
+    """Sprint 5 — rapports d'après la base, sans scraper. Retourne {profil: fichiers}."""
+    from datetime import datetime, timedelta
+
+    import config
+    from notify import notify_top10
+    from reporting.generator import generate_summary_reports
+    from storage.sqlite import init_db
+
+    init_db()
+    profiles = selected_profiles(profile_keys)
+    written = generate_summary_reports(datetime.now() - timedelta(hours=since_hours),
+                                       profiles=profiles, pdf=pdf)
+    for key, paths in written.items():
+        print(f"{SEARCH_PROFILES[key].label} :")
+        for path in paths:
+            print(f"  {path}")
+    if send_top10:
+        mode, config.NOTIFY_TOP10 = config.NOTIFY_TOP10, "run"
+        try:
+            sent = notify_top10(p.key for p in profiles)
+        finally:
+            config.NOTIFY_TOP10 = mode
+        print(f"Top 10 envoyé : {sent} message(s)" if sent else
+              "Top 10 non envoyé (notifications désactivées ou en échec — voir notify-test)")
+    return written
+
+
 def cmd_scrape(args):
     from pipeline import run_scraping
 
@@ -385,6 +424,8 @@ def main(argv: Optional[List[str]] = None):
         cmd_purge(delete_expired=args.delete_expired)
     elif args.command == "export":
         cmd_export(args.format)
+    elif args.command == "report":
+        cmd_report(args.profile, pdf=args.pdf, since_hours=args.since_hours, send_top10=args.send_top10)
     elif args.command == "rescore":
         cmd_rescore()
     elif args.command == "analyze":
