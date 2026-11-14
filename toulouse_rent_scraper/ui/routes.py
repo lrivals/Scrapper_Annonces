@@ -18,6 +18,7 @@ from storage.queries import (
 )
 from filters.requirements import current_requirements, describe_requirements
 from storage.sqlite import clear_db, set_annonce_status
+from ui.cards import card_view
 from ui.export import build_candidature_markdown, candidature_filename
 from scoring import describe as describe_score
 from ui.security import safe_back
@@ -94,6 +95,7 @@ def index():
         a["thumbnail"] = _thumbnail(a.get("photos"))
         a["score_text"] = describe_score(a.get("score_detail"))
         a["excluded"] = _json_list(a.get("excluded_reasons"))
+        a["view"] = card_view(a)
 
     shown = filters.cleaned()
     flash = None
@@ -374,6 +376,9 @@ def map_data():
     listings = map_listings(profile.key, ListingFilters.from_args(request.args))
     for l in listings:
         l["title"] = l["title"] or f"Annonce #{l['id']}"
+        # Carte de repli de la pile (annonce absente de la liste affichée) : mêmes règles que la liste
+        view = card_view(l)
+        l.update({k: view[k] for k in ("key_facts", "price_note", "distance_label", "energy")})
 
     geocoded = sum(1 for l in listings if l["lat"] is not None)
     log.info(
@@ -390,7 +395,8 @@ def map_data():
             "radius_km": profile.max_distance_km,
         },
         "listings": [
-            {k: l[k] for k in ("id", "title", "price", "location_raw", "distance_km", "score", "url", "lat", "lon")}
+            {k: l[k] for k in ("id", "title", "price", "location_raw", "distance_km", "score", "url", "lat", "lon",
+                               "key_facts", "price_note", "distance_label", "energy")}
             for l in listings
         ],
     })

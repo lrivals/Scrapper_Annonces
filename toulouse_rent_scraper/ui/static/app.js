@@ -510,13 +510,19 @@ function buildStackCard(id) {
     '<div class="card-content">'
     + '<div class="card-header">'
     + (score !== null ? '<span class="score-pill ' + (score >= 70 ? 'score-high' : score >= 45 ? 'score-mid' : 'score-low') + '">★ ' + score + '</span>' : '')
-    + '<div class="price-tag">' + (l.price ? l.price + ' €' : '—') + '</div></div>'
+    + '<div class="price-block"><div class="price-tag">' + (l.price ? l.price + ' €' : '—')
+    + (l.price_note ? ' <span class="price-note">' + escapeHtml(l.price_note) + '</span>' : '') + '</div></div></div>'
     + '<a class="card-title" target="_blank" href="' + escapeHtml(l.url) + '">' + escapeHtml(l.title || 'Annonce') + '</a>'
+    + (l.key_facts && l.key_facts.length ? '<p class="card-keyfacts">' + escapeHtml(l.key_facts.join(' · ')) + '</p>' : '')
     + '<div class="card-meta">'
     + (l.location_raw ? '<div class="meta-item">' + escapeHtml(l.location_raw) + '</div>' : '')
-    + (l.distance_km !== null && l.distance_km !== undefined && _mapTarget
-        ? '<div class="meta-item">' + Number(l.distance_km).toFixed(1) + ' km de ' + escapeHtml(_mapTarget.label) + '</div>' : '')
+    + (l.distance_label && _mapTarget
+        ? '<div class="meta-item">' + escapeHtml(l.distance_label) + ' de ' + escapeHtml(_mapTarget.label) + '</div>' : '')
     + '</div>'
+    + (l.energy && l.energy.length
+        ? '<div class="card-feats"><div class="feat-row">' + l.energy.map(function(e) {
+            return '<span class="energy"><span class="energy-grade energy-' + escapeHtml(e[1]) + '">' + escapeHtml(e[1]) + '</span>' + escapeHtml(e[0]) + '</span>';
+          }).join('') + '</div></div>' : '')
     + '<a class="card-fallback-link" target="_blank" href="' + escapeHtml(l.url) + '">Voir l&rsquo;annonce →</a>'
     + '</div>';
   return card;

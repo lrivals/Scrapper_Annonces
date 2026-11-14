@@ -113,7 +113,7 @@ def test_profile_tabs_split_listings(client):
 
     page = client.get("/?profile=blagnac").get_data(as_text=True)
     assert "Studio 700" in page and "Studio 450" not in page
-    assert "3.2 km" in page
+    assert "≈ 3,2 km" in page
 
 
 def test_unknown_profile_falls_back_to_default(client):
@@ -250,3 +250,23 @@ def test_map_view_has_summary_stack(client):
     assert 'id="map-stack"' in page and 'id="map-stack-list"' in page
     assert '<article class="card" data-id="1"' in page
     assert 'class="btn-add-doc" id="doc-btn-1" data-id="1"' in page
+
+
+def test_card_shows_full_detail(client, temp_db):
+    from storage.sqlite import update_annonce_enrichment
+    _add("https://ex.com/full", price=605, profile="blagnac")
+    update_annonce_enrichment("https://ex.com/full", {
+        "enrichment_status": "done", "surface_m2": 42, "nb_rooms": 2, "floor": 2,
+        "charges_included": True, "dpe_rating": "B", "publisher_type": "individual",
+        "lat": 43.6, "lon": 1.39, "geo_precision": "exact",
+    })
+    _add("https://ex.com/pending", price=610, profile="blagnac")
+    html = client.get("/?profile=blagnac").get_data(as_text=True)
+    assert "T2 · 42 m² · 2ᵉ ét." in html
+    assert "energy-B" in html and "14 €/m²" in html
+    assert "Particulier" in html
+    assert "Fiche pas encore lue" in html          # la 2ᵉ annonce n'a pas été ouverte
+    listing = next(l for l in client.get("/api/map-data?profile=blagnac").get_json()["listings"]
+                   if l["url"] == "https://ex.com/full")
+    assert listing["key_facts"] == ["T2", "42 m²", "2ᵉ ét."]
+    assert listing["price_note"] == "CC" and listing["energy"] == [["DPE", "B"]]
