@@ -190,6 +190,8 @@ LEBONCOIN_SEARCH_URL = (
 
 ### Reste à valider manuellement (navigateur)
 
+> **2026-11-14 — abandonné** : le profil ENAC n'est plus développé, seul le profil Blagnac compte. Les points 1 et 2 visent l'URL SeLoger ENAC et ne seront pas faits. Le profil Blagnac utilise des URLs copiées du site (`seloger_search_url`, `lbc_search_url`) et n'est pas concerné.
+
 1. **SeLoger `priceMax`** : nom de paramètre non vérifié. Ouvrir `config.SELOGER_SEARCH_URL` dans Chrome et vérifier que le filtre « Budget max 500 € » est coché. Sinon, capturer l'URL après avoir réglé le budget à la main et corriger le paramètre.
 2. **SeLoger types T1/T2** : cocher Studio + T1 + T2 sur le site, copier la valeur de `estateSubTypes` dans `config.py`.
 3. **LBC `sort=time`** : vérifier au premier run que les résultats sont triés « Plus récentes ».

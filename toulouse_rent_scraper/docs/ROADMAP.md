@@ -61,11 +61,11 @@ Sprint 2-bis (API REST & Dashboard)
 | 3 | Enrichissement annonces | ✅ Terminé | 6/6 | 2026-03-25 | 2026-03-25 |
 | 9 | Photos & Thumbnails | ✅ Terminé | 5/5 | 2026-03-25 | 2026-03-25 |
 | 10 | Vue Carte OpenStreetMap | ✅ Terminé | 6/6 | 2026-03-25 | 2026-03-25 |
-| 11 | Fiabilité des données (bugs audit) | ✅ Terminé | 7/7 (2 validations manuelles SeLoger) | 2026-11-03 | 2026-11-03 |
+| 11 | Fiabilité des données (bugs audit) | ✅ Terminé | 7/7 (validations SeLoger ENAC abandonnées : profil Blagnac prioritaire) | 2026-11-03 | 2026-11-03 |
 | 14 | Profils de recherche (ENAC + Blagnac) | ✅ Terminé | 8/8 (URL SeLoger Blagnac à capturer) | 2026-11-03 | 2026-11-03 |
-| 12 | Refactor & sécurité | ✅ Terminé | 8/8 (compteurs à revalider au prochain scraping réel) | 2026-11-03 | 2026-11-03 |
+| 12 | Refactor & sécurité | ✅ Terminé | 8/8 (compteurs validés en réel) | 2026-11-03 | 2026-11-03 |
 | 13 | Alerte & priorisation | ✅ Terminé | 4/5 (13.5 reporté) | 2026-11-03 | 2026-11-03 |
-| 15 | Fiches détaillées, tri affiné, nouvelles sources | 🔵 En cours | 4/8 (à valider sur les vrais sites / avec une clé d'API) | 2026-11-12 | — |
+| 15 | Fiches détaillées, tri affiné, nouvelles sources | 🔵 En cours | 8/8 livrées, 7/8 validées en réel (reste 15.4 LLM : clé d'API) | 2026-11-12 | — |
 | 16 | Fiches complètes dès le scraping | ✅ Terminé | 6/6 (validé en réel, profil Blagnac) | 2026-11-13 | 2026-11-14 |
 | 4 | Scraper PAP.fr | 🔲 À faire | 0/6 | — | — |
 | 5 | Rapports Markdown avancés | 🔲 À faire | 0/6 | — | — |
