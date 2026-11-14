@@ -10,10 +10,7 @@ from typing import Dict, List
 
 import config
 from config import SEARCH_PROFILES
-
-
-def _km(value: float) -> str:
-    return f"{value:.1f}".replace(".", ",") + " km"
+from utils.formatting import km_label
 
 
 def _line(a: Dict) -> str:
@@ -35,9 +32,9 @@ def _line(a: Dict) -> str:
     parts.append(price)
     if a.get("dpe_rating"):
         parts.append(f"DPE {a['dpe_rating']}")
-    if a.get("distance_km") is not None:
-        approx = "" if a.get("geo_precision") == "exact" else "≈ "
-        parts.append(approx + _km(a["distance_km"]))
+    distance = km_label(a.get("distance_km"), a.get("geo_precision"))
+    if distance:
+        parts.append(distance)
     if a.get("score") is not None:
         parts.append(f"★ {round(a['score'])}")
     # Analyse LLM (15.4)

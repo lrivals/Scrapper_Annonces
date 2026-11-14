@@ -156,13 +156,15 @@
     <main class="grid" id="card-grid">
       {% for a in annonces %}
       <article class="card" data-id="{{ a.id }}" style="--i: {{ [loop.index0, 10]|min }}">
+        {% set v = a.view %}
         <a href="{{ a.url }}" target="_blank" class="card-image">
           {% if a.thumbnail %}
             <img src="{{ a.thumbnail }}" alt="{{ a.title }}" loading="lazy" referrerpolicy="no-referrer"
-                 onerror="this.parentElement.innerHTML='<div class='card-image-placeholder'>🏠</div>'">
+                 onerror="this.parentElement.querySelector('img').outerHTML='<div class=&quot;card-image-placeholder&quot;>🏠</div>'">
           {% else %}
             <div class="card-image-placeholder">🏠</div>
           {% endif %}
+          {% if v.photo_count > 1 %}<span class="photo-count" title="{{ v.photo_count }} photos">📷 {{ v.photo_count }}</span>{% endif %}
         </a>
         <div class="card-content">
           <div class="card-header">
@@ -171,75 +173,75 @@
             <span class="score-pill {{ 'score-high' if a.score >= 70 else ('score-mid' if a.score >= 45 else 'score-low') }}"
                   title="Score {{ a.score|round|int }}/100 — {{ a.score_text }}">★ {{ a.score|round|int }}</span>
             {% endif %}
-            <div class="price-tag">{{ a.price or '—' }} €
-              {% if a.first_price and a.price and a.first_price != a.price %}
-              <span class="price-drop {{ 'up' if a.price > a.first_price else '' }}"
-                    title="Prix initial {{ a.first_price }} € ({{ (a.first_seen or '')[:10] }})">
-                {{ '↓' if a.price < a.first_price else '↑' }} {{ (a.price - a.first_price)|abs }} €
-              </span>
-              {% endif %}
+            <div class="price-block">
+              <div class="price-tag">{{ a.price or '—' }} €
+                {%- if v.price_note %} <span class="price-note" title="{{ 'Prix charges comprises' if v.price_note == 'CC' else 'Charges mensuelles en plus du loyer' }}">{{ v.price_note }}</span>{% endif %}
+                {% if a.first_price and a.price and a.first_price != a.price %}
+                <span class="price-drop {{ 'up' if a.price > a.first_price else '' }}"
+                      title="Prix initial {{ a.first_price }} € ({{ (a.first_seen or '')[:10] }})">
+                  {{ '↓' if a.price < a.first_price else '↑' }} {{ (a.price - a.first_price)|abs }} €
+                </span>
+                {% endif %}
+              </div>
+              {% if v.price_per_m2 %}<div class="price-sqm" title="Loyer affiché divisé par la surface">{{ v.price_per_m2 }} €/m²</div>{% endif %}
             </div>
           </div>
 
           <a href="{{ a.url }}" target="_blank" class="card-title">
             {{ a.title or 'Annonce sans titre' }}
           </a>
+          {% if v.key_facts %}<p class="card-keyfacts">{{ v.key_facts | join(' · ') }}</p>{% endif %}
           {% if a.summary %}<p class="card-summary" title="Résumé de la description (analyse automatique)">{{ a.summary }}</p>{% endif %}
 
           <div class="card-meta">
-            <div class="meta-item" title="Distance de {{ profile.target_address }}">
+            <div class="meta-item" title="Distance de {{ profile.target_address }} — {{ v.distance_title }}">
               <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
-              {% if a.distance_km is not none %}
-                {{ "%.1f"|format(a.distance_km | float) }} km
-              {% else %}
-                Distance N/A
-              {% endif %}
+              {{ v.distance_label or 'Distance N/A' }}
             </div>
-            
-            <div class="meta-item" title="Localisation">
+
+            <div class="meta-item" title="{{ a.location_raw or 'Localisation inconnue' }}">
               <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path></svg>
-              {{ (a.location_raw or 'Toulouse')[:22] }}{% if (a.location_raw or '')|length > 22 %}&hellip;{% endif %}
+              <span class="meta-ellipsis">{{ a.location_raw or 'Toulouse' }}</span>
             </div>
 
-            <div class="meta-item" title="Date d&rsquo;ajout">
+            <div class="meta-item" title="Annonceur">
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
+              {% if v.publisher_label == 'Particulier' %}<strong class="publisher-individual">Particulier</strong>{% else %}{{ v.publisher_label or 'Annonceur ?' }}{% endif %}
+            </div>
+
+            <div class="meta-item" title="{{ v.date_title }}">
               <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-              {% if a.created_at %}{{ a.created_at[:10] }}{% else %}Récent{% endif %}
-            </div>
-
-            <div class="meta-item" title="Type">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path></svg>
-              {{ a.surface_m2 or '—' }} m²
+              {{ v.date_label }}
             </div>
           </div>
 
-          {# Sprint 15.1 — caractéristiques issues de l'enrichissement #}
-          {% set feats = [] %}
-          {% if a.nb_rooms %}{% set _ = feats.append(('T' ~ a.nb_rooms, 'Pièces')) %}{% endif %}
-          {% if a.dpe_rating %}{% set _ = feats.append(('DPE ' ~ a.dpe_rating, 'Diagnostic énergétique')) %}{% endif %}
-          {% if a.ges_rating %}{% set _ = feats.append(('GES ' ~ a.ges_rating, 'Émissions de gaz à effet de serre')) %}{% endif %}
-          {% if a.furnished is not none and a.enrichment_status == 'done' %}{% set _ = feats.append(('Meublé' if a.furnished else 'Vide', 'Meublé / non meublé')) %}{% endif %}
-          {% if a.charges_included %}{% set _ = feats.append(('CC', 'Prix charges comprises')) %}{% elif a.charges %}{% set _ = feats.append(('+' ~ a.charges ~ ' € ch.', 'Charges mensuelles')) %}{% endif %}
-          {% if a.floor is not none %}{% set _ = feats.append(('RDC' if a.floor == 0 else 'Ét. ' ~ a.floor, 'Étage')) %}{% endif %}
-          {% if a.elevator %}{% set _ = feats.append(('Ascenseur', 'Ascenseur')) %}{% endif %}
-          {% if a.geo_precision == 'exact' %}{% set _ = feats.append(('📍 GPS', 'Position exacte fournie par l’annonce')) %}{% endif %}
-          {# Sprint 15.4 — informations tirées de la description par l'analyse LLM #}
-          {% if a.available_from == 'immediate' %}{% set _ = feats.append(('Dispo immédiate', 'Disponibilité')) %}
-          {% elif a.available_from %}{% set _ = feats.append(('Dispo ' ~ a.available_from[8:10] ~ '/' ~ a.available_from[5:7], 'Disponible le ' ~ a.available_from)) %}{% endif %}
-          {% if a.lease_type in ('mobilite', 'etudiant', 'colocation', 'saisonnier') %}{% set _ = feats.append(({'mobilite': 'Bail mobilité', 'etudiant': 'Bail étudiant', 'colocation': 'Colocation', 'saisonnier': 'Saisonnier'}[a.lease_type], 'Type de bail')) %}
-          {% elif a.colocation %}{% set _ = feats.append(('Colocation', 'Logement en colocation')) %}{% endif %}
-          {% if a.apl_ok %}{% set _ = feats.append(('APL ✓', 'APL acceptées')) %}{% elif a.apl_ok == false %}{% set _ = feats.append(('APL ✗', 'APL refusées')) %}{% endif %}
-          {% if a.visale_ok %}{% set _ = feats.append(('Visale ✓', 'Garantie Visale acceptée')) %}{% elif a.visale_ok == false %}{% set _ = feats.append(('Visale ✗', 'Garantie Visale refusée')) %}{% endif %}
-          {% if a.agency_fees %}{% set _ = feats.append(('Frais ' ~ a.agency_fees ~ ' €', 'Honoraires d’agence à la charge du locataire')) %}{% endif %}
-          {% if feats or a.scam_risk in ('moyen', 'eleve') or a.excluded %}
+          {# Alertes, énergie, puis logement et conditions (ui/cards.py) #}
+          {% if a.excluded or a.scam_risk in ('moyen', 'eleve') or v.energy or v.chip_groups or v.partial %}
           <div class="card-feats">
-            {% if a.excluded %}
-            <span class="feat feat-excluded" title="Ne respecte pas les critères du profil {{ profile.label }}">⛔ {{ a.excluded | join(' · ') }}</span>
+            {% if a.excluded or a.scam_risk in ('moyen', 'eleve') %}
+            <div class="feat-row">
+              {% if a.excluded %}
+              <span class="feat feat-excluded" title="Ne respecte pas les critères du profil {{ profile.label }}">⛔ {{ a.excluded | join(' · ') }}</span>
+              {% endif %}
+              {% if a.scam_risk in ('moyen', 'eleve') %}
+              <span class="feat feat-warn {{ 'feat-danger' if a.scam_risk == 'eleve' else '' }}"
+                    title="Risque d’arnaque {{ 'élevé' if a.scam_risk == 'eleve' else 'moyen' }} : {{ (a.scam_flags | flags) | join(' · ') }}">⚠️ {{ 'Arnaque ?' if a.scam_risk == 'eleve' else 'À vérifier' }}</span>
+              {% endif %}
+            </div>
             {% endif %}
-            {% if a.scam_risk in ('moyen', 'eleve') %}
-            <span class="feat feat-warn {{ 'feat-danger' if a.scam_risk == 'eleve' else '' }}"
-                  title="Risque d’arnaque {{ 'élevé' if a.scam_risk == 'eleve' else 'moyen' }} : {{ (a.scam_flags | flags) | join(' · ') }}">⚠️ {{ 'Arnaque ?' if a.scam_risk == 'eleve' else 'À vérifier' }}</span>
+            {% if v.energy %}
+            <div class="feat-row">
+              {% for label, grade in v.energy %}
+              <span class="energy" title="{{ 'Diagnostic de performance énergétique' if label == 'DPE' else 'Émissions de gaz à effet de serre' }} : classe {{ grade }}"><span class="energy-grade energy-{{ grade }}">{{ grade }}</span>{{ label }}</span>
+              {% endfor %}
+            </div>
             {% endif %}
-            {% for label, title in feats %}<span class="feat" title="{{ title }}">{{ label }}</span>{% endfor %}
+            {% for group in v.chip_groups %}
+            <div class="feat-row">{% for label, title in group %}<span class="feat" title="{{ title }}">{{ label }}</span>{% endfor %}</div>
+            {% endfor %}
+            {% if v.partial %}
+            <div class="feat-row"><span class="feat feat-partial" title="Page de l’annonce pas encore ouverte : DPE, charges, meublé… peuvent manquer">◌ Fiche pas encore lue</span></div>
+            {% endif %}
           </div>
           {% endif %}
         </div>

@@ -902,3 +902,77 @@ body.doc-mode-active .btn-add-doc { display: inline-block; animation: reveal var
 .settings-fieldset legend { font-size: 0.8125rem; font-weight: 600; padding: 0 4px; }
 .requirements-bar a.requirements-edit { margin-left: 6px; }
 .settings-stats { font-size: 0.875rem; padding-left: 18px; line-height: 1.7; }
+
+/* ---- Cartes : fiche complète (ui/cards.py) ---- */
+.card-image { position: relative; }
+.photo-count {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #fff;
+  background: rgba(17, 24, 39, 0.7);
+  padding: 2px 7px;
+  border-radius: 999px;
+}
+
+.card-header { align-items: flex-start; gap: 8px; }
+.price-block { margin-left: auto; text-align: right; }
+.price-tag { white-space: nowrap; }
+.price-note {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  vertical-align: middle;
+}
+.price-sqm {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.card-keyfacts {
+  margin: 6px 0 0;
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.meta-item { min-width: 0; }
+.meta-item svg { flex-shrink: 0; }
+.meta-ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.publisher-individual { color: #047857; font-weight: 700; }
+
+.card-feats { flex-direction: column; gap: 6px; }
+.feat-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.feat-partial { border-style: dashed; font-style: italic; }
+
+/* Étiquettes énergie : couleurs réglementaires A (vert) → G (rouge) */
+.energy {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  padding: 1px 7px 1px 1px;
+  border-radius: 999px;
+}
+.energy-grade {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  font-weight: 800;
+  color: #fff;
+}
+.energy-A { background: #009c6d; }
+.energy-B { background: #52b153; }
+.energy-C { background: #a5cc74; color: #1f2937; }
+.energy-D { background: #f4e70f; color: #1f2937; }
+.energy-E { background: #f0b50f; color: #1f2937; }
+.energy-F { background: #eb8235; }
+.energy-G { background: #d7221f; }
