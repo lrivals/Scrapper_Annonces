@@ -184,3 +184,15 @@ class TestChromeEnv:
         assert env["XDG_DATA_DIRS"] == "/usr/share"
         assert "GDK_BACKEND" not in env
         assert not any(k.endswith("_VSCODE_SNAP_ORIG") for k in env)
+
+
+class TestDisplayFlags:
+    """Chrome forcé en X11 quand XWayland est là (crash « Fatal Wayland communication error »)."""
+
+    def test_x11_quand_display(self):
+        from scrapers.browser import display_flags
+        assert display_flags({"DISPLAY": ":0", "WAYLAND_DISPLAY": "wayland-0"}) == ["--ozone-platform=x11"]
+
+    def test_rien_sans_display(self):
+        from scrapers.browser import display_flags
+        assert display_flags({"WAYLAND_DISPLAY": "wayland-0"}) == []

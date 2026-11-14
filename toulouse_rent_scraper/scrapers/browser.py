@@ -169,6 +169,17 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
+def display_flags(env) -> list:
+    """
+    Sous Wayland, Chrome natif est tué en cours de run par une « Fatal Wayland communication
+    error » (gnome-shell coupe la connexion ; vu 2026-11-13 et 2026-11-14, LBC page 7-8).
+    Avec un serveur X disponible (XWayland), on force le rendu X11, qui n'a pas ce problème.
+    """
+    if env.get("DISPLAY"):
+        return ["--ozone-platform=x11"]
+    return []
+
+
 @contextmanager
 def chrome_session(profile_dir: Path = BROWSER_PROFILE_DIR, port: int = CHROME_DEBUG_PORT):
     """
@@ -195,6 +206,7 @@ def chrome_session(profile_dir: Path = BROWSER_PROFILE_DIR, port: int = CHROME_D
         "--no-first-run",
         "--no-default-browser-check",
         "--window-size=1920,1080",
+        *display_flags(os.environ),
     ]
     from playwright.sync_api import sync_playwright  # import paresseux, après les vérifications
 
