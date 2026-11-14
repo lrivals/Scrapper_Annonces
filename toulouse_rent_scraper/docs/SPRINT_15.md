@@ -638,8 +638,10 @@ anti-ban habituel), résultats ajoutés page par page (une erreur en page 3 gard
 - **Validation réelle du 2026-11-13** (`scrape --site bienici --profile blagnac`, limité à 5 pages) :
   5 pages × 24 annonces (303 annoncées), zones Toulouse + Blagnac en cache, 64 annonces conservées,
   complètes sans `enrich` (surface, pièces, description, photos 100 %, charges 89 %, DPE 91 %).
-  ✅ Liens ouverts depuis l'UI : ils mènent à la bonne annonce. Reste à vérifier sur le site qu'un
-  prix est bien charges comprises.
+  ✅ Liens ouverts depuis l'UI : ils mènent à la bonne annonce.
+  ✅ **Prix charges comprises** (vérifié le 2026-11-14 sur 141 annonces en base) : dans les 27
+  descriptions qui citent le loyer, le prix stocké est le montant CC (souvent « X € HC + Y € de
+  charges » avec X + Y = prix) ; aucune ne donne un prix HC égal au prix stocké.
   - 🐛 `quality` affichait JSON 0 % pour Bien'ici (source `api` non comptée) : corrigé.
   - 🐛 **Faux doublons** : 39 des 64 annonces rattachées à une autre. La règle textuelle comptait
     « Toulouse » + code postal comme 2 mots communs, et la surface SeLoger est souvent inconnue.

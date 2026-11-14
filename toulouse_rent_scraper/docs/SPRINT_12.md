@@ -1,7 +1,7 @@
 # Sprint 12 — Refactor & sécurité
 
 > **Date** : 2026-11-03
-> **Statut** : ✅ Terminé — un critère reste à valider lors d'un vrai scraping (voir bilan)
+> **Statut** : ✅ Terminé — tous les critères validés (compteurs vérifiés en réel le 2026-11-14)
 > **Origine** : [AUDIT_2026-11.md](AUDIT_2026-11.md) — A1 à A7, S1 à S3, H1 à H3
 > **Prérequis** : [Sprint 11](SPRINT_11.md) terminé (les tests ajoutés servent de filet)
 
@@ -166,7 +166,7 @@ python main.py notify-test          # Sprint 13
 - [x] `ui/` ne contient aucune requête SQL.
 - [x] `pytest` vert **sans** Playwright installé : 194 passés, 1 ignoré (simulation par un faux paquet `playwright` qui lève `ImportError`) — résultat identique avec Playwright.
 - [x] POST sans jeton sur `/clear-db` → 403 (vérifié en test et dans un navigateur).
-- [ ] Un run de scraping complet produit les mêmes compteurs qu'avant le refactor — **à valider au prochain scraping réel** (non lancé : Chrome + DataDome). L'orchestration est couverte par `tests/test_base_scraper.py` et `tests/test_pipeline.py`.
+- [x] Un run de scraping complet produit les mêmes compteurs qu'avant le refactor — validé par les runs réels des 2026-11-13/14 (ex. LBC Blagnac : 261 brutes = 172 conservées + 89 rejetées, 9 nouvelles + 163 inchangées = 172).
 
 ## Bilan d'implémentation (2026-11-03)
 
