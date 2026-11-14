@@ -1,183 +1,63 @@
-# Sprint 4 — Nouveau scraper : PAP.fr (Particulier à Particulier)
+# Sprint 4 — Nouvelle source : PAP.fr (Particulier à Particulier)
 
-**Objectif** : Ajouter PAP.fr comme troisième source d'annonces. PAP est idéal car les annonces sont postées directement par les propriétaires (pas de frais d'agence), ce qui est particulièrement intéressant pour un budget étudiant ENAC.
+**Objectif** : ajouter PAP.fr comme source d'annonces de particuliers (sans frais d'agence) pour le profil **Blagnac**.
 
-**Durée estimée** : 1 semaine
+**Statut** : ✅ Terminé — validé en réel sur le profil Blagnac (2026-11-14)
 
----
-
-## Pourquoi PAP.fr ?
-
-| Critère | PAP.fr | Autres options écartées |
-|---------|--------|----------------------|
-| **Sans frais d'agence** | Oui (100% particuliers) | Bien'ici = agrégateur, Logic-Immo = agences |
-| **Volume Toulouse** | Bon volume | LocService = faible volume |
-| **Anti-bot** | Modéré (pas de DataDome) | — |
-| **Pertinence étudiant** | Forte (petits budgets) | Studapart = résidences étudiantes uniquement |
-| **Données riches** | Surface, DPE, photos, charges | — |
+> Recadré le 2026-11-14 : le plan de février (flags `--pap`, `mutually_exclusive_group`, budget étudiant ENAC)
+> est remplacé par l'architecture actuelle — sous-commande `scrape --site pap`, modèle `Listing` (15.7),
+> fiches ouvertes dans le pipeline (Sprint 16), profil Blagnac uniquement.
 
 ---
+
+## Constats du repérage (4.1)
+
+Détail : [pap_selectors.md](pap_selectors.md).
+
+- **Cloudflare** : 403 sans navigateur → vrai Chrome au profil persistant (`BaseScraper`), pas d'`ApiScraper`.
+- **Défilement infini, pas de pages** : on défile jusqu'à ce que la liste ne grandisse plus, puis on lit tout le HTML.
+- La recherche « locations » mélange bureaux, locaux, garages, colocations → URL filtrée « appartement + maison » **et** filtre local sur le type (chemin de l'annonce).
+- Cartes riches (prix CC, pièces, chambres, m², DPE, photos) ; la fiche ajoute JSON-LD `Product` (surface, meublé, balcon, adresse avec rue), charges, dépôt, DPE/GES et **GPS du plan**.
 
 ## Tâches
 
-### 4.1 Analyse et reconnaissance PAP.fr (Priorité: Haute | Effort: S)
+| # | Tâche | Statut | Livrable |
+|---|-------|--------|----------|
+| 4.1 | Repérage | ✅ | `scripts/debug/capture_cards_pap.py`, `docs/pap_selectors.md` |
+| 4.2 | Configuration | ✅ | `SearchProfile.pap_search_url` / `pap_warmup_urls` (Blagnac), `PAP_*` dans `config.py` |
+| 4.3 | Scraper | ✅ | `scrapers/pap.py` (`PAPScraper`) + `scrapers/detail_extractors/pap_html.py` ; `--site pap` |
+| 4.4 | Fiche détaillée | ✅ | `scrapers/detail_extractors/pap_detail.py`, branché dans `enricher._extractor_for` |
+| 4.5 | Tests | ✅ | `tests/test_pap.py` (18 tests, sans Playwright) |
+| 4.6 | Intégration multi-sites | ✅ | Annonce en ligne (JSON-LD) dans `cleaner`, marqueurs Cloudflare dans `antibot`, adresse/balcon dans le panneau Détails, contrôle de santé sans la description tronquée |
+| 4.7 | Validation réelle + timer | ✅ | Voir ci-dessous ; le timer (`scrape` sans `--site`) inclut PAP d'office |
+| 4.8 | Budget de fiches PAP | ✅ | `DETAIL_VISITS_PER_RUN["PAP"] = 15` (sans lui, aucune fiche PAP n'était ouverte) |
 
-**Actions** :
-- Naviguer manuellement sur PAP.fr, identifier :
-  - URL de recherche avec filtres (Toulouse, location, budget max 500€)
-  - Structure HTML des cartes de résultats (classes CSS, attributs data-*)
-  - Structure HTML des pages de détail
-  - Mécanismes anti-bot (Captcha, rate limiting, User-Agent check)
-  - Pagination (URL params ou bouton "Page suivante")
-- Capturer le HTML brut avec un script de debug (`scripts/debug/capture_cards_pap.py`, sur le modèle des scripts existants)
-- Documenter les sélecteurs identifiés
+## Validation réelle (2026-11-14, profil Blagnac)
 
-**Livrable** : Document `docs/pap_selectors.md` avec les sélecteurs validés.
+- `scrape --site pap --profile blagnac` : 35 cartes chargées par défilement, **24 logements** gardés,
+  0 rejet, 0 blocage Cloudflare ; 2 notifications Telegram (récapitulatifs).
+- Ce run a révélé l'absence de budget de fiches pour PAP (« aucune annonce retenue à compléter ») → 4.8.
+- `enrich --site pap --limit 5` : **5/5 fiches** lues (surface, pièces, charges, dépôt, DPE, meublé, rue),
+  **5 repositionnées au GPS exact** : distances de 5,2 à 7,6 km au lieu de 7,33 km (centre de Toulouse).
+- `quality` : aucun champ clé sous son seuil.
 
----
+L'ancien 4.6 (flags indépendants `--seloger --pap`) est déjà couvert par `scrape --site X --site Y` (Sprint 12.7).
 
-### 4.2 Configuration PAP (Priorité: Haute | Effort: S)
+## Usage
 
-**Actions** :
-- Ajouter dans `config.py` :
-  ```python
-  # PAP.fr
-  PAP_BASE_URL = "https://www.pap.fr"
-  PAP_SEARCH_URL = (
-      "https://www.pap.fr/annonce/location-appartement-toulouse-31-"
-      "?prix-max=500&surface-min=10"
-  )
-  ```
-- URL de navigation progressive (si nécessaire pour anti-bot)
-- Ajouter les étapes intermédiaires si PAP détecte les accès directs
-
-**Critère de validation** : Les URLs de recherche retournent des résultats valides dans le navigateur.
-
----
-
-### 4.3 Scraper PAP (Priorité: Haute | Effort: L)
-
-**Actions** :
-- Créer `scrapers/pap.py` héritant de `BaseScraper` :
-  - `site_name()` → `"PAP"`
-  - `base_url()` → `PAP_BASE_URL`
-  - `search_url()` → `PAP_SEARCH_URL`
-  - `card_selector()` → sélecteur identifié en 4.1
-  - `extract_annonce(card)` :
-    - Titre : texte du lien principal
-    - Prix : extraction depuis le bloc prix (format "XXX €/mois")
-    - Localisation : quartier / code postal
-    - URL : lien vers la page de détail
-    - Surface : souvent visible sur la carte (PAP affiche plus d'infos que LBC)
-  - `navigation_steps()` : étapes pour simuler un utilisateur réel
-  - Gestion de la pagination PAP
-- Ajouter `PAPScraper` dans `scrapers/__init__.py` :
-  ```python
-  SCRAPERS = [SeLogerScraper, LeBonCoinScraper, PAPScraper]
-  ```
-- Ajouter l'option CLI `--pap` dans `main.py`
-
-**Critère de validation** : `python main.py --pap` récupère et stocke des annonces PAP valides.
-
----
-
-### 4.4 Extracteur détaillé PAP (Priorité: Moyenne | Effort: M)
-
-**Actions** :
-- Créer `scrapers/detail_extractors/pap_detail.py` :
-  - Extraire les données enrichies depuis la page de détail PAP :
-    - Description complète
-    - Surface, pièces, étage, meublé/non
-    - Charges, dépôt de garantie
-    - DPE / GES
-    - Photos
-    - Date de mise en ligne
-    - Contact (nom du particulier)
-  - PAP a généralement moins de protection anti-bot que LBC, donc l'enrichissement est plus facile
-- Intégrer dans le pipeline d'enrichissement (`enricher.py` du Sprint 3)
-
-**Critère de validation** : `python main.py --enrich` enrichit aussi les annonces PAP.
-
----
-
-### 4.5 Tests PAP (Priorité: Moyenne | Effort: S)
-
-**Actions** :
-- `tests/test_pap.py` :
-  - Tests de configuration (site_name, base_url, search_url)
-  - Tests d'extraction avec mock de carte HTML
-  - Tests de construction d'URL
-  - Tests de l'extracteur détaillé avec mock HTML
-- Ajout d'un `sample_annonce_pap` dans `conftest.py`
-
-**Critère de validation** : `pytest tests/test_pap.py -v` tout vert.
-
----
-
-### 4.6 Gestion multi-sites améliorée (Priorité: Moyenne | Effort: S)
-
-**Actions** :
-- Mettre à jour le CLI pour supporter les combinaisons :
-  ```bash
-  python main.py --pap                    # PAP seul
-  python main.py --seloger --pap          # SeLoger + PAP
-  python main.py --all                    # Tous (SeLoger + LBC + PAP)
-  ```
-- Remplacer `mutually_exclusive_group` par des flags indépendants
-- Mettre à jour les rapports pour afficher la source (déjà le champ `site`)
-- Stats par site dans le résumé global
-
-**Critère de validation** : `python main.py --seloger --pap` ne lance que ces deux scrapers.
-
----
-
-## Résumé
-
-| # | Tâche | Priorité | Effort | Dépendance |
-|---|-------|----------|--------|------------|
-| 4.1 | Analyse et reconnaissance PAP | Haute | S | — |
-| 4.2 | Configuration PAP | Haute | S | 4.1 |
-| 4.3 | Scraper PAP | Haute | L | 4.1, 4.2 |
-| 4.4 | Extracteur détaillé PAP | Moyenne | M | 4.3, Sprint 3 |
-| 4.5 | Tests PAP | Moyenne | S | 4.3 |
-| 4.6 | Gestion multi-sites améliorée | Moyenne | S | 4.3 |
-
-**Légende effort** : S = ~1-2h | M = ~3-5h | L = ~1-2j
-
----
-
-## Structure cible après Sprint 4
-
-```
-toulouse_rent_scraper/
-├── scrapers/
-│   ├── base.py
-│   ├── seloger.py
-│   ├── leboncoin.py
-│   ├── pap.py                         # NOUVEAU
-│   ├── enricher.py
-│   └── detail_extractors/
-│       ├── seloger_detail.py
-│       ├── leboncoin_detail.py
-│       └── pap_detail.py              # NOUVEAU
-├── tests/
-│   ├── test_pap.py                    # NOUVEAU
-│   └── ...
-└── docs/
-    └── pap_selectors.md               # NOUVEAU
+```bash
+python main.py scrape --site pap --profile blagnac            # PAP seul
+python main.py scrape --site pap --site leboncoin --profile blagnac
+python main.py enrich --site pap --limit 10                    # fiches PAP restantes
+python scripts/debug/capture_cards_pap.py --detail URL         # re-capturer une fiche si le site change
 ```
 
----
+## Décisions
 
-## Notes anti-bot PAP
-
-PAP.fr est généralement moins agressif que LeBonCoin (pas de DataDome) mais applique :
-- Rate limiting classique (429 Too Many Requests)
-- Vérification User-Agent basique
-- Parfois un Captcha simple (hCaptcha) sur les accès répétés
-
-**Stratégie recommandée** :
-- Réutiliser le profil Chrome persistant
-- Délais standards (3-7s entre pages)
-- Navigation progressive : accueil → recherche → résultats
-- Si hCaptcha : même mécanisme de pause + résolution manuelle que pour LBC
+| Décision | Contexte |
+|---|---|
+| Vrai Chrome, pas d'API | Cloudflare renvoie 403 aux requêtes sans navigateur |
+| Défilement puis lecture du HTML complet | Les URLs des pages suivantes changent de slug ; défiler est le comportement humain normal |
+| Lecture du HTML par regex dans un module pur | Testable sans navigateur, même approche que `seloger_json` |
+| Prix de la carte = loyer CC (`charges_included=True`) | Vérifié sur les fiches (« Loyer charges comprises ») |
+| GPS du plan `exact` seulement si une rue est donnée | Sinon le plan est centré sur la commune |

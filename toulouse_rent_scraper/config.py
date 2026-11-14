@@ -177,6 +177,9 @@ class SearchProfile:
     # Traduite en filtres de l'API, paginée comme le site (24 annonces par page).
     bienici_search_url: Optional[str] = None
     bienici_max_pages: Optional[int] = None     # None = BIENICI_MAX_PAGES (ou MAX_PAGES_PER_SITE avec une URL)
+    # PAP.fr (Sprint 4) : URL de recherche copiée du site (défilement infini, pas de pages)
+    pap_search_url: Optional[str] = None
+    pap_warmup_urls: Tuple[str, ...] = ()
     # Critères éliminatoires (15.5) — ex. Requirements(apl_required=True, min_surface_m2=18)
     requirements: Requirements = Requirements()
     enabled: bool = True
@@ -285,6 +288,9 @@ SEARCH_PROFILES: Dict[str, SearchProfile] = {
             "?chambres-min=1&chambres-max=2&balcon-ou-terrasse=oui&mode=liste&tri=publication-desc"
         ),
         bienici_max_pages=10,
+        # PAP (2026-11-14) : URL copiée du site — Blagnac + Toulouse, appartement ou maison.
+        # Liste en défilement infini ; bureaux / colocations / garages écartés au cas où.
+        pap_search_url="https://www.pap.fr/annonce/location-appartement-maison-blagnac-31700-g19307g43612",
     ),
 }
 
@@ -411,7 +417,7 @@ ENRICHMENT_RETRY_DELAY_HOURS = 24
 
 # Sprint 16 — visites de pages de détail par run de scraping (le reste attend le run suivant).
 # Seuls ces sites ont une page de détail à ouvrir (Bien'ici : l'API donne l'annonce entière).
-DETAIL_VISITS_PER_RUN = {"LeBonCoin": 15, "SeLoger": 15}
+DETAIL_VISITS_PER_RUN = {"LeBonCoin": 15, "SeLoger": 15, "PAP": 15}
 
 # Sprint 15.2 — une annonce LBC lue complète (description + surface) dans le JSON de la
 # page de recherche est marquée enrichie : pas de visite de sa page de détail.
@@ -433,6 +439,18 @@ BIENICI_MAX_DELAY = 4.0
 BIENICI_TIMEOUT = 30
 BIENICI_ZONE_CACHE_FILE = DATA_DIR / "bienici_zones.json"
 
+# =========================
+# 🏠 PAP.fr (Sprint 4) — particuliers, derrière Cloudflare : vrai Chrome
+# =========================
+
+PAP_BASE_URL = "https://www.pap.fr"
+# La liste se charge au défilement (≈ 10 annonces par palier) : on défile jusqu'à ce
+# qu'elle ne grandisse plus, PAP_STABLE_SCROLLS fois de suite, sans dépasser PAP_MAX_SCROLLS.
+PAP_MAX_SCROLLS = 60
+PAP_STABLE_SCROLLS = 4
+PAP_SCROLL_MIN_DELAY = 1.2
+PAP_SCROLL_MAX_DELAY = 2.5
+
 # Santé de l'extraction (Sprint 15.1) : taux de remplissage minimal attendu par champ
 # sur les annonces enrichies d'un run. En dessous → alerte « sélecteurs probablement cassés ».
 QUALITY_MIN_SAMPLES = 5            # pas de verdict en dessous de N annonces enrichies par site
@@ -449,7 +467,10 @@ QUALITY_MIN_JSON_RATE = {"LeBonCoin": 0.5, "SeLoger": 0.5}
 # santé de la recherche (ils le sont après `enrich`). Constaté le 2026-11-13 : la recherche
 # LBC n'a pas de `body`, donc 0 % de descriptions → fausse alerte à chaque scrape.
 # SeLoger (15.3) : la recherche n'a qu'un résumé tronqué, ignoré (description sur le détail).
-QUALITY_SEARCH_SKIP_FIELDS = {"LeBonCoin": ("description",), "SeLoger": ("description",)}
+# PAP (Sprint 4) : la carte n'a qu'un résumé tronqué de la description.
+QUALITY_SEARCH_SKIP_FIELDS = {
+    "LeBonCoin": ("description",), "SeLoger": ("description",), "PAP": ("description",),
+}
 
 
 # =========================

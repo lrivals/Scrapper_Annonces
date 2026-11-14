@@ -67,11 +67,14 @@ def page_shows_expired(page) -> bool:
     Une page dont le JSON embarqué contient l'annonce (LBC, SeLoger) est en ligne, quel que
     soit le texte.
     """
-    from scrapers.detail_extractors import lbc_json, seloger_json
+    from scrapers.detail_extractors import lbc_json, pap_html, seloger_json
 
     try:
         html = page.content()
         if lbc_json.extract_from_html(html) or seloger_json.extract_from_html(html):
+            return False
+        # Fiche PAP en ligne : JSON-LD `Product` présent
+        if pap_html.parse_detail(html) is not None:
             return False
     except Exception:
         pass

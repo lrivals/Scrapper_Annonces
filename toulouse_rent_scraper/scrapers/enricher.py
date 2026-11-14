@@ -63,6 +63,9 @@ def _extractor_for(site: str):
     if "leboncoin" in site or "lbc" in site:
         from scrapers.detail_extractors.leboncoin_detail import extract_detail
         return extract_detail
+    if site == "pap":
+        from scrapers.detail_extractors.pap_detail import extract_detail
+        return extract_detail
     return None
 
 

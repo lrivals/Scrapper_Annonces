@@ -44,7 +44,7 @@ def test_scrape_defaults():
 
 def test_invalid_site_rejected():
     with pytest.raises(SystemExit):
-        build_parser().parse_args(["scrape", "--site", "pap"])
+        build_parser().parse_args(["scrape", "--site", "logicimmo"])
 
 
 @pytest.mark.parametrize("argv,target", [
@@ -89,3 +89,8 @@ def test_scrape_opens_details_by_default(argv, enrich, limit):
     assert run.call_args.kwargs["enrich"] is enrich
     assert run.call_args.kwargs["limit"] == limit
     cmd_enrich.assert_not_called()
+
+
+def test_pap_site_accepted():
+    """Sprint 4 : PAP est une source à part entière."""
+    assert build_parser().parse_args(["scrape", "--site", "pap"]).sites == ["pap"]

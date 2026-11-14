@@ -11,6 +11,7 @@ SCRAPER_PATHS = {
     "seloger": "scrapers.seloger:SeLogerScraper",
     "leboncoin": "scrapers.leboncoin:LeBonCoinScraper",
     "bienici": "scrapers.bienici:BienIciScraper",       # API JSON, sans navigateur (15.7)
+    "pap": "scrapers.pap:PAPScraper",                   # particuliers, vrai Chrome (Sprint 4)
 }
 
 
@@ -19,6 +20,7 @@ SITE_NAMES = {
     "seloger": "SeLoger",
     "leboncoin": "LeBonCoin",
     "bienici": "Bien'ici",
+    "pap": "PAP",
 }
 
 
