@@ -1,0 +1,19 @@
+# Interface web + API JSON dans un conteneur (Sprint 2-bis.5).
+#   HOST_UID=$(id -u) HOST_GID=$(id -g) docker compose up --build
+#   → http://127.0.0.1:5000  et  http://127.0.0.1:5000/api/v1/stats?profile=blagnac
+# La base data/annonces.sqlite de la machine est partagée avec le scraping (timer systemd).
+services:
+  ui:
+    build: .
+    image: annonces-ui
+    # Même utilisateur que sur l'hôte : la base (mode WAL) reste lisible et modifiable par les deux
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    ports:
+      - "127.0.0.1:${UI_PORT:-5000}:5000"   # jamais exposé au réseau local ; UI_PORT si 5000 est pris
+    volumes:
+      - ./data:/app/data          # lecture-écriture : SQLite en WAL écrit ses fichiers -shm/-wal,
+                                  # et l'interface enregistre ⭐ / 👎 / masquage
+    env_file:
+      - path: .env                # API_TOKEN, UI_SECRET_KEY… (facultatif)
+        required: false
+    restart: unless-stopped

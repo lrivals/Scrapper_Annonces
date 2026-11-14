@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tendances — {{ profile.label }}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+</head>
+<body>
+  <div class="wrapper trends-page">
+    <header>
+      <h1>Tendances — {{ profile.label }}</h1>
+      <nav class="profile-tabs">
+        <a href="/?profile={{ profile.key }}" class="btn-view">← Annonces</a>
+        {% for p in profiles %}
+        <a href="/tendances?profile={{ p.key }}&days={{ days }}" class="btn-view {% if p.key == profile.key %}active{% endif %}">{{ p.label }}</a>
+        {% endfor %}
+      </nav>
+      <nav class="profile-tabs trends-days">
+        {% for d in day_choices %}
+        <a href="/tendances?profile={{ profile.key }}&days={{ d }}" class="btn-view {% if d == days %}active{% endif %}">{{ d }} jours</a>
+        {% endfor %}
+      </nav>
+    </header>
+
+    <section class="trends-tiles">
+      <div class="trends-tile"><span>Annonces visibles</span><strong>{{ summary.active_count }}</strong></div>
+      <div class="trends-tile"><span>Loyer CC médian</span>
+        <strong>{{ '%d €' % summary.median_rent_cc if summary.median_rent_cc else '—' }}</strong></div>
+      <div class="trends-tile"><span>€/m² médian (CC)</span>
+        <strong>{{ ('%.1f €' % summary.median_ppm2).replace('.', ',') if summary.median_ppm2 else '—' }}</strong></div>
+      <div class="trends-tile"><span>Nouvelles 24 h / 7 j</span><strong>{{ summary.new_24h }} / {{ summary.new_7d }}</strong></div>
+    </section>
+    <p class="settings-status">
+      Par site :
+      {% for site, n in summary.by_site.items() %}{{ site }} {{ n }}{% if not loop.last %} · {% endif %}{% endfor %}
+      — hors annonces exclues par les critères et doublons d'un autre site.
+    </p>
+
+    <section class="settings-card">
+      <h2>Nouvelles annonces par jour</h2>
+      <div class="trends-chart"><canvas id="chart-new" aria-label="Nouvelles annonces par jour et par site" role="img"></canvas></div>
+    </section>
+
+    <section class="settings-card">
+      <h2>Loyer CC médian des nouvelles annonces</h2>
+      <p class="settings-intro">Points : médiane du jour. Courbe : médiane sur 7 jours glissants.</p>
+      <div class="trends-chart"><canvas id="chart-rent" aria-label="Loyer charges comprises médian des nouvelles annonces" role="img"></canvas></div>
+    </section>
+
+    <section class="settings-card">
+      <h2>Stock d'annonces à chaque run</h2>
+      {% if runs|length < 2 %}
+      <p class="settings-intro">
+        Le journal des runs (Sprint 5) {{ 'compte un seul run' if runs else 'est encore vide' }} sur la période :
+        la courbe apparaîtra après quelques scrapings.
+      </p>
+      {% else %}
+      <div class="trends-chart"><canvas id="chart-runs" aria-label="Annonces visibles et loyer médian à chaque run" role="img"></canvas></div>
+      {% endif %}
+    </section>
+
+    <p class="settings-status">Mêmes données en JSON : <code>/api/v1/stats/history?profile={{ profile.key }}&amp;days={{ days }}</code></p>
+  </div>
+
+  <script>
+    const DAILY = {{ daily | tojson }};
+    const RUNS = {{ runs | tojson }};
+    // Couleurs fixes par site (même site = même couleur d'une page à l'autre)
+    const SITE_COLORS = {"SeLoger": "#2563eb", "LeBonCoin": "#f97316", "Bien'ici": "#16a34a", "PAP": "#9333ea"};
+    const FALLBACK = ["#0891b2", "#be123c", "#4d7c0f", "#a16207"];
+    const fmtDay = d => d.slice(8, 10) + "/" + d.slice(5, 7);
+    const eur = v => v == null ? "—" : v.toLocaleString("fr-FR") + " €";
+
+    if (window.Chart) {
+      Chart.defaults.font.family = "Inter, system-ui, sans-serif";
+      Chart.defaults.color = "#6b7280";
+
+      new Chart(document.getElementById("chart-new"), {
+        type: "bar",
+        data: {
+          labels: DAILY.days.map(fmtDay),
+          datasets: Object.entries(DAILY.new_by_site).map(([site, values], i) => ({
+            label: site, data: values, backgroundColor: SITE_COLORS[site] || FALLBACK[i % FALLBACK.length],
+            borderRadius: 2, maxBarThickness: 18,
+          })),
+        },
+        options: {
+          maintainAspectRatio: false,
+          interaction: {mode: "index", intersect: false},
+          scales: {x: {stacked: true, grid: {display: false}}, y: {stacked: true, beginAtZero: true, ticks: {precision: 0}}},
+          plugins: {legend: {position: "bottom"}},
+        },
+      });
+
+      new Chart(document.getElementById("chart-rent"), {
+        data: {
+          labels: DAILY.days.map(fmtDay),
+          datasets: [
+            {type: "line", label: "Médiane 7 jours", data: DAILY.median_rent_cc_7d, borderColor: "#111827",
+             backgroundColor: "#111827", borderWidth: 2, pointRadius: 0, spanGaps: true, tension: 0.25},
+            {type: "scatter", label: "Médiane du jour", data: DAILY.median_rent_cc, backgroundColor: "#9ca3af",
+             pointRadius: 3},
+          ],
+        },
+        options: {
+          maintainAspectRatio: false,
+          interaction: {mode: "index", intersect: false},
+          scales: {x: {type: "category", grid: {display: false}}, y: {ticks: {callback: v => eur(v)}}},
+          plugins: {legend: {position: "bottom"}, tooltip: {callbacks: {label: c => `${c.dataset.label} : ${eur(c.parsed.y)}`}}},
+        },
+      });
+
+      const runsCanvas = document.getElementById("chart-runs");
+      if (runsCanvas) {
+        const labels = RUNS.map(r => fmtDay(r.started_at.slice(0, 10)) + " " + r.started_at.slice(11, 16));
+        new Chart(runsCanvas, {
+          type: "line",
+          data: {
+            labels,
+            datasets: [
+              {label: "Annonces visibles", data: RUNS.map(r => r.active_count), borderColor: "#2563eb",
+               backgroundColor: "#2563eb", yAxisID: "y", tension: 0.2},
+              {label: "Loyer CC médian", data: RUNS.map(r => r.median_rent_cc), borderColor: "#f97316",
+               backgroundColor: "#f97316", yAxisID: "y1", tension: 0.2},
+            ],
+          },
+          options: {
+            maintainAspectRatio: false,
+            interaction: {mode: "index", intersect: false},
+            scales: {
+              x: {grid: {display: false}},
+              y: {position: "left", beginAtZero: true, ticks: {precision: 0}},
+              y1: {position: "right", grid: {drawOnChartArea: false}, ticks: {callback: v => eur(v)}},
+            },
+            plugins: {legend: {position: "bottom"}},
+          },
+        });
+      }
+    } else {
+      document.querySelectorAll(".trends-chart").forEach(el => {
+        el.textContent = "Graphiques indisponibles (Chart.js non chargé : connexion internet ?).";
+      });
+    }
+  </script>
+</body>
+</html>
