@@ -94,3 +94,26 @@ def test_scrape_opens_details_by_default(argv, enrich, limit):
 def test_pap_site_accepted():
     """Sprint 4 : PAP est une source à part entière."""
     assert build_parser().parse_args(["scrape", "--site", "pap"]).sites == ["pap"]
+
+
+# ---- Sprint 5 — sous-commande report ----
+
+@pytest.mark.parametrize("argv", [
+    ["report", "--profile", "blagnac"],
+    ["report"],
+    ["rapport", "--profile", "blagnac"],     # faute de frappe : erreur argparse, pas un scraping
+])
+def test_subcommand_never_translated_to_scrape(argv):
+    assert translate_legacy_args(argv) is argv
+
+
+def test_unknown_subcommand_is_an_error_not_a_scrape():
+    with patch.object(main, "cmd_scrape") as scrape, pytest.raises(SystemExit):
+        main.main(["rapport", "--profile", "blagnac"])
+    scrape.assert_not_called()
+
+
+def test_report_dispatch():
+    with patch.object(main, "cmd_report") as report:
+        main.main(["report", "--profile", "blagnac", "--pdf"])
+    report.assert_called_once_with(["blagnac"], pdf=True, since_hours=24, send_top10=False)

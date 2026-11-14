@@ -27,6 +27,7 @@
         <button class="btn-scrape" id="btn-scrape" onclick="startScraping()">Lancer le scraping</button>
         <a href="/settings/llm" class="btn-view" title="Brancher votre propre LLM pour analyser les descriptions">Connexion LLM</a>
         <a href="/settings/requirements?profile={{ profile.key }}" class="btn-view" title="Critères éliminatoires du profil (surface, meublé, DPE, rez-de-chaussée…)">Critères</a>
+        <a href="/tendances?profile={{ profile.key }}" class="btn-view" title="Nouvelles annonces et loyers médians au fil du temps">Tendances</a>
         <a href="/settings/weights" class="btn-view" title="Poids du score appris de vos ⭐ / 📞 / 👎">Poids du score</a>
         <form method="POST" action="/clear-db" onsubmit="return confirmClear(this)">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

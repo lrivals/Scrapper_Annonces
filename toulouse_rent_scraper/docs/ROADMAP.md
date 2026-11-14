@@ -2,7 +2,7 @@
 
 > Document de suivi global des sprints. Mis à jour au fil de l'avancement.
 >
-> **Dernière mise à jour** : 2026-11-14 — Sprint 4 (PAP.fr) livré et validé en réel sur Blagnac ; Sprints 5 et 2-bis recadrés ; audit : [AUDIT_2026-11.md](AUDIT_2026-11.md)
+> **Dernière mise à jour** : 2026-11-14 — Sprints 4 (PAP.fr), 5 (rapports) et 2-bis (API JSON, tendances, Docker) livrés et validés sur Blagnac ; audit : [AUDIT_2026-11.md](AUDIT_2026-11.md)
 
 ---
 
@@ -41,9 +41,9 @@ Sprint 16 (Fiches complètes dès le scraping) ✅
     ↓
 Sprint 4 (PAP.fr)                          ✅
     ↓
-Sprint 5 (Rapports avancés)
+Sprint 5 (Rapports avancés)                ✅
     ↓
-Sprint 2-bis (API REST & Dashboard)
+Sprint 2-bis (API JSON & Tendances)       ✅
 ```
 
 ---
@@ -68,8 +68,8 @@ Sprint 2-bis (API REST & Dashboard)
 | 15 | Fiches détaillées, tri affiné, nouvelles sources | 🔵 En cours | 8/8 livrées, 7/8 validées en réel (reste 15.4 LLM : clé d'API) | 2026-11-12 | — |
 | 16 | Fiches complètes dès le scraping | ✅ Terminé | 6/6 (validé en réel, profil Blagnac) | 2026-11-13 | 2026-11-14 |
 | 4 | Scraper PAP.fr | ✅ Terminé | 8/8 (validé en réel, profil Blagnac) | 2026-11-14 | 2026-11-14 |
-| 5 | Rapports Markdown avancés | 🔲 À faire | 0/6 | — | — |
-| 2-bis | API REST & Dashboard | 🔲 À faire | 0/6 | — | — |
+| 5 | Rapports avancés | ✅ Terminé | 8/8 (5.2 livré au 13.3 ; validé sur la base réelle, profil Blagnac) | 2026-11-14 | 2026-11-14 |
+| 2-bis | API JSON, tendances, Docker | ✅ Terminé | 6/6 (2-bis.3 couvert par 15.5/15.6 ; validé sur la base réelle) | 2026-11-14 | 2026-11-14 |
 
 **Légende** : 🔲 À faire | 🔵 En cours | ✅ Terminé | ⏸️ En pause
 
@@ -314,33 +314,35 @@ Nouveau cas d'usage : appartement ≈ 700 € (550–750 €, T1–T3) à ≤ 8 
 
 ---
 
-## Sprint 5 — Rapports Markdown avancés
+## Sprint 5 — Rapports avancés
 
 📄 Détail : [SPRINT_5.md](SPRINT_5.md)
 
 | # | Tâche | Statut | Notes |
 |---|-------|--------|-------|
-| 5.1 | Rapport enrichi détaillé | 🔲 | Dépend Sprint 3 |
-| 5.2 | Système de scoring | 🔲 | |
-| 5.3 | Rapport comparatif (diff) | 🔲 | |
-| 5.4 | Rapport par quartier | 🔲 | |
-| 5.5 | Export PDF | 🔲 | |
-| 5.6 | Rapport Top 10 | 🔲 | |
+| 5.0 | Journal des runs | ✅ | Migration 11 : `run_stats` + `expired_at` (trigger) |
+| 5.1 | Fiches enrichies | ✅ | Score, loyer CC, €/m², DPE, meublé, source, photo ; tri par score |
+| 5.2 | Système de scoring | ✅ | Livré au Sprint 13.3 |
+| 5.3 | Rapport comparatif | ✅ | Depuis le run précédent : nouvelles, retirées, baisses, médianes |
+| 5.4 | Rapport par quartier | ✅ | `geo/quartier_parser.py` (formats des 4 sites) |
+| 5.5 | Export PDF | ✅ | Chromium headless (Playwright), sans photos ; `report --pdf` |
+| 5.6 | Top 10 + notification | ✅ | `NOTIFY_TOP10=daily` ; reçu sur Telegram |
+| 5.7 | Garde-fou CLI | ✅ | Sous-commande inconnue = erreur, jamais un scraping |
 
 ---
 
-## Sprint 2-bis — API REST & Dashboard
+## Sprint 2-bis — API JSON & tendances
 
-Tâches originellement prévues en Sprint 2, reportées.
+📄 Détail : [SPRINT_2.md](SPRINT_2.md#sprint-2-bis--api-json-tendances-docker-livré-le-2026-11-14)
 
 | # | Tâche | Statut | Notes |
 |---|-------|--------|-------|
-| 2-bis.1 | API REST FastAPI | 🔲 | |
-| 2-bis.2 | Dashboard Streamlit + carte Folium | 🔲 | Remplace l'UI Flask actuelle |
-| 2-bis.3 | Configuration dynamique | 🔲 | Table `config` en DB |
-| 2-bis.4 | Historique & tendances | 🔲 | Table `stats_history` |
-| 2-bis.5 | Dockerisation | 🔲 | |
-| 2-bis.6 | Tests API | 🔲 | Dépend 2-bis.1 |
+| 2-bis.1 | API REST en lecture | ✅ | Blueprint Flask `/api/v1` (pas FastAPI) ; local libre, `API_TOKEN` sinon |
+| 2-bis.2 | Tableau de bord « Tendances » | ✅ | Page `/tendances`, Chart.js (pas Streamlit/Folium : carte Leaflet déjà là) |
+| 2-bis.3 | Configuration dynamique | ✅ | Couvert par 15.5 / 15.6 |
+| 2-bis.4 | Historique & tendances | ✅ | `storage/trends.py` + `run_stats` (5.0) |
+| 2-bis.5 | Dockerisation | ✅ | UI + API seulement ; scraping sur la machine |
+| 2-bis.6 | Tests API | ✅ | `tests/test_api.py` |
 
 ---
 
@@ -401,6 +403,8 @@ Tâches originellement prévues en Sprint 2, reportées.
 | 2026-11-03 | Profils de recherche (Sprint 14) juste après le Sprint 11 | Nouveau besoin Blagnac ≈ 700 € ; table `annonce_profiles` plutôt qu'une colonne `profile` car une annonce peut matcher plusieurs cibles |
 | 2026-11-13 | Ouverture des fiches dans le pipeline, avant score et notifications (Sprint 16) | `scrape --enrich` enrichissait après les notifications : alertes sans surface/DPE, critères éliminatoires de la fiche ignorés, post-traitement fait deux fois |
 | 2026-11-14 | PAP.fr via vrai Chrome, défilement puis lecture du HTML complet | Cloudflare refuse les requêtes sans navigateur ; pas de pages numérotées (slugs variables) |
+| 2026-11-14 | Rapports : PDF par le Chromium de Playwright, sans photos ; convertisseur Markdown maison | Pas de dépendance système (weasyprint) ; photos en pleine résolution = 24 Mo |
+| 2026-11-14 | API : local libre, `API_TOKEN` exigé sinon ; Docker pour l'UI seulement | L'UI n'a pas d'authentification et reste sur 127.0.0.1 ; le scraping a besoin du vrai Chrome et d'un écran |
 | 2026-11-14 | Sprints 5 et 2-bis recadrés | Score (5.2) livré au 13.3, config dynamique (2-bis.3) au 15.5/15.6 ; API JSON dans Flask plutôt que FastAPI + Streamlit (l'UI Flask a été refaite) |
 | 2026-11-03 | Sprints 11→13 avant PAP.fr | Audit : bugs de données (prix, statuts, géocodage) et code Chrome dupliqué à corriger avant d'ajouter une 3ᵉ source — voir [AUDIT_2026-11.md](AUDIT_2026-11.md) |
 

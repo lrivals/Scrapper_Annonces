@@ -533,6 +533,15 @@ NOTIFY_PRICE_DROP_EUR = 20     # alerte si le loyer baisse d'au moins ce montant
 NOTIFY_GROUP_THRESHOLD = 3     # au-delà, un seul message récapitulatif par profil
 NOTIFY_GROUP_MAX_ITEMS = 8     # nombre d'annonces listées dans un récapitulatif
 
+# Sprint 5.6 — Top 10 par profil envoyé après un run : "off" (défaut), "daily" (au plus
+# une fois par jour, au premier run de la journée), "run" (après chaque run)
+NOTIFY_TOP10 = (os.environ.get("NOTIFY_TOP10") or "off").strip().lower()
+TOP10_STATE_FILE = DATA_DIR / ".last_top10.json"
+
+# Sprint 2-bis — jeton de l'API /api/v1, exigé pour tout accès qui ne vient pas de la machine
+# (réseau, conteneur Docker). Vide : l'API ne répond qu'en local.
+API_TOKEN = os.environ.get("API_TOKEN") or None
+
 
 
 # =========================

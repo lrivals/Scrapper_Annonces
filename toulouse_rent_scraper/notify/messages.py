@@ -6,7 +6,7 @@
 # =========================
 
 from collections import defaultdict
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import config
 from config import SEARCH_PROFILES
@@ -128,3 +128,30 @@ def favorite_gone_messages(annonces: List[Dict]) -> List[Dict]:
             "tags": ["wastebasket"],
         })
     return messages
+
+
+TELEGRAM_MAX_CHARS = 4096
+
+
+def top10_message(profile_key: str, ads: List[Dict], n: int = 10) -> Optional[Dict]:
+    """
+    Sprint 5.6 — Top 10 d'un profil en un message : une ligne par annonce et son lien
+    (texte brut, lisible sur Telegram comme sur ntfy). None si aucune annonce.
+    """
+    from reporting.generator import _by_score, market_line, _new_today, top10_lines
+
+    best = _by_score(ads)[:n]
+    if not best:
+        return None
+    label = SEARCH_PROFILES[profile_key].label if profile_key in SEARCH_PROFILES else profile_key
+    lines = []
+    for line, ad in zip(top10_lines(best, n=n), best):
+        # « 1. ⭐ 92 | … | [lien](url) » → texte brut, lien sur sa propre ligne
+        text = line.rsplit(" | [lien](", 1)[0].replace(" | ", " · ")
+        lines.append(f"{text}\n{ad['url']}")
+    body = "\n".join(lines) + "\n\n" + market_line(ads, _new_today(ads))
+    # Marge pour le titre ajouté par le backend
+    limit = TELEGRAM_MAX_CHARS - 200
+    if len(body) > limit:
+        body = body[:limit].rsplit("\n", 1)[0] + "\n…"
+    return {"title": f"🏆 Top {len(best)} — {label}", "body": body, "priority": "low", "tags": ["trophy"]}

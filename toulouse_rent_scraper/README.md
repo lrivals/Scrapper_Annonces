@@ -95,6 +95,8 @@ python main.py check-links [--limit 50]            # vérifier les liens (Chromi
 python main.py purge                               # vérification HEAD (peu fiable sur SeLoger/LBC)
 python main.py purge --delete-expired              # supprimer de la base les annonces retirées des sites
 python main.py export csv|json                     # export des annonces actives
+python main.py report [--profile blagnac] [--pdf]  # regénérer les rapports (Top 10, comparatif, quartiers…) sans scraper
+python main.py report --send-top10                 # envoyer le Top 10 de chaque profil par notification
 python main.py rescore                             # recalculer les scores (après un changement de poids)
 python main.py weights [--apply|--reset]           # poids du score appris de vos ⭐ / 📞 / 👎
 python main.py dedupe                              # doublons inter-sites par empreinte de la 1re photo
@@ -105,7 +107,7 @@ python main.py analyze [--limit 20]                # analyse LLM des nouvelles d
 python main.py analyze --stats                     # registre des lectures LLM (appels, jetons), sans appel
 python main.py analyze --retry-errors              # relancer une fois les analyses en erreur
 python main.py scrape --unattended                 # mode planifié (captcha notifié, sites bloqués sautés)
-python main.py ui [--port 8080] [--no-browser]     # interface web
+python main.py ui [--port 8080] [--no-browser]     # interface web (+ API JSON /api/v1, page /tendances)
 ```
 
 L'ancienne syntaxe (`--seloger`, `--leboncoin`, `--ui`, `--check-links`…) reste acceptée, avec un avertissement indiquant la commande équivalente.
@@ -124,6 +126,26 @@ Ouvre `http://localhost:5000` — interface responsive pour :
 - Masquer / restaurer une annonce, vue carte, export d'un dossier de candidature
 - Lancer un scraping (sortie dans `logs/ui_scraping.log`, dernière ligne affichée) — refusé si un run
   du timer est déjà en cours (verrou partagé)
+- **Tendances** (`/tendances`) : nouvelles annonces par jour et par site, loyer CC médian, stock à chaque run
+
+### API JSON (lecture seule)
+
+```bash
+curl "http://127.0.0.1:5000/api/v1/annonces?profile=blagnac&prix_max=750&limit=20"
+curl "http://127.0.0.1:5000/api/v1/stats/history?profile=blagnac&days=90"
+```
+
+Routes : `profiles`, `annonces` (filtres de la liste, `limit`/`offset`), `annonces/<id>`, `runs`, `stats`,
+`stats/history`. Libre depuis la machine ; ailleurs (réseau, Docker) : `Authorization: Bearer <API_TOKEN>`
+avec `API_TOKEN` dans `.env`. Détail : [docs/SPRINT_2.md](docs/SPRINT_2.md).
+
+### Docker (interface + API seulement)
+
+```bash
+HOST_UID=$(id -u) HOST_GID=$(id -g) docker compose up -d --build   # http://127.0.0.1:5000
+```
+
+Le conteneur lit la base `data/` de la machine ; le scraping reste sur la machine (vrai Chrome + timer systemd).
 
 ### Score d'intérêt
 
@@ -175,16 +197,23 @@ résoudre est aussi signalé. Les fiches sont ouvertes avant l'envoi : une ligne
 2. `cp .env.example .env` puis renseigner `NOTIFY_BACKEND=ntfy` et `NTFY_TOPIC=…` (ou Telegram).
 3. `python main.py notify-test`
 
+Top 10 quotidien (Sprint 5.6) : `NOTIFY_TOP10=daily` dans `.env` (premier run de la journée), ou `run`.
+
 Les actions (masquer, vider la base, lancer le scraping) sont protégées par un jeton CSRF ;
 « Vider la BD » demande de taper `VIDER`.
 
 ### Consulter les résultats
 
-Après chaque exécution, des rapports sont générés dans `reports/<profil>/` :
+Après chaque exécution, des rapports sont générés dans `reports/<profil>/` (ou à la demande :
+`python main.py report [--pdf]`) — détail dans [docs/SPRINT_5.md](docs/SPRINT_5.md) :
 
-- `nouvelles_annonces.md` — Les annonces ajoutées au profil lors de cette exécution
-- `toutes_les_annonces.md` — Tableau complet des annonces du profil
-- `annonces_detaillees.md` — Annonces enrichies (surface, DPE…)
+- `top10.md` — les 10 meilleures annonces, une ligne chacune
+- `nouvelles_annonces.md` — fiches des annonces ajoutées au profil par ce run, meilleur score d'abord
+- `rapport_comparatif.md` — nouvelles, retirées, baisses de prix et évolution du marché depuis le run précédent
+- `rapport_quartiers.md` — loyers, €/m² et scores par commune et par quartier
+- `toutes_les_annonces.md` — tableau complet des annonces du profil
+- `annonces_detaillees.md` — fiches de toutes les annonces dont la page a été lue
+- `rapports_<date>.pdf` — avec `--pdf` : Top 10, nouvelles, comparatif et quartiers
 
 Requête directe sur la base :
 
@@ -222,10 +251,11 @@ toulouse_rent_scraper/
 │
 ├── ui/                    # Interface web Flask
 │   ├── __init__.py        # create_app(), run_ui()
-│   ├── routes.py          # Vues (sans SQL)
+│   ├── routes.py          # Vues (sans SQL), page Tendances
+│   ├── api.py             # API JSON /api/v1 (lecture seule)
 │   ├── security.py        # CSRF, redirections sûres
 │   ├── export.py          # Dossier de candidature Markdown
-│   ├── templates/         # index, requirements (critères), weights, llm_settings
+│   ├── templates/         # index, tendances, requirements (critères), weights, llm_settings
 │   └── static/            # app.css, app.js
 │
 ├── scrapers/              # Scrapers par site
@@ -254,11 +284,13 @@ toulouse_rent_scraper/
 ├── deploy/                # Unités systemd (service + timer)
 │
 ├── reporting/             # Génération de rapports
-│   ├── generator.py       # Rapports Markdown
+│   ├── generator.py       # Rapports Markdown (Top 10, comparatif, quartiers…)
+│   ├── pdf.py             # Export PDF (Chromium headless)
 │   └── exporter.py        # Export CSV/JSON
 │
 ├── geo/                   # Géolocalisation
-│   └── distance.py        # Géocodage Nominatim (cache) + distances
+│   ├── distance.py        # Géocodage Nominatim (cache) + distances
+│   └── quartier_parser.py # Commune / quartier depuis l'adresse des annonces
 │
 ├── utils/                 # Utilitaires
 │   ├── logger.py          # Logging rotatif
@@ -475,11 +507,12 @@ Les logs sont créés dans `logs/` :
 - [x] Export CSV/JSON (`--export`)
 - [x] Interface Web Flask (`--ui`)
 - [x] Vérification liens Playwright (`--check-links`)
-- [ ] Enrichissement des données (surface, DPE, description) — Sprint 3
-- [ ] Scraper PAP.fr — Sprint 4
-- [ ] Système de scoring 0-100 — Sprint 5
-- [ ] Notifications email/Telegram
-- [ ] Dashboard Streamlit / API REST
+- [x] Enrichissement des données (surface, DPE, description) — Sprints 3, 15, 16
+- [x] Scraper PAP.fr — Sprint 4
+- [x] Système de scoring 0-100 — Sprint 13
+- [x] Rapports comparatif, par quartier, Top 10, PDF — Sprint 5
+- [x] Notifications ntfy / Telegram
+- [x] API JSON et page Tendances (Flask), Docker pour l'interface — Sprint 2-bis
 
 ---
 

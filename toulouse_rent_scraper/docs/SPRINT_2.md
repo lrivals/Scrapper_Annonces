@@ -98,18 +98,60 @@
 
 ---
 
-## Tâches reportées (Sprint 2-bis)
+## Sprint 2-bis — API JSON, tendances, Docker (livré le 2026-11-14)
 
-Ces tâches du plan initial restent pertinentes mais ont été reportées pour ne pas bloquer la livraison de l'interface de navigation.
+**Statut** : ✅ Terminé — validé sur la base réelle, profil **Blagnac**.
 
-| # | Tâche | Statut | Notes |
-|---|-------|--------|-------|
-| 2-bis.1 | API REST FastAPI | ⏸️ Reporté | Pertinent si accès externe ou intégration tierce |
-| 2-bis.2 | Dashboard Streamlit + carte Folium | ⏸️ Reporté | Remplacé temporairement par Flask UI |
-| 2-bis.3 | Configuration dynamique (table `config`) | ⏸️ Reporté | |
-| 2-bis.4 | Historique & tendances (table `stats_history`) | ⏸️ Reporté | |
-| 2-bis.5 | Dockerisation | ⏸️ Reporté | |
-| 2-bis.6 | Tests API | ⏸️ Reporté | Dépend de 2-bis.1 |
+> Recadré le 2026-11-14 : l'UI Flask a été refaite depuis (package `ui/`, CSRF, carte Leaflet, Critères,
+> Poids). On ne la remplace donc pas par FastAPI + Streamlit : l'API JSON est un blueprint de la même
+> application, et la carte Folium n'a plus d'objet.
+
+| # | Tâche | Statut | Livrable |
+|---|-------|--------|----------|
+| 2-bis.1 | API REST en lecture | ✅ | `ui/api.py`, monté sur `/api/v1` : `profiles`, `annonces` (filtres et tris de la liste), `annonces/<id>` (+ historique des prix), `runs`, `stats`, `stats/history` |
+| 2-bis.2 | Tableau de bord « Tendances » | ✅ | Page `/tendances` (lien depuis la liste) : nouvelles par jour et par site, loyer CC médian (jour + 7 jours glissants), stock à chaque run ; Chart.js 4.4.1 épinglé (cdnjs) |
+| 2-bis.3 | Configuration dynamique | ✅ | Couvert par les pages « Critères » (15.5) et « Poids du score » (15.6) — rien à coder |
+| 2-bis.4 | Historique & tendances | ✅ | `storage/trends.py` : séries par jour (depuis `annonce_profiles.matched_at`, tout l'historique) et par run (`run_stats`, Sprint 5.0) |
+| 2-bis.5 | Docker (UI + API seulement) | ✅ | `Dockerfile`, `docker-compose.yml`, `.dockerignore` ; port publié sur 127.0.0.1 ; le scraping reste sur la machine |
+| 2-bis.6 | Tests API | ✅ | `tests/test_api.py` (15 tests : accès, filtres, pagination, 404, jeton, séries, page) |
+
+### API
+
+```bash
+curl "http://127.0.0.1:5000/api/v1/annonces?profile=blagnac&prix_max=750&sort=score&limit=20"
+curl "http://127.0.0.1:5000/api/v1/annonces/1035?profile=blagnac"     # + price_history
+curl "http://127.0.0.1:5000/api/v1/stats?profile=blagnac"
+curl "http://127.0.0.1:5000/api/v1/stats/history?profile=blagnac&days=90"
+```
+
+- Paramètres de `annonces` : ceux de la liste (`site`, `status`, `prix_min`, `prix_max`, `dups`, `fb`,
+  `excl`, `sort` = score|price|distance|created_at|site, `order`) + `limit` (≤ 500) et `offset`.
+- Champs publiés : liste blanche (`LIST_FIELDS` / `DETAIL_FIELDS`) ; empreintes, erreurs et données
+  LLM brutes restent privées. Colonnes JSON décodées, booléens en `true`/`false`.
+- **Accès** : libre depuis la machine (127.0.0.1). Sinon `Authorization: Bearer <API_TOKEN>` (`.env`) ;
+  sans `API_TOKEN`, refus. Un jeton faux est refusé même en local.
+- Lecture seule : un POST ou DELETE est refusé.
+
+### Docker
+
+```bash
+HOST_UID=$(id -u) HOST_GID=$(id -g) docker compose up -d --build   # UI_PORT=5058 si 5000 est pris
+```
+
+- L'image contient le code, jamais `.env`, `data/`, `logs/`, `reports/` ni `Docrech/` (`.dockerignore`).
+- `data/` est monté en lecture-écriture : SQLite en WAL écrit ses fichiers `-shm` / `-wal`, et l'UI
+  enregistre ⭐ / 👎 / masquage. Le conteneur tourne avec l'UID de l'hôte : les fichiers gardent leur propriétaire.
+- Le bouton « Lancer le scraping » ne fonctionne pas dans le conteneur (pas de Chrome) : le timer
+  systemd de la machine continue de scraper ; l'UI du conteneur lit la même base.
+- Vu du conteneur, l'hôte n'est pas « local » : l'API y exige `API_TOKEN` (dans `.env`).
+
+### Validation (2026-11-14)
+
+- `/tendances?profile=blagnac` rendu dans Chromium sans erreur JavaScript : 381 annonces, 817 € CC médian,
+  15,0 €/m², 47 / 279 nouvelles (24 h / 7 j). Les pics du 04/11 et du 13/11 sont les premières recherches
+  du profil et le rattrapage du 13/11 (Sprint 16), pas le marché.
+- API sur la base réelle : 200 en local ; 403 depuis une autre adresse sans jeton configuré.
+- Conteneur : pages 200 ; API 401 sans jeton ou avec un mauvais, 200 avec `API_TOKEN`.
 
 ---
 

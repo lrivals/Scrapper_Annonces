@@ -371,6 +371,17 @@ def run_scraping(
     total.log_summary("✅ Résumé global")
     logger.info("🎯 Terminé.")
 
-    generate_summary_reports(run_start)
+    # Journal du run (Sprint 5.0) : rapport comparatif et tendances
+    try:
+        from storage.run_stats import record_run
+        record_run(run_start, list(dict.fromkeys(p.key for p in profiles)), searched_sites, total)
+    except Exception as e:
+        logger.warning(f"Journal du run non enregistré : {e}")
+
+    generate_summary_reports(run_start, profiles=profiles)
     logger.info("📄 Rapports générés dans le dossier reports/")
+
+    # Top 10 par profil (Sprint 5.6, NOTIFY_TOP10)
+    from notify import notify_top10
+    notify_top10(p.key for p in profiles)
     return total

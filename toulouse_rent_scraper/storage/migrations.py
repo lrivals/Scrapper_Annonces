@@ -322,6 +322,48 @@ def _m10_seloger_canonical_urls(cur: sqlite3.Cursor):
         cur.execute("DELETE FROM annonces WHERE id = ?", (annonce_id,))
 
 
+def _m11_run_stats(cur: sqlite3.Cursor):
+    """
+    Sprint 5 — journal des runs (rapport comparatif, tendances) et date de retrait des annonces.
+    Un trigger date le passage à « expired », quel que soit le chemin (fiche, check-links, purge).
+    """
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS run_stats (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            started_at     TIMESTAMP NOT NULL,
+            finished_at    TIMESTAMP NOT NULL,
+            profile        TEXT NOT NULL,
+            sites          TEXT,
+            new_count      INTEGER DEFAULT 0,
+            updated        INTEGER DEFAULT 0,
+            reactivated    INTEGER DEFAULT 0,
+            expired        INTEGER DEFAULT 0,
+            duplicates     INTEGER DEFAULT 0,
+            opened         INTEGER DEFAULT 0,
+            active_count   INTEGER,
+            median_rent_cc REAL,
+            median_ppm2    REAL
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_run_stats_profile ON run_stats(profile, started_at)")
+
+    cols = {r[1] for r in cur.execute("PRAGMA table_info(annonces)")}
+    if "expired_at" not in cols:
+        cur.execute("ALTER TABLE annonces ADD COLUMN expired_at TIMESTAMP")
+    # Même format que datetime.now().isoformat() (heure locale), comparable aux autres dates
+    cur.execute("""
+        CREATE TRIGGER IF NOT EXISTS trg_annonces_expired_at
+        AFTER UPDATE OF status ON annonces
+        WHEN NEW.status IS NOT OLD.status
+        BEGIN
+            UPDATE annonces SET expired_at = CASE
+                WHEN NEW.status = 'expired' THEN strftime('%Y-%m-%dT%H:%M:%S', 'now', 'localtime')
+            END
+            WHERE id = NEW.id;
+        END
+    """)
+
+
 MIGRATIONS = [
     _m1_base_schema,
     _m2_indexes_and_price_history,
@@ -333,6 +375,7 @@ MIGRATIONS = [
     _m8_feedback,
     _m9_photo_hash,
     _m10_seloger_canonical_urls,
+    _m11_run_stats,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)

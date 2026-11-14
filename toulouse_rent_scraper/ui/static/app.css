@@ -1106,3 +1106,13 @@ body.doc-mode-active .btn-add-doc { display: inline-block; animation: reveal var
   .card.is-expanded { display: flex; }
   .card.is-expanded > .card-details { border-left: 0; border-top: 1px solid #f3f4f6; padding: 12px 0 4px; }
 }
+
+/* Page « Tendances » (Sprint 2-bis.2) */
+.trends-page { max-width: 1000px; }
+.trends-page .trends-days { margin-top: 8px; }
+.trends-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 8px 0 10px; }
+.trends-tile { border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; display: grid; gap: 4px; }
+.trends-tile span { font-size: 0.8125rem; color: var(--text-muted); }
+.trends-tile strong { font-size: 1.5rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.trends-page > .settings-status { margin-bottom: 16px; }
+.trends-chart { position: relative; height: 280px; margin-top: 8px; }
