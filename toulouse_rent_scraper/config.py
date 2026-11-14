@@ -538,6 +538,10 @@ NOTIFY_GROUP_MAX_ITEMS = 8     # nombre d'annonces listées dans un récapitulat
 NOTIFY_TOP10 = (os.environ.get("NOTIFY_TOP10") or "off").strip().lower()
 TOP10_STATE_FILE = DATA_DIR / ".last_top10.json"
 
+# Sprint 2-bis — jeton de l'API /api/v1, exigé pour tout accès qui ne vient pas de la machine
+# (réseau, conteneur Docker). Vide : l'API ne répond qu'en local.
+API_TOKEN = os.environ.get("API_TOKEN") or None
+
 
 
 # =========================

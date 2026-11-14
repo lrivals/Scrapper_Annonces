@@ -383,6 +383,25 @@ def export_document():
     return resp
 
 
+@bp.route("/tendances")
+def tendances():
+    """Sprint 2-bis.2 — courbes du profil (données intégrées à la page : pas d'appel à l'API)."""
+    from storage.trends import clamp_days, daily_series, profile_summary, run_series
+
+    profile = _current_profile(request.args.get("profile"))
+    days = clamp_days(request.args.get("days"))
+    return render_template(
+        "tendances.html",
+        profile=profile,
+        profiles=list(SEARCH_PROFILES.values()),
+        days=days,
+        day_choices=(30, 90, 365),
+        summary=profile_summary(profile.key),
+        daily=daily_series(profile.key, days),
+        runs=run_series(profile.key, days),
+    )
+
+
 @bp.route("/api/map-data")
 def map_data():
     profile = _current_profile(request.args.get("profile"))

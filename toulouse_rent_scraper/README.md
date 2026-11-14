@@ -107,7 +107,7 @@ python main.py analyze [--limit 20]                # analyse LLM des nouvelles d
 python main.py analyze --stats                     # registre des lectures LLM (appels, jetons), sans appel
 python main.py analyze --retry-errors              # relancer une fois les analyses en erreur
 python main.py scrape --unattended                 # mode planifié (captcha notifié, sites bloqués sautés)
-python main.py ui [--port 8080] [--no-browser]     # interface web
+python main.py ui [--port 8080] [--no-browser]     # interface web (+ API JSON /api/v1, page /tendances)
 ```
 
 L'ancienne syntaxe (`--seloger`, `--leboncoin`, `--ui`, `--check-links`…) reste acceptée, avec un avertissement indiquant la commande équivalente.
@@ -126,6 +126,26 @@ Ouvre `http://localhost:5000` — interface responsive pour :
 - Masquer / restaurer une annonce, vue carte, export d'un dossier de candidature
 - Lancer un scraping (sortie dans `logs/ui_scraping.log`, dernière ligne affichée) — refusé si un run
   du timer est déjà en cours (verrou partagé)
+- **Tendances** (`/tendances`) : nouvelles annonces par jour et par site, loyer CC médian, stock à chaque run
+
+### API JSON (lecture seule)
+
+```bash
+curl "http://127.0.0.1:5000/api/v1/annonces?profile=blagnac&prix_max=750&limit=20"
+curl "http://127.0.0.1:5000/api/v1/stats/history?profile=blagnac&days=90"
+```
+
+Routes : `profiles`, `annonces` (filtres de la liste, `limit`/`offset`), `annonces/<id>`, `runs`, `stats`,
+`stats/history`. Libre depuis la machine ; ailleurs (réseau, Docker) : `Authorization: Bearer <API_TOKEN>`
+avec `API_TOKEN` dans `.env`. Détail : [docs/SPRINT_2.md](docs/SPRINT_2.md).
+
+### Docker (interface + API seulement)
+
+```bash
+HOST_UID=$(id -u) HOST_GID=$(id -g) docker compose up -d --build   # http://127.0.0.1:5000
+```
+
+Le conteneur lit la base `data/` de la machine ; le scraping reste sur la machine (vrai Chrome + timer systemd).
 
 ### Score d'intérêt
 
@@ -231,10 +251,11 @@ toulouse_rent_scraper/
 │
 ├── ui/                    # Interface web Flask
 │   ├── __init__.py        # create_app(), run_ui()
-│   ├── routes.py          # Vues (sans SQL)
+│   ├── routes.py          # Vues (sans SQL), page Tendances
+│   ├── api.py             # API JSON /api/v1 (lecture seule)
 │   ├── security.py        # CSRF, redirections sûres
 │   ├── export.py          # Dossier de candidature Markdown
-│   ├── templates/         # index, requirements (critères), weights, llm_settings
+│   ├── templates/         # index, tendances, requirements (critères), weights, llm_settings
 │   └── static/            # app.css, app.js
 │
 ├── scrapers/              # Scrapers par site
@@ -491,7 +512,7 @@ Les logs sont créés dans `logs/` :
 - [x] Système de scoring 0-100 — Sprint 13
 - [x] Rapports comparatif, par quartier, Top 10, PDF — Sprint 5
 - [x] Notifications ntfy / Telegram
-- [ ] Dashboard Streamlit / API REST
+- [x] API JSON et page Tendances (Flask), Docker pour l'interface — Sprint 2-bis
 
 ---
 

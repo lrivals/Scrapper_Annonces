@@ -111,6 +111,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     ui = sub.add_parser("ui", help="Lancer l'interface web")
     ui.add_argument("--port", type=int, default=5000)
+    ui.add_argument("--host", default="127.0.0.1",
+                    help="Adresse d'écoute (défaut 127.0.0.1 ; 0.0.0.0 seulement dans un conteneur)")
     ui.add_argument("--no-browser", action="store_true", help="Ne pas ouvrir le navigateur")
 
     return parser
@@ -414,7 +416,7 @@ def main(argv: Optional[List[str]] = None):
 
     if args.command == "ui":
         from ui import run_ui
-        run_ui(port=args.port, open_browser=not args.no_browser)
+        run_ui(host=args.host, port=args.port, open_browser=not args.no_browser)
     elif args.command == "enrich":
         with _exclusive():
             cmd_enrich(args.sites, args.limit, unattended=args.unattended, ids=args.ids)

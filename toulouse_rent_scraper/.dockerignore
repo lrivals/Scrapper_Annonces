@@ -1,0 +1,12 @@
+# Secrets, données personnelles et fichiers locaux : jamais dans l'image
+.env
+data/
+logs/
+reports/
+Docrech/
+**/__pycache__/
+.pytest_cache/
+htmlcov/
+.coverage
+tests/
+scripts/debug/
