@@ -3,13 +3,13 @@
 # Chemins : à adapter si le projet n'est pas dans ~/Documents/Perso/Scrapper_Annonces.
 
 [Unit]
-Description=Scrapper Annonces — scraping planifié (tous les profils)
+Description=Scrapper Annonces — scraping planifié (profil Blagnac)
 After=graphical-session.target network-online.target
 
 [Service]
 Type=oneshot
 WorkingDirectory=%h/Documents/Perso/Scrapper_Annonces/toulouse_rent_scraper
-ExecStart=%h/Documents/Perso/Scrapper_Annonces/venv/bin/python main.py scrape --unattended
+ExecStart=%h/Documents/Perso/Scrapper_Annonces/venv/bin/python main.py scrape --unattended --profile blagnac
 # Chrome n'est pas headless (DataDome) : il a besoin de la session graphique.
 # DISPLAY / XAUTHORITY / WAYLAND_DISPLAY viennent de l'environnement systemd utilisateur
 # (vérifier : systemctl --user show-environment | grep DISPLAY).
