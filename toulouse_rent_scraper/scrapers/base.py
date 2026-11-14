@@ -31,6 +31,14 @@ from scrapers import antibot
 from scrapers.browser import chrome_session, BrowserError, PlaywrightTimeoutError
 from utils.logger import setup_logger
 
+# Navigation interrompue sans blocage : le site change lui-même d'URL pendant le chargement
+# (SeLoger « /?tab=rent#… », 2026-11-14), ou coupure réseau passagère. La page est souvent
+# chargée malgré l'erreur ; sinon un nouvel essai suffit.
+TRANSIENT_NAV_ERRORS = (
+    "ERR_ABORTED", "ERR_NETWORK_CHANGED", "ERR_CONNECTION_RESET", "ERR_CONNECTION_CLOSED",
+    "ERR_EMPTY_RESPONSE", "ERR_TIMED_OUT",
+)
+
 
 class BaseScraper(ABC):
     """Classe de base pour tous les scrapers d'annonces immobilières."""
@@ -94,14 +102,16 @@ class BaseScraper(ABC):
           - 'url': URL à visiter
           - 'label': description pour les logs
         Par défaut : page d'accueil → recherches de warm-up éventuelles → recherche scannée.
+        Accueil et warm-up ne servent qu'à paraître humain (`required: False`) : en cas
+        d'échec on passe à l'étape suivante. Seule la recherche est indispensable.
         """
         warmups = self.warmup_urls()
-        steps = [{"url": self.base_url(), "label": "page d'accueil"}]
+        steps = [{"url": self.base_url(), "label": "page d'accueil", "required": False}]
         steps += [
-            {"url": url, "label": f"warm-up {i}/{len(warmups)}"}
+            {"url": url, "label": f"warm-up {i}/{len(warmups)}", "required": False}
             for i, url in enumerate(warmups, start=1)
         ]
-        steps.append({"url": self.search_url(), "label": f"recherche ({self.profile.label})"})
+        steps.append({"url": self.search_url(), "label": f"recherche ({self.profile.label})", "required": True})
         return steps
 
     def warmup_urls(self) -> List[str]:
@@ -466,29 +476,71 @@ class BaseScraper(ABC):
     def _navigate_steps(self, page) -> bool:
         """Navigation progressive (accueil → recherche). False si bloqué sans résolution."""
         steps = self.navigation_steps()
+        consent_done = False
         for i, step in enumerate(steps):
             url, label = step["url"], step["label"]
             if i > 0:
                 self.step_delay()
 
             self.logger.info(f"Etape {i+1}/{len(steps)} : {label} ({url[:80]}...)")
-            if not self._goto_with_block_handling(page, url, label):
-                return False
+            try:
+                if not self._goto_with_block_handling(page, url, label):
+                    return False
+            except Exception as nav_err:
+                if step.get("required", True):
+                    raise
+                # Étape de façade (accueil, warm-up) : la recherche reste possible sans elle
+                self.logger.warning(f"Etape {label} ignoree ({str(nav_err).splitlines()[0][:160]})")
+                continue
 
             time.sleep(random.uniform(3, 5))
             if not self.wait_for_challenge(page):
                 return False
 
             self.human_mouse_move(page)
-            if i == 0:
+            if not consent_done:
                 self.handle_cookie_consent(page)
+                consent_done = True
             self.action_delay()
             self.human_scroll(page)
         return True
 
+    def _landed_on(self, page, url: str, previous_url: str) -> bool:
+        """Après une navigation « interrompue » : la page affichée est-elle bien sur le site visé ?"""
+        try:
+            page.wait_for_load_state("domcontentloaded", timeout=10000)
+        except Exception:
+            pass
+        current = page.url or ""
+        target = urlparse(url)
+        here = urlparse(current)
+        if not current or current == "about:blank" or here.netloc != target.netloc:
+            return False
+        # Toujours sur la page précédente : rien n'a été chargé (sauf si c'est la même adresse)
+        return current != previous_url or here.path == target.path
+
+    def _goto(self, page, url: str, label: str):
+        """page.goto tolérant aux interruptions passagères (voir TRANSIENT_NAV_ERRORS) ; un nouvel essai."""
+        for attempt in (1, 2):
+            previous_url = page.url
+            try:
+                page.goto(url, timeout=PAGE_LOAD_TIMEOUT, wait_until="domcontentloaded")
+                return
+            except Exception as nav_err:
+                code = next((c for c in TRANSIENT_NAV_ERRORS if c in str(nav_err)), None)
+                if not code:
+                    raise
+                if self._landed_on(page, url, previous_url):
+                    self.logger.info(f"Navigation {label} interrompue ({code}) mais page chargee : on continue")
+                    return
+                if attempt == 2:
+                    raise
+                self.logger.warning(f"Navigation {label} interrompue ({code}), nouvel essai")
+                time.sleep(random.uniform(2, 4))
+
     def _goto_with_block_handling(self, page, url: str, label: str) -> bool:
         try:
-            page.goto(url, timeout=PAGE_LOAD_TIMEOUT, wait_until="domcontentloaded")
+            self._goto(page, url, label)
             return True
         except Exception as nav_err:
             err_str = str(nav_err)
@@ -500,7 +552,7 @@ class BaseScraper(ABC):
         if not self.wait_for_challenge(page, timeout_seconds=300):
             return False
         try:
-            page.goto(url, timeout=PAGE_LOAD_TIMEOUT, wait_until="domcontentloaded")
+            self._goto(page, url, label)
             return True
         except Exception:
             self.logger.error(f"Impossible de naviguer vers {label} apres deblocage")
