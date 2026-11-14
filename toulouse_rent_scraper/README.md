@@ -95,6 +95,8 @@ python main.py check-links [--limit 50]            # vérifier les liens (Chromi
 python main.py purge                               # vérification HEAD (peu fiable sur SeLoger/LBC)
 python main.py purge --delete-expired              # supprimer de la base les annonces retirées des sites
 python main.py export csv|json                     # export des annonces actives
+python main.py report [--profile blagnac] [--pdf]  # regénérer les rapports (Top 10, comparatif, quartiers…) sans scraper
+python main.py report --send-top10                 # envoyer le Top 10 de chaque profil par notification
 python main.py rescore                             # recalculer les scores (après un changement de poids)
 python main.py weights [--apply|--reset]           # poids du score appris de vos ⭐ / 📞 / 👎
 python main.py dedupe                              # doublons inter-sites par empreinte de la 1re photo
@@ -175,16 +177,23 @@ résoudre est aussi signalé. Les fiches sont ouvertes avant l'envoi : une ligne
 2. `cp .env.example .env` puis renseigner `NOTIFY_BACKEND=ntfy` et `NTFY_TOPIC=…` (ou Telegram).
 3. `python main.py notify-test`
 
+Top 10 quotidien (Sprint 5.6) : `NOTIFY_TOP10=daily` dans `.env` (premier run de la journée), ou `run`.
+
 Les actions (masquer, vider la base, lancer le scraping) sont protégées par un jeton CSRF ;
 « Vider la BD » demande de taper `VIDER`.
 
 ### Consulter les résultats
 
-Après chaque exécution, des rapports sont générés dans `reports/<profil>/` :
+Après chaque exécution, des rapports sont générés dans `reports/<profil>/` (ou à la demande :
+`python main.py report [--pdf]`) — détail dans [docs/SPRINT_5.md](docs/SPRINT_5.md) :
 
-- `nouvelles_annonces.md` — Les annonces ajoutées au profil lors de cette exécution
-- `toutes_les_annonces.md` — Tableau complet des annonces du profil
-- `annonces_detaillees.md` — Annonces enrichies (surface, DPE…)
+- `top10.md` — les 10 meilleures annonces, une ligne chacune
+- `nouvelles_annonces.md` — fiches des annonces ajoutées au profil par ce run, meilleur score d'abord
+- `rapport_comparatif.md` — nouvelles, retirées, baisses de prix et évolution du marché depuis le run précédent
+- `rapport_quartiers.md` — loyers, €/m² et scores par commune et par quartier
+- `toutes_les_annonces.md` — tableau complet des annonces du profil
+- `annonces_detaillees.md` — fiches de toutes les annonces dont la page a été lue
+- `rapports_<date>.pdf` — avec `--pdf` : Top 10, nouvelles, comparatif et quartiers
 
 Requête directe sur la base :
 
@@ -254,11 +263,13 @@ toulouse_rent_scraper/
 ├── deploy/                # Unités systemd (service + timer)
 │
 ├── reporting/             # Génération de rapports
-│   ├── generator.py       # Rapports Markdown
+│   ├── generator.py       # Rapports Markdown (Top 10, comparatif, quartiers…)
+│   ├── pdf.py             # Export PDF (Chromium headless)
 │   └── exporter.py        # Export CSV/JSON
 │
 ├── geo/                   # Géolocalisation
-│   └── distance.py        # Géocodage Nominatim (cache) + distances
+│   ├── distance.py        # Géocodage Nominatim (cache) + distances
+│   └── quartier_parser.py # Commune / quartier depuis l'adresse des annonces
 │
 ├── utils/                 # Utilitaires
 │   ├── logger.py          # Logging rotatif
@@ -475,10 +486,11 @@ Les logs sont créés dans `logs/` :
 - [x] Export CSV/JSON (`--export`)
 - [x] Interface Web Flask (`--ui`)
 - [x] Vérification liens Playwright (`--check-links`)
-- [ ] Enrichissement des données (surface, DPE, description) — Sprint 3
-- [ ] Scraper PAP.fr — Sprint 4
-- [ ] Système de scoring 0-100 — Sprint 5
-- [ ] Notifications email/Telegram
+- [x] Enrichissement des données (surface, DPE, description) — Sprints 3, 15, 16
+- [x] Scraper PAP.fr — Sprint 4
+- [x] Système de scoring 0-100 — Sprint 13
+- [x] Rapports comparatif, par quartier, Top 10, PDF — Sprint 5
+- [x] Notifications ntfy / Telegram
 - [ ] Dashboard Streamlit / API REST
 
 ---

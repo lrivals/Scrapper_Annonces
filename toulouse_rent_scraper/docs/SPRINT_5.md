@@ -1,204 +1,77 @@
-# Sprint 5 — Rapports Markdown avancés
+# Sprint 5 — Rapports avancés
 
-**Objectif** : Transformer les rapports Markdown en documents de qualité professionnelle, exploitables pour la prise de décision rapide (comparer, filtrer, prioriser les annonces).
+**Objectif** : des rapports qui se lisent vite pour décider : les 10 meilleures annonces, les fiches
+des nouvelles, ce qui a changé depuis le run précédent, les loyers par quartier, un PDF à partager.
 
-**Durée estimée** : 3-4 jours
+**Statut** : ✅ Terminé — validé sur la base réelle, profil **Blagnac** (2026-11-14)
 
-**Prérequis** : Sprint 3 terminé (données enrichies disponibles).
-
----
-
-## Problèmes actuels des rapports
-
-1. **Manque de données** : seuls titre, prix, distance et lien sont affichés
-2. **Pas de classement intelligent** : tri par prix uniquement
-3. **Pas de comparaison** : impossible de voir l'évolution entre deux runs
-4. **Pas de score** : difficile de prioriser les annonces
-5. **Format unique** : un seul niveau de détail
-6. **Pas de statistiques** : aucun résumé analytique
+> Recadré le 2026-11-14 : le plan de février (score ENAC dans `filters/scoring.py`, weasyprint,
+> `--all --pdf`) est remplacé par l'architecture actuelle. Le score existe depuis le 13.3 (`scoring.py`,
+> par profil) ; le PDF passe par le Chromium de Playwright, déjà installé ; nouvelle sous-commande `report`.
 
 ---
 
 ## Tâches
 
-### 5.1 Rapport enrichi avec données détaillées (Priorité: Haute | Effort: M)
+| # | Tâche | Statut | Livrable |
+|---|-------|--------|----------|
+| 5.0 | Journal des runs | ✅ | Migration 11 : table `run_stats` (une ligne par run et par profil) + `annonces.expired_at` posé par trigger ; `storage/run_stats.py`, écrit à la fin de `pipeline.run_scraping` |
+| 5.1 | Fiches enrichies | ✅ | `nouvelles_annonces.md` et `annonces_detaillees.md` : score + emoji, loyer CC, surface et €/m², pièces, distance, lieu, meublé, DPE, dépôt, source (particulier/agence), description coupée à 150 car., 1re photo ; tri par score |
+| 5.2 | Score 0-100 | ✅ | Livré au Sprint 13.3 (`scoring.py`) — rien à refaire |
+| 5.3 | Rapport comparatif | ✅ | `rapport_comparatif.md` : nouvelles, retirées, baisses de prix (`price_history`), évolution du nombre d'annonces, du loyer CC et du €/m² médians, nouveaux secteurs |
+| 5.4 | Rapport par quartier | ✅ | `geo/quartier_parser.py` (formats des 4 sites) + `rapport_quartiers.md` : par commune, classement des quartiers, top 3 de chacun |
+| 5.5 | Export PDF | ✅ | `reporting/pdf.py` : Markdown → HTML (petit convertisseur) → PDF par Chromium headless ; `report --pdf` |
+| 5.6 | Top 10 + notification | ✅ | `top10.md` ; envoi selon `NOTIFY_TOP10` (`off` / `daily` / `run`) ou `report --send-top10` |
+| 5.7 | Garde-fou CLI | ✅ | Une sous-commande inconnue (faute de frappe) est une erreur, plus jamais traduite en scraping |
 
-**Actions** :
-- Refactorer `reporting/generator.py` pour exploiter les données enrichies (Sprint 3)
-- **`nouvelles_annonces.md`** — format amélioré pour chaque annonce :
-  ```markdown
-  ## Studio meublé Rangueil ⭐ 85/100
+## Rapports (`reports/<profil>/`)
 
-  | Critère | Détail |
-  |---------|--------|
-  | Prix | 380 € CC |
-  | Surface | 22 m² |
-  | Pièces | 1 |
-  | Distance ENAC | 1.2 km |
-  | Meublé | Oui |
-  | DPE | C |
-  | Source | LeBonCoin (particulier) |
-  | Publié le | 08/02/2026 |
+| Fichier | Contenu | Lecture |
+|---|---|---|
+| `top10.md` | `1. ✅ 79 \| 595 € CC \| 46,7 m² \| T2 \| ≈ 1,6 km \| Blagnac — Pinot \| [lien]` + ligne marché | 10 s |
+| `nouvelles_annonces.md` | Fiches des annonces rattachées au profil pendant ce run (ou les dernières 24 h avec `report`) | — |
+| `rapport_comparatif.md` | Depuis la fin du run précédent : compteurs, médianes (± écart), nouvelles, baisses, retirées | 30 s |
+| `rapport_quartiers.md` | Par commune ; quartiers d'au moins 2 annonces classés par score médian puis €/m² ; top 3 | — |
+| `toutes_les_annonces.md` | Tableau de toutes les annonces, score d'abord | — |
+| `annonces_detaillees.md` | Fiches de toutes les annonces dont la page a été lue | — |
+| `rapports_<date>.pdf` | Top 10, nouvelles, comparatif et quartiers en un PDF (sans photos), pied de page date + n° de page | — |
 
-  > Description courte (150 premiers caractères)...
+Annonces prises en compte : actives, rattachées au profil, non exclues par ses critères (15.5),
+hors doublons d'un autre site (11 / 15.8). Loyers comparés **charges comprises** (`scoring.rent_cc`).
 
-  [Voir l'annonce](https://...)
-  ```
-- Inclure les 3 premières photos (liens Markdown)
-- Tronquer la description à 150 caractères (version courte)
+## Validation (2026-11-14, base réelle, profil Blagnac)
 
-**Critère de validation** : Le rapport affiche surface, pièces, DPE, meublé quand disponibles.
+- `report --profile blagnac --pdf` : 6 rapports + PDF de 35 pages (250 Ko) lisible.
+  Top 10 cohérent avec l'UI (Pinot, Grand-Noble, PAP Colomiers/Blagnac) ; 381 annonces, loyer CC médian 817 €.
+- Rapport par quartier : 3 communes, 24 quartiers de 2 annonces ou plus ; Grand-Noble/Pinot en tête
+  (score médian 70, 13,9 €/m²).
+- Le premier PDF pesait 24 Mo (photos embarquées en pleine résolution) : photos retirées du PDF.
+- `report --send-top10` : Top 10 reçu sur Telegram (texte brut, un lien par annonce).
+- Le comparatif « depuis le run précédent » se remplit à partir de deux runs journalisés : les runs du
+  timer s'en chargent (avant, il compare aux dernières 24 h).
+- Incident pendant la validation : `report` n'était pas dans la liste figée des sous-commandes, donc
+  traduit en `scrape` par la compatibilité de l'ancienne syntaxe → un scraping SeLoger lancé par erreur
+  (arrêté pendant l'échauffement, rien d'écrit). Corrigé par 5.7 et testé.
 
----
+## Usage
 
-### 5.2 Système de scoring des annonces (Priorité: Haute | Effort: M)
-
-**Actions** :
-- Créer `filters/scoring.py` :
-  - Fonction `compute_score(annonce: dict) -> int` (score 0-100)
-  - Critères pondérés :
-    | Critère | Poids | Logique |
-    |---------|-------|---------|
-    | Distance ENAC | 30% | < 2km = 30pts, 2-5km = 20pts, 5-10km = 10pts |
-    | Prix | 25% | < 350€ = 25pts, 350-400€ = 20pts, 400-450€ = 15pts |
-    | Surface | 15% | > 25m² = 15pts, 20-25m² = 10pts, < 20m² = 5pts |
-    | Meublé | 10% | Oui = 10pts, Non = 0pts |
-    | DPE | 10% | A-C = 10pts, D = 5pts, E-G = 0pts |
-    | Particulier | 10% | Particulier = 10pts, Agence = 5pts |
-  - Stocker le score en DB (colonne `score INTEGER`)
-- Trier les rapports par score décroissant (meilleures annonces en premier)
-- Afficher le score avec emoji : ⭐ > 80, ✅ > 60, ⚠️ > 40, ❌ < 40
-
-**Critère de validation** : Chaque annonce a un score, les rapports sont triés par pertinence.
-
----
-
-### 5.3 Rapport comparatif (diff entre runs) (Priorité: Haute | Effort: M)
-
-**Actions** :
-- Créer un nouveau rapport `rapport_comparatif.md` :
-  - Section **Nouvelles annonces** (apparues depuis le dernier run)
-  - Section **Annonces disparues** (URLs qui ne sont plus en ligne, si Sprint 1.5 implémenté)
-  - Section **Évolution** :
-    - Nombre d'annonces ajoutées vs supprimées
-    - Évolution du prix moyen
-    - Nouveau quartier représenté ?
-- Stocker les métriques de chaque run dans `stats_history` (cf Sprint 2.4)
-- Format condensé adapté à une lecture rapide (< 30 secondes)
-
-**Critère de validation** : Après 2 runs successifs, le rapport comparatif montre les différences.
-
----
-
-### 5.4 Rapport par quartier (Priorité: Moyenne | Effort: M)
-
-**Actions** :
-- Créer `rapport_quartiers.md` :
-  - Grouper les annonces par quartier/commune
-  - Pour chaque quartier :
-    - Nombre d'annonces disponibles
-    - Prix moyen / min / max
-    - Distance moyenne à l'ENAC
-    - Top 3 meilleures annonces (par score)
-  - Classement des quartiers par rapport qualité/prix
-- Extraction du quartier depuis `location_raw` :
-  - Parser les formats : "Rangueil, Toulouse (31000)", "Toulouse 31000", "Ramonville-Saint-Agne"
-  - Normalisation (majuscules, variantes)
-  - Créer `geo/quartier_parser.py`
-
-**Critère de validation** : Le rapport liste au moins 5 quartiers avec stats.
-
----
-
-### 5.5 Export PDF des rapports (Priorité: Moyenne | Effort: S)
-
-**Actions** :
-- Convertir les rapports Markdown en PDF pour partage facile
-- Utiliser `markdown2` + `weasyprint` (ou `md-to-pdf` via Node)
-- Ajouter option CLI `--pdf` :
-  ```bash
-  python main.py --all --pdf   # Génère aussi les PDFs
-  ```
-- PDFs générés dans `reports/` (gitignored)
-- Mise en page : en-tête avec logo/titre, pied de page avec date
-
-**Critère de validation** : `python main.py --pdf` génère des PDFs lisibles et bien formatés.
-
----
-
-### 5.6 Rapport "Top 10" résumé rapide (Priorité: Moyenne | Effort: S)
-
-**Actions** :
-- Créer `top10.md` — rapport ultra-condensé :
-  ```markdown
-  # Top 10 Annonces — 09/02/2026
-
-  1. ⭐ 92 | 350€ | 25m² | 1.2km | Rangueil | [lien](...)
-  2. ⭐ 88 | 380€ | 22m² | 0.8km | Ramonville | [lien](...)
-  3. ✅ 75 | 400€ | 20m² | 2.1km | Saouzelong | [lien](...)
-  ...
-
-  📊 120 annonces en base | Prix moyen: 425€ | Nouvelles aujourd'hui: 3
-  ```
-- Une ligne par annonce, format scannable en 10 secondes
-- Idéal pour notification Telegram (Sprint 1.3) : envoyer le Top 10
-
-**Critère de validation** : Le fichier `top10.md` tient sur un écran et permet de choisir en 10 secondes.
-
----
-
-## Résumé
-
-| # | Tâche | Priorité | Effort | Dépendance |
-|---|-------|----------|--------|------------|
-| 5.1 | Rapport enrichi détaillé | Haute | M | Sprint 3 |
-| 5.2 | Système de scoring | Haute | M | Sprint 3 |
-| 5.3 | Rapport comparatif (diff) | Haute | M | — |
-| 5.4 | Rapport par quartier | Moyenne | M | — |
-| 5.5 | Export PDF | Moyenne | S | 5.1 |
-| 5.6 | Rapport Top 10 | Moyenne | S | 5.2 |
-
-**Légende effort** : S = ~1-2h | M = ~3-5h | L = ~1-2j
-
----
-
-## Structure cible après Sprint 5
-
-```
-toulouse_rent_scraper/
-├── reporting/
-│   ├── generator.py          # Refactoré — rapports enrichis
-│   └── exporter.py           # Sprint 1 — CSV/JSON
-├── filters/
-│   ├── price_and_distance.py
-│   └── scoring.py            # NOUVEAU — score 0-100
-├── geo/
-│   ├── distance.py
-│   └── quartier_parser.py    # NOUVEAU — extraction quartier
-├── reports/                   # Générés automatiquement
-│   ├── nouvelles_annonces.md  # Enrichi
-│   ├── toutes_les_annonces.md # Enrichi
-│   ├── rapport_comparatif.md  # NOUVEAU
-│   ├── rapport_quartiers.md   # NOUVEAU
-│   ├── top10.md               # NOUVEAU
-│   └── *.pdf                  # NOUVEAU
-└── tests/
-    ├── test_scoring.py        # NOUVEAU
-    └── test_quartier_parser.py # NOUVEAU
+```bash
+python main.py report --profile blagnac                 # regénérer les rapports d'après la base
+python main.py report --profile blagnac --pdf           # + PDF
+python main.py report --since-hours 72                  # « nouvelles » = 3 derniers jours
+python main.py report --profile blagnac --send-top10    # envoyer le Top 10 maintenant
 ```
 
----
+Les rapports sont aussi regénérés à la fin de chaque `scrape`, puis le Top 10 est envoyé si
+`NOTIFY_TOP10=daily` (premier run de la journée) ou `run` (chaque run) dans `.env`.
 
-## Ordre d'exécution recommandé des sprints
+## Décisions
 
-```
-Sprint 1 (Notifications & Export)
-    ↓
-Sprint 3 (Enrichissement)  ←→  Sprint 4 (PAP.fr)   [parallélisables]
-    ↓
-Sprint 5 (Rapports avancés)
-    ↓
-Sprint 2 (API & Dashboard)  [bénéficie de toutes les données enrichies]
-```
-
-Le Sprint 2 (API/Dashboard) est volontairement repoussé en dernier car il bénéficiera de toutes les données enrichies, du scoring, et des rapports avancés pour offrir un dashboard complet dès sa mise en place.
+| Décision | Contexte |
+|---|---|
+| PDF par le Chromium de Playwright, pas weasyprint | Déjà installé ; weasyprint demande des bibliothèques système (Pango, Cairo) |
+| Petit convertisseur Markdown maison | Les rapports n'utilisent qu'un sous-ensemble (titres, tableaux, listes, liens) ; pas de dépendance de plus |
+| Pas de photos dans le PDF | Embarquées en pleine résolution : 24 Mo pour 47 annonces |
+| Date de retrait par trigger SQLite | Couvre tous les chemins qui retirent une annonce (fiche, check-links, purge) sans les modifier |
+| Quartiers : noms des sites normalisés, pas de référentiel | Chaque site découpe les quartiers à sa façon ; un référentiel officiel demanderait un géocodage par annonce |
+| Top 10 désactivé par défaut | Évite un message de plus à chaque run ; `daily` recommandé |

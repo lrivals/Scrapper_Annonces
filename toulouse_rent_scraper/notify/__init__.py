@@ -75,6 +75,50 @@ def notify_favorites_gone(annonces: Iterable[dict]) -> int:
     return sent
 
 
+def _top10_state() -> dict:
+    import json
+    try:
+        return json.loads(config.TOP10_STATE_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def notify_top10(profile_keys: Iterable[str], now=None) -> int:
+    """
+    Sprint 5.6 — envoie le Top 10 de chaque profil selon NOTIFY_TOP10 :
+    "run" après chaque run, "daily" au plus une fois par jour et par profil, sinon rien.
+    Retourne le nombre de messages envoyés.
+    """
+    import json
+    from datetime import datetime
+
+    mode = config.NOTIFY_TOP10
+    if mode not in ("run", "daily") or not is_enabled():
+        return 0
+    from notify.messages import top10_message
+    from storage.run_stats import profile_rows
+    from storage.sqlite import connect
+
+    today = (now or datetime.now()).date().isoformat()
+    state = _top10_state()
+    sent = 0
+    for key in profile_keys:
+        if mode == "daily" and state.get(key) == today:
+            continue
+        with connect() as conn:
+            message = top10_message(key, profile_rows(conn, key))
+        if message and send(**message):
+            sent += 1
+            state[key] = today
+    if sent:
+        try:
+            config.TOP10_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            config.TOP10_STATE_FILE.write_text(json.dumps(state), encoding="utf-8")
+        except OSError as e:
+            logger.warning(f"Date du dernier Top 10 non enregistrée : {e}")
+    return sent
+
+
 def notify_captcha(site_name: str, timeout_seconds: int) -> bool:
     minutes = max(1, round(timeout_seconds / 60))
     return send(

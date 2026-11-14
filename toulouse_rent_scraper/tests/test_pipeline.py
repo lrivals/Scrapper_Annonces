@@ -236,3 +236,17 @@ def test_browser_failure_during_opening_still_notifies(db):
         total = run_scraping([ENAC], ["leboncoin"], sleep=MagicMock())
     notify_events.assert_called_once()
     assert total.opened == 0
+
+
+def test_run_scraping_records_run_stats_per_profile(db):
+    """Sprint 5.0 — une ligne de journal par profil, avec les nouvelles du profil."""
+    import sqlite3
+    Fake = _fake_scraper_class({"enac": [_raw(1)], "blagnac": [_raw(2, price=700)]})
+    with patch("scrapers.get_scraper_class", return_value=Fake), \
+         patch("reporting.generator.generate_summary_reports"):
+        run_scraping([ENAC, BLAGNAC], ["leboncoin"], sleep=MagicMock(), enrich=False)
+    with sqlite3.connect(db) as con:
+        rows = dict(con.execute("SELECT profile, new_count FROM run_stats").fetchall())
+        sites = con.execute("SELECT DISTINCT sites FROM run_stats").fetchall()
+    assert rows == {"enac": 1, "blagnac": 1}
+    assert sites == [("LeBonCoin",)]
