@@ -1,0 +1,74 @@
+{# Panneau « Détails » d'une carte dépliée — rendu par ui/routes.py::annonce_details #}
+<div class="details-layout">
+  <div class="details-main">
+    {% if d.photos %}
+    <div class="details-photos" aria-label="Photos de l’annonce">
+      {% for src in d.photos %}
+      <a href="{{ src }}" target="_blank" rel="noopener"><img src="{{ src }}" alt="Photo {{ loop.index }}" loading="lazy" referrerpolicy="no-referrer"></a>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if d.summary or d.scam_flags %}
+    <div class="details-llm">
+      {% if d.summary %}<p><strong>En bref :</strong> {{ d.summary }}</p>{% endif %}
+      {% if d.scam_flags %}<p class="details-warn">⚠️ {{ (a.scam_flags | flags) | join(' · ') }}</p>{% endif %}
+    </div>
+    {% endif %}
+
+    <h4 class="details-title">Description</h4>
+    {% if d.description %}
+    <div class="details-description">{{ d.description }}</div>
+    {% elif d.pending %}
+    <p class="details-empty">Page de l’annonce pas encore ouverte : description et particularités arriveront au prochain scraping.</p>
+    {% else %}
+    <p class="details-empty">Pas de description.</p>
+    {% endif %}
+  </div>
+
+  <div class="details-side">
+    {% for name, rows in d.groups %}
+    <section class="details-group">
+      <h4 class="details-title">{{ name }}</h4>
+      <dl>
+        {% for label, value in rows %}
+        {% if label %}<div><dt>{{ label }}</dt><dd>{{ value }}</dd></div>
+        {% else %}<div class="details-tag"><dd>{{ value }}</dd></div>{% endif %}
+        {% endfor %}
+      </dl>
+    </section>
+    {% endfor %}
+
+    {% if d.score_bars %}
+    <section class="details-group">
+      <h4 class="details-title">Score{% if a.score is not none %} ★ {{ a.score|round|int }}{% endif %}</h4>
+      {% for label, value in d.score_bars %}
+      <div class="score-bar" title="{{ label }} : {{ value }}/10">
+        <span>{{ label }}</span>
+        <span class="score-bar-track"><span class="score-bar-fill" style="width: {{ value * 10 }}%"></span></span>
+        <span class="score-bar-value">{{ value }}</span>
+      </div>
+      {% endfor %}
+    </section>
+    {% endif %}
+
+    {% if d.price_history %}
+    <section class="details-group">
+      <h4 class="details-title">Historique du prix</h4>
+      <ol class="details-history">
+        {% for h in d.price_history %}<li><span>{{ h.seen_at[8:10] }}/{{ h.seen_at[5:7] }}</span> {{ h.price }} €</li>{% endfor %}
+      </ol>
+    </section>
+    {% endif %}
+
+    {% if d.meta %}
+    <dl class="details-meta">
+      {% for label, value in d.meta %}
+      <div><dt>{{ label }}</dt><dd>{% if value.startswith('http') %}<a href="{{ value }}" target="_blank" rel="noopener">ouvrir</a>{% else %}{{ value }}{% endif %}</dd></div>
+      {% endfor %}
+    </dl>
+    {% endif %}
+
+    <a class="details-link" href="{{ a.url }}" target="_blank" rel="noopener">Voir l’annonce sur {{ a.site }} →</a>
+  </div>
+</div>

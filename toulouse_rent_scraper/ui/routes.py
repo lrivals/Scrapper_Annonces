@@ -13,12 +13,13 @@ from flask import Blueprint, jsonify, make_response, redirect, render_template, 
 
 from config import BASE_DIR, DEFAULT_PROFILE, LOG_DIR, SEARCH_PROFILES
 from storage.queries import (
-    SORT_COLUMNS, ListingFilters, annonces_by_ids, count_excluded, list_annonces, list_sites,
+    SORT_COLUMNS, ListingFilters, annonce_detail, annonces_by_ids, count_excluded, list_annonces, list_sites,
     map_listings,
 )
 from filters.requirements import current_requirements, describe_requirements
 from storage.sqlite import clear_db, set_annonce_status
 from ui.cards import card_view
+from ui.details import detail_view
 from ui.export import build_candidature_markdown, candidature_filename
 from scoring import describe as describe_score
 from ui.security import safe_back
@@ -301,6 +302,18 @@ def clear_database():
     log.info("POST /clear-db — %d annonces supprimées", count)
     plural = "s" if count != 1 else ""
     return redirect(_add_flash(_back(), "ok", f"Base de données vidée — {count} annonce{plural} supprimée{plural}."))
+
+
+@bp.route("/annonce/<int:annonce_id>/details")
+def annonce_details(annonce_id: int):
+    """Fragment HTML du panneau « Détails » d'une carte dépliée (vue liste, chargé à la demande)."""
+    from storage.sqlite import get_price_history
+
+    profile = _current_profile(request.args.get("profile"))
+    a = annonce_detail(annonce_id, profile.key)
+    if not a:
+        return make_response("Annonce introuvable pour ce profil.", 404)
+    return render_template("_card_details.html", a=a, d=detail_view(a, get_price_history(annonce_id)))
 
 
 @bp.route("/start-scraping", methods=["POST"])

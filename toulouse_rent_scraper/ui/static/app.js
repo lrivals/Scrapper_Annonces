@@ -498,6 +498,9 @@ function buildStackCard(id) {
     card.style.removeProperty('--i');
     // Masquer / Restaurer restent dans la vue Liste (gestion AJAX propre à celle-ci)
     card.querySelectorAll('form').forEach(function(f) { f.remove(); });
+    // Panneau « Détails » : vue liste seulement
+    card.classList.remove('is-expanded');
+    card.querySelectorAll('.btn-details, .card-details').forEach(function(el) { el.remove(); });
     card.querySelectorAll('[id]').forEach(function(el) { el.removeAttribute('id'); });
     return card;
   }
@@ -591,6 +594,128 @@ function clearStack() {
   setActive(null);
   updateStackEmpty();
 }
+
+/* ---- Carte dépliable (vue liste) : description, particularités, photos ---- */
+var _expandedCard = null;
+
+/* Fondu enchaîné de la flèche ▾ / ▴ avec un peu d'échelle et de flou */
+function swapChevron(btn, glyph) {
+  var chev = btn && btn.querySelector('.chev');
+  if (!chev || chev.textContent === glyph) return;
+  if (!canAnimate(chev)) { chev.textContent = glyph; return; }
+  chev.animate(
+    [{ opacity: 1, transform: 'scale(1)', filter: 'blur(0)' }, { opacity: 0, transform: 'scale(0.6)', filter: 'blur(2px)' }],
+    { duration: DUR_EXIT, easing: EASE_IN }
+  ).onfinish = function() {
+    chev.textContent = glyph;
+    chev.animate(
+      [{ opacity: 0, transform: 'scale(0.6)', filter: 'blur(2px)' }, { opacity: 1, transform: 'scale(1)', filter: 'blur(0)' }],
+      { duration: DUR_ENTER, easing: EASE_OUT }
+    );
+  };
+}
+
+function setExpanded(card, open) {
+  var btn = card.querySelector('.btn-details');
+  var panel = card.querySelector('.card-details');
+  card.classList.toggle('is-expanded', open);
+  panel.hidden = !open;
+  if (btn) {
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    swapChevron(btn, open ? '▴' : '▾');
+  }
+}
+
+/*
+ * Les cartes visibles glissent de leur ancienne place à la nouvelle (FLIP, ease-in-out)
+ * au lieu de sauter quand une carte s'ouvre ou se referme. Même élément avant / après :
+ * la carte dépliée « garde son identité » pendant le déplacement.
+ */
+function flipCards(mutate) {
+  var grid = document.getElementById('card-grid');
+  if (!canAnimate(grid)) { mutate(); return; }
+  var vh = window.innerHeight;
+  var visible = function(r) { return r.bottom > -200 && r.top < vh + 200; };
+  var cards = Array.prototype.slice.call(grid.querySelectorAll(':scope > article.card'));
+  var before = cards.map(function(c) { return c.getBoundingClientRect(); });
+  mutate();
+  cards.forEach(function(c, i) {
+    var a = before[i], b = c.getBoundingClientRect();
+    if (!visible(a) && !visible(b)) return;
+    var dx = a.left - b.left, dy = a.top - b.top;
+    if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+    c.animate([{ transform: 'translate(' + dx + 'px, ' + dy + 'px)' }, { transform: 'none' }],
+              { duration: DUR_MOVE, easing: EASE_IN_OUT });
+  });
+}
+
+/* Révélation du panneau : fondu + légère montée, durée « weighty » ; photos décalées de 30 ms */
+function revealPanel(panel) {
+  if (!canAnimate(panel)) return;
+  panel.animate([{ opacity: 0, transform: 'translateY(8px)' }, { opacity: 1, transform: 'none' }],
+                { duration: DUR_WEIGHTY, easing: EASE_OUT });
+  panel.querySelectorAll('.details-photos a').forEach(function(a, i) {
+    a.animate([{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'none' }],
+              { duration: DUR_ENTER, easing: EASE_OUT, delay: 60 + i * 30, fill: 'backwards' });
+  });
+}
+
+function toggleDetails(card) {
+  var open = !card.classList.contains('is-expanded');
+  var previous = _expandedCard && _expandedCard !== card ? _expandedCard : null;
+  // L'ancienne carte se referme pendant que la nouvelle s'ouvre (un seul déplacement)
+  flipCards(function() {
+    if (previous) setExpanded(previous, false);
+    setExpanded(card, open);
+  });
+  _expandedCard = open ? card : null;
+  if (!open) return;
+
+  var panel = card.querySelector('.card-details');
+  if (panel.dataset.loaded === 'yes') revealPanel(panel);
+  if (!panel.dataset.loaded) {
+    panel.dataset.loaded = 'loading';
+    panel.innerHTML = '<p class="details-empty">Chargement…</p>';
+    fetch('/annonce/' + card.dataset.id + '/details?profile=' + encodeURIComponent(document.body.dataset.profile))
+      .then(function(r) { if (!r.ok) throw new Error(r.status); return r.text(); })
+      .then(function(html) {
+        panel.innerHTML = html;
+        panel.dataset.loaded = 'yes';
+        revealPanel(panel);
+      })
+      .catch(function() {
+        delete panel.dataset.loaded;   // nouvel essai au prochain dépliage
+        panel.innerHTML = '<p class="details-empty">Détails indisponibles — réessayer plus tard.</p>';
+      });
+  }
+  // Haut de la carte juste sous la barre de filtres collante
+  var bar = document.querySelector('.filter-bar');
+  var top = card.getBoundingClientRect().top + window.scrollY - (bar ? bar.offsetHeight : 0) - 12;
+  window.scrollTo({ top: top, behavior: reducedMotion() ? 'auto' : 'smooth' });
+}
+
+(function initCardDetails() {
+  var grid = document.getElementById('card-grid');
+  if (!grid) return;
+  grid.addEventListener('click', function(e) {
+    var card = e.target.closest('article.card');
+    if (!card) return;
+    if (e.target.closest('.btn-details')) { toggleDetails(card); return; }
+    // Liens, boutons, formulaires et le panneau lui-même gardent leur rôle
+    if (e.target.closest('a, button, form, input, select, .card-details')) return;
+    if (window.getSelection && String(window.getSelection()).length) return;   // sélection de texte
+    toggleDetails(card);
+  });
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape' && _expandedCard) {
+      var card = _expandedCard;
+      flipCards(function() { setExpanded(card, false); });
+      _expandedCard = null;
+      var btn = card.querySelector('.btn-details');
+      if (btn) btn.focus();
+    }
+  });
+})();
 
 /* Auto-restore map view if URL contains ?view=map */
 (function() {
