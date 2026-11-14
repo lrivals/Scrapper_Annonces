@@ -817,7 +817,7 @@ body.doc-mode-active .btn-add-doc { display: inline-block; animation: reveal var
 .btn-filter:active, .btn-reset:active, .btn-order:active, .btn-del:active,
 .btn-scrape:active:not(:disabled), .btn-clear-db:active, .btn-doc-start:active,
 .btn-doc-export:active, .btn-doc-clear:active, .btn-add-doc:active,
-.btn-restore:active, .btn-view:active {
+.btn-restore:active, .btn-view:active, .btn-details:active, .btn-fb:active {
   transform: scale(0.97);
 }
 
@@ -1015,6 +1015,7 @@ body.doc-mode-active .btn-add-doc { display: inline-block; animation: reveal var
   white-space: nowrap;
 }
 .btn-details:hover { background: #f9fafb; }
+.btn-details .chev { display: inline-block; }
 .btn-details:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
 
 .card-details { padding: 16px 24px 4px; border-top: 1px solid #f3f4f6; }
