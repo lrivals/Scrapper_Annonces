@@ -2,7 +2,7 @@
 
 > Document de suivi global des sprints. Mis à jour au fil de l'avancement.
 >
-> **Dernière mise à jour** : 2026-11-13 — Sprint 15 livré (15.3 SeLoger JSON, critères dans l’UI), Sprint 16 livré (validé en réel sur Blagnac) ; audit : [AUDIT_2026-11.md](AUDIT_2026-11.md)
+> **Dernière mise à jour** : 2026-11-14 — Sprint 4 (PAP.fr) livré et validé en réel sur Blagnac ; Sprints 5 et 2-bis recadrés ; audit : [AUDIT_2026-11.md](AUDIT_2026-11.md)
 
 ---
 
@@ -39,7 +39,7 @@ Sprint 15 (Fiches détaillées & sources)    ✅
     ↓
 Sprint 16 (Fiches complètes dès le scraping) ✅
     ↓
-Sprint 4 (PAP.fr)  — profite du refactor 12 et du modèle commun 15.7
+Sprint 4 (PAP.fr)                          ✅
     ↓
 Sprint 5 (Rapports avancés)
     ↓
@@ -67,7 +67,7 @@ Sprint 2-bis (API REST & Dashboard)
 | 13 | Alerte & priorisation | ✅ Terminé | 4/5 (13.5 reporté) | 2026-11-03 | 2026-11-03 |
 | 15 | Fiches détaillées, tri affiné, nouvelles sources | 🔵 En cours | 8/8 livrées, 7/8 validées en réel (reste 15.4 LLM : clé d'API) | 2026-11-12 | — |
 | 16 | Fiches complètes dès le scraping | ✅ Terminé | 6/6 (validé en réel, profil Blagnac) | 2026-11-13 | 2026-11-14 |
-| 4 | Scraper PAP.fr | 🔲 À faire | 0/6 | — | — |
+| 4 | Scraper PAP.fr | ✅ Terminé | 8/8 (validé en réel, profil Blagnac) | 2026-11-14 | 2026-11-14 |
 | 5 | Rapports Markdown avancés | 🔲 À faire | 0/6 | — | — |
 | 2-bis | API REST & Dashboard | 🔲 À faire | 0/6 | — | — |
 
@@ -303,12 +303,14 @@ Nouveau cas d'usage : appartement ≈ 700 € (550–750 €, T1–T3) à ≤ 8 
 
 | # | Tâche | Statut | Notes |
 |---|-------|--------|-------|
-| 4.1 | Analyse et reconnaissance PAP | 🔲 | |
-| 4.2 | Configuration PAP | 🔲 | |
-| 4.3 | Scraper PAP | 🔲 | |
-| 4.4 | Extracteur détaillé PAP | 🔲 | Dépend Sprint 3 |
-| 4.5 | Tests PAP | 🔲 | |
-| 4.6 | Gestion multi-sites améliorée | 🔲 | |
+| 4.1 | Repérage PAP | ✅ | Cloudflare (vrai Chrome), défilement infini — [pap_selectors.md](pap_selectors.md) |
+| 4.2 | Configuration PAP | ✅ | `pap_search_url` (Blagnac) |
+| 4.3 | Scraper PAP | ✅ | `scrapers/pap.py`, `--site pap` ; appartements et maisons seulement |
+| 4.4 | Fiche détaillée PAP | ✅ | JSON-LD + HTML : charges, dépôt, DPE/GES, rue, GPS exact |
+| 4.5 | Tests PAP | ✅ | `tests/test_pap.py` |
+| 4.6 | Intégration multi-sites | ✅ | Flags déjà couverts par 12.7 ; cleaner, antibot, panneau Détails |
+| 4.7 | Validation réelle + timer | ✅ | 24 annonces, 5/5 fiches ; timer inclut PAP d'office |
+| 4.8 | Budget de fiches PAP | ✅ | `DETAIL_VISITS_PER_RUN["PAP"]` |
 
 ---
 
@@ -398,6 +400,8 @@ Tâches originellement prévues en Sprint 2, reportées.
 | 2026-11-03 | Masquage global plutôt que par profil | Budgets ENAC (≤ 500 €) et Blagnac (≥ 550 €) disjoints — une annonce ne matche jamais les deux |
 | 2026-11-03 | Profils de recherche (Sprint 14) juste après le Sprint 11 | Nouveau besoin Blagnac ≈ 700 € ; table `annonce_profiles` plutôt qu'une colonne `profile` car une annonce peut matcher plusieurs cibles |
 | 2026-11-13 | Ouverture des fiches dans le pipeline, avant score et notifications (Sprint 16) | `scrape --enrich` enrichissait après les notifications : alertes sans surface/DPE, critères éliminatoires de la fiche ignorés, post-traitement fait deux fois |
+| 2026-11-14 | PAP.fr via vrai Chrome, défilement puis lecture du HTML complet | Cloudflare refuse les requêtes sans navigateur ; pas de pages numérotées (slugs variables) |
+| 2026-11-14 | Sprints 5 et 2-bis recadrés | Score (5.2) livré au 13.3, config dynamique (2-bis.3) au 15.5/15.6 ; API JSON dans Flask plutôt que FastAPI + Streamlit (l'UI Flask a été refaite) |
 | 2026-11-03 | Sprints 11→13 avant PAP.fr | Audit : bugs de données (prix, statuts, géocodage) et code Chrome dupliqué à corriger avant d'ajouter une 3ᵉ source — voir [AUDIT_2026-11.md](AUDIT_2026-11.md) |
 
 ---

@@ -25,9 +25,12 @@ CHALLENGE_MARKERS = [
     "non pas à un robot",
     "we need to make sure",
     "suspicious activity",
+    # Cloudflare (PAP.fr, Sprint 4)
+    "vérifiez que vous êtes humain",
+    "verify you are human",
 ]
 
-BLOCK_TITLES = ["accès restreint", "blocked", "captcha", "restricted"]
+BLOCK_TITLES = ["accès restreint", "blocked", "captcha", "restricted", "just a moment"]
 
 
 def is_page_blocked(

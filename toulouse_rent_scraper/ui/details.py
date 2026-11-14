@@ -104,6 +104,14 @@ def _attributes(site: str, extra: Dict) -> Dict[str, List[Tuple[Optional[str], s
             groups[ENERGIE].append(("Chauffage", heating))
         return groups
 
+    if site_l == "pap":
+        street, city = _clean(extra.get("street")), _clean(extra.get("city"))
+        if street:
+            groups[LOGEMENT].append(("Adresse", f"{street}, {city}" if city else street))
+        if extra.get("balcony_or_terrace") is True:
+            groups[EXTERIEUR].append((None, "Balcon / terrasse"))
+        return groups
+
     table = LEBONCOIN if "leboncoin" in site_l else SELOGER if "seloger" in site_l else {}
     for key, (group, label) in table.items():
         if key == "is_public_rent_control":

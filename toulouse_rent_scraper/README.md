@@ -69,7 +69,7 @@ python main.py scrape        # ou simplement : python main.py
 
 Le script va :
 
-1. Lancer une recherche par profil (ENAC, Blagnac…) et par site (SeLoger, LeBonCoin via navigateur ;
+1. Lancer une recherche par profil (ENAC, Blagnac…) et par site (SeLoger, LeBonCoin, PAP via navigateur ;
    Bien'ici via son API JSON, sans navigateur)
 2. Filtrer les annonces par budget, nombre de pièces et distance à la cible de chaque profil
    (un critère absent du profil n'est pas filtré)
@@ -84,7 +84,7 @@ Le script va :
 
 ```bash
 python main.py scrape                              # tous les sites, tous les profils, puis ouverture des fiches retenues
-python main.py scrape --site leboncoin             # un site (répétable) : seloger, leboncoin, bienici
+python main.py scrape --site leboncoin             # un site (répétable) : seloger, leboncoin, bienici, pap
 python main.py scrape --profile blagnac            # un profil (répétable)
 python main.py scrape --no-enrich                  # recherche seule, sans ouvrir les fiches
 python main.py scrape --limit 10                   # au plus 10 fiches ouvertes ce run (en plus de DETAIL_VISITS_PER_RUN)
@@ -310,6 +310,11 @@ Modifiez `config.py` pour ajuster :
     comme la liste du site jusqu'à `bienici_max_pages` (défaut `MAX_PAGES_PER_SITE`). Les
     paramètres `page`/`mode` de l'URL sont ignorés. Sans URL : communes `bienici_places`
     (50 annonces × `BIENICI_MAX_PAGES`), comme `enac`.
+  - **PAP** (Sprint 4) : `pap_search_url` = URL de recherche copiée de pap.fr (ex. `blagnac` :
+    `/annonce/location-appartement-maison-blagnac-31700-g19307g43612`). Vrai Chrome (Cloudflare) ;
+    la liste se charge au défilement (pas de pages) : défilement jusqu'à ce qu'elle ne grandisse plus
+    (`PAP_MAX_SCROLLS`, `PAP_STABLE_SCROLLS`). Seuls appartements et maisons sont gardés ; la fiche
+    donne charges, dépôt, DPE/GES, rue et GPS. Structure des pages : `docs/pap_selectors.md`.
 - `MAX_RENT_EUR` / `MAX_DISTANCE_KM` : budget et rayon du profil historique `enac`
 - `CHROME_BINARY` / `CHROME_DEBUG_PORT` : Chrome utilisé et port CDP (`0` = port libre)
 - `MAX_PAGES_PER_SITE` : Nombre de pages à scraper (défaut : 10)
@@ -450,6 +455,7 @@ Les logs sont créés dans `logs/` :
 - `main.log` : Pipeline principal
 - `seloger.log` : Scraper SeLoger
 - `bienici.log` : Source Bien'ici (API)
+- `pap.log` : Scraper PAP
 - `geo.log` : Géolocalisation
 
 ---
@@ -464,7 +470,7 @@ Les logs sont créés dans `logs/` :
 
 ## Améliorations
 
-- [x] Scraper multi-sites (SeLoger, LeBonCoin, Bien'ici)
+- [x] Scraper multi-sites (SeLoger, LeBonCoin, Bien'ici, PAP)
 - [x] Rapports Markdown automatiques
 - [x] Export CSV/JSON (`--export`)
 - [x] Interface Web Flask (`--ui`)
