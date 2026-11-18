@@ -90,10 +90,10 @@ def test_duplicates_badge_and_filter(client, temp_db):
         con.execute("UPDATE annonces SET duplicate_of = 1 WHERE id = 2")
 
     page = client.get("/").get_data(as_text=True)
-    assert "aussi sur LeBonCoin" in page
+    assert "Aussi sur LeBonCoin" in page          # menu ⋯ de la carte
 
     page = client.get("/?dups=hide").get_data(as_text=True)
-    assert "aussi sur LeBonCoin" not in page
+    assert "Aussi sur LeBonCoin" not in page
 
 
 def test_map_data_excludes_hidden(client):
@@ -217,7 +217,7 @@ def test_restore_button_visible_outside_document_mode(client):
     _add("https://ex.com/1")
     client.post("/delete", data={"id": "1"})
     page = client.get("/?status=hidden").get_data(as_text=True)
-    assert 'class="btn-restore"' in page
+    assert 'class="tb-item btn-restore"' in page      # menu ⋯ de la carte
     css = client.get("/static/app.css").get_data(as_text=True)
     restore_rule = css[css.index(".btn-restore {"):].split("}")[0]
     assert "display: none" not in restore_rule
@@ -232,7 +232,7 @@ def test_default_sort_is_score_desc(client):
     rescore(["enac"])
     page = client.get("/").get_data(as_text=True)
     assert page.index("Studio 360") < page.index("Studio 490")
-    assert 'class="score-pill score-high"' in page
+    assert 'class="score-badge score-high"' in page
     assert "Loyer CC" in page  # détail au survol
 
 
@@ -243,11 +243,12 @@ def test_map_data_includes_score(client):
     assert client.get("/api/map-data").get_json()["listings"][0]["score"] is not None
 
 
-def test_map_view_has_summary_stack(client):
-    """Sprint 16 : pile de résumés à côté de la carte, cartes de la liste repérables par id."""
+def test_map_and_list_share_detail_panel(client):
+    """Étape 4 : un seul panneau de détail pour la liste et la carte (la pile de résumés disparaît)."""
     _add("https://ex.com/1")
     page = client.get("/").get_data(as_text=True)
-    assert 'id="map-stack"' in page and 'id="map-stack-list"' in page
+    assert 'id="map"' in page and 'id="detail-panel"' in page and 'id="detail-body"' in page
+    assert "map-stack" not in page
     assert '<article class="card" data-id="1"' in page
     assert 'class="select-box" data-id="1"' in page      # case de sélection, synchronisée avec la pile
 
@@ -262,10 +263,14 @@ def test_card_shows_full_detail(client, temp_db):
     })
     _add("https://ex.com/pending", price=610, profile="blagnac")
     html = client.get("/?profile=blagnac").get_data(as_text=True)
-    assert "T2 · 42 m² · 2ᵉ ét." in html
-    assert "energy-B" in html and "14 €/m²" in html
-    assert "Particulier" in html
-    assert "Fiche pas encore lue" in html          # la 2ᵉ annonce n'a pas été ouverte
+    # Carte : prix, €/m², ligne clé (logement · distance · annonceur)
+    assert "T2 · 42 m² · 2ᵉ ét." in html and "14 €/m²" in html and "Particulier" in html
+    assert "energy-B" not in html and "Fiche pas encore lue" not in html
+    # Panneau de détail : énergie, annonceur, fiche pas encore lue
+    full = client.get("/annonce/1/details?profile=blagnac").get_data(as_text=True)
+    assert "energy-B" in full and "Particulier" in full and "T2 · 42 m² · 2ᵉ ét." in full
+    pending = client.get("/annonce/2/details?profile=blagnac").get_data(as_text=True)
+    assert "Fiche pas encore lue" in pending        # la 2ᵉ annonce n'a pas été ouverte
     listing = next(l for l in client.get("/api/map-data?profile=blagnac").get_json()["listings"]
                    if l["url"] == "https://ex.com/full")
     assert listing["key_facts"] == ["T2", "42 m²", "2ᵉ ét."]
@@ -280,7 +285,8 @@ def test_card_details_panel(client, temp_db):
         "photos": '["https://img.ex/1.jpg", "https://img.ex/2.jpg"]',
     })
     page = client.get("/?profile=blagnac").get_data(as_text=True)
-    assert 'class="btn-details"' in page and 'class="card-details" hidden' in page
+    assert 'data-open-detail' in page and 'id="detail-panel"' in page
+    assert "btn-details" not in page and "card-details" not in page
 
     html = client.get("/annonce/1/details?profile=blagnac").get_data(as_text=True)
     assert "Lumineux, proche du tram T1" in html and "https://img.ex/2.jpg" in html
@@ -422,3 +428,30 @@ def test_cards_have_selection_checkbox_and_export_bar(client):
     # Ancien mode document retiré
     for gone in ("btn-doc-mode", "btn-add-doc", "Commencer document", "doc-bar"):
         assert gone not in page
+
+
+# ---- Carte simplifiée et panneau de détail (refonte UI, étape 4) ----
+
+def test_simplified_card_and_action_menu(client, temp_db):
+    _add("https://ex.com/1", price=450)
+    page = client.get("/").get_data(as_text=True)
+    card = page[page.index('<article class="card" data-id="1"'):]
+    card = card[:card.index("</article>")]
+    assert 'class="btn-fb btn-fav' in card and 'data-value="favorite"' in card       # ⭐ direct
+    menu = card[card.index('id="card-menu-1"'):]
+    assert 'popover' in card and 'role="menu"' in menu
+    for text in ('data-value="contacted"', 'data-value="dislike"', 'action="/delete"', "Masquer"):
+        assert text in menu
+    assert 'data-value="favorite"' not in menu
+    # Étiquettes classiques retirées de la carte (passées dans le détail)
+    for gone in ("card-meta", "card-feats", "status-pill", "energy"):
+        assert gone not in card
+
+
+def test_detail_fragment_has_header_and_feedback(client, temp_db):
+    _add("https://ex.com/1", price=450, profile="blagnac")
+    html = client.get("/annonce/1/details?profile=blagnac").get_data(as_text=True)
+    assert 'class="detail-head" data-title="Studio 450"' in html
+    assert "450 €" in html and "Voir l’annonce sur SeLoger" in html
+    for value in ("favorite", "contacted", "dislike"):
+        assert f'data-id="1" data-value="{value}"' in html

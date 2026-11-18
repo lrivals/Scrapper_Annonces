@@ -31,6 +31,9 @@ def create_app() -> Flask:
     # Puces des filtres actifs, filtres rapides, menu de tri (barre d'outils de la liste)
     from ui.filter_bar import filter_bar
     app.jinja_env.globals["filter_bar"] = filter_bar
+    # Panneau de détail : mêmes champs d'affichage que la carte (prix, faits clés, énergie…)
+    from ui.cards import card_view
+    app.jinja_env.globals["card_view"] = card_view
     # Requêtes HTTP de Werkzeug : seulement les avertissements
     logging.getLogger("werkzeug").setLevel(logging.WARNING)
     return app

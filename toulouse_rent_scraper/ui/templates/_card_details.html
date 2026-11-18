@@ -1,4 +1,50 @@
-{# Panneau « Détails » d'une carte dépliée — rendu par ui/routes.py::annonce_details #}
+{# Panneau de détail (liste et carte) — rendu par ui/routes.py::annonce_details #}
+{% set v = card_view(a) %}
+{% set s = a.status or 'active' %}
+<div class="detail-head" data-title="{{ a.title or 'Annonce sans titre' }}">
+  <p class="card-price">
+    <span class="price-tag">{{ a.price or '—' }} €</span>
+    {%- if v.price_note %} <span class="price-note">{{ v.price_note }}</span>{% endif %}
+    {%- if v.price_per_m2 %} <span class="price-sqm">· {{ v.price_per_m2 }} €/m²</span>{% endif %}
+    {%- if a.score is not none %} <span class="score-pill {{ 'score-high' if a.score >= 70 else ('score-mid' if a.score >= 45 else 'score-low') }}">★ {{ a.score|round|int }}</span>{% endif %}
+  </p>
+  <h3 class="detail-title">{{ a.title or 'Annonce sans titre' }}</h3>
+  {% if v.key_facts %}<p class="card-keyfacts">{{ v.key_facts | join(' · ') }}</p>{% endif %}
+  <ul class="detail-facts">
+    {% if v.distance_label %}<li title="{{ v.distance_title }}">📍 {{ v.distance_label }}</li>{% endif %}
+    {% if a.location_raw %}<li>🏘 {{ a.location_raw }}</li>{% endif %}
+    {% if v.publisher_label %}<li>👤 {% if v.publisher_label == 'Particulier' %}<strong class="publisher-individual">Particulier</strong>{% else %}{{ v.publisher_label }}{% endif %}</li>{% endif %}
+    <li title="{{ v.date_title }}">🕒 {{ v.date_label }}</li>
+    <li><span class="dot dot-{{ s }}"></span> {{ {'active': 'En ligne', 'expired': 'Expirée', 'hidden': 'Masquée'}.get(s, s) }}{% if a.site %} · {{ a.site }}{% endif %}</li>
+  </ul>
+
+  <div class="detail-actions" role="group" aria-label="Votre avis">
+    {% for value, icon, label in [('favorite', '⭐', 'Favori'), ('contacted', '📞', 'Contacté'), ('dislike', '👎', 'Pas intéressé')] %}
+    <button type="button" class="btn-fb btn-fb-labeled" data-id="{{ a.id }}" data-value="{{ value }}" aria-pressed="false"
+            onclick="sendFeedback(this)">{{ icon }} {{ label }}</button>
+    {% endfor %}
+    <a class="details-link" href="{{ a.url }}" target="_blank" rel="noopener">Voir l’annonce sur {{ a.site }} →</a>
+  </div>
+
+  {% if v.energy or v.chip_groups or v.partial %}
+  <div class="card-feats">
+    {% if v.energy %}
+    <div class="feat-row">
+      {% for label, grade in v.energy %}
+      <span class="energy" title="{{ 'Diagnostic de performance énergétique' if label == 'DPE' else 'Émissions de gaz à effet de serre' }} : classe {{ grade }}"><span class="energy-grade energy-{{ grade }}">{{ grade }}</span>{{ label }}</span>
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% for group in v.chip_groups %}
+    <div class="feat-row">{% for label, title in group %}<span class="feat" title="{{ title }}">{{ label }}</span>{% endfor %}</div>
+    {% endfor %}
+    {% if v.partial %}
+    <div class="feat-row"><span class="feat feat-partial" title="Page de l’annonce pas encore ouverte : DPE, charges, meublé… peuvent manquer">◌ Fiche pas encore lue</span></div>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+
 <div class="details-layout">
   <div class="details-main">
     {% if d.photos %}
@@ -69,6 +115,5 @@
     </dl>
     {% endif %}
 
-    <a class="details-link" href="{{ a.url }}" target="_blank" rel="noopener">Voir l’annonce sur {{ a.site }} →</a>
   </div>
 </div>

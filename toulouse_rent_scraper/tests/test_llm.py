@@ -6,6 +6,7 @@
 
 import json
 import os
+import re
 import sqlite3
 import stat
 import threading
@@ -503,10 +504,15 @@ def test_ui_shows_analysis(db):
                                             {**GOOD, "scam_flags": ["paiement avant visite"], "scam_risk": "eleve"}),
                         today=TODAY)
     app.config["TESTING"] = True
-    html = app.test_client().get("/?profile=enac").get_data(as_text=True)
-    for text in ("T2 lumineux près du métro", "Dispo 01/12", "APL ✓", "Frais 380 €", "⚠️ Arnaque ?",
-                 "paiement avant visite", "Connexion LLM"):
+    client = app.test_client()
+    html = client.get("/?profile=enac").get_data(as_text=True)
+    # Carte : seules les alertes critiques ; résumé et conditions dans le panneau de détail
+    for text in ("⚠️ Arnaque ?", "paiement avant visite", "Connexion LLM"):
         assert text in html
+    ids = re.findall(r'<article class="card" data-id="(\d+)"', html)
+    details = "".join(client.get(f"/annonce/{i}/details?profile=enac").get_data(as_text=True) for i in ids)
+    for text in ("T2 lumineux près du métro", "Dispo 01/12", "APL ✓", "Frais 380 €", "paiement avant visite"):
+        assert text in details
 
 
 class TestSettingsPage:
