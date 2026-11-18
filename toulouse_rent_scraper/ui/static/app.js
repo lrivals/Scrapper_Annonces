@@ -61,113 +61,75 @@ function leave(el, done) {
   setTimeout(finish, DUR_EXIT + 100);  // filet de sécurité
 }
 
-function toggleOrder() {
-  var inp = document.getElementById('order-input');
-  var btn = document.getElementById('order-btn');
-  if (inp.value === 'asc') {
-    inp.value = 'desc';
-    btn.textContent = '↓';
-    btn.title = 'Décroissant';
-  } else {
-    inp.value = 'asc';
-    btn.textContent = '↑';
-    btn.title = 'Croissant';
-  }
-  btn.closest('form').submit();
-}
-
-/* ---- Document mode ---- */
+/* ---- Sélection pour l'export (cases à cocher des cartes + barre flottante) ---- */
+// Les ids cochés restent mémorisés d'une page à l'autre (changement de filtre, de tri…)
 function getIds() {
   try { return JSON.parse(localStorage.getItem('documentIds') || '[]'); }
-  catch(e) { return []; }
+  catch (e) { return []; }
 }
-function saveIds(ids) { localStorage.setItem('documentIds', JSON.stringify(ids)); }
-function isDocMode() { return localStorage.getItem('documentMode') === 'true'; }
+function saveIds(ids) {
+  try { localStorage.setItem('documentIds', JSON.stringify(ids)); } catch (e) {}
+}
 
-var _docUIReady = false;  // pas d'animation au premier rendu
+var _selectionReady = false;  // pas d'animation au premier rendu
 
-function updateDocUI() {
-  var instant = !_docUIReady;
-  _docUIReady = true;
+function updateSelectionUI() {
   var ids = getIds();
-  var active = isDocMode();
-  var btnMode = document.getElementById('btn-doc-mode');
-  var badge = document.getElementById('doc-count');
-  var btnExport = document.getElementById('btn-export');
-  var btnClear = document.getElementById('btn-clear');
-  if (!btnMode) return;  // pages de réglages : pas de mode document
-
-  if (active) {
-    document.body.classList.add('doc-mode-active');
-    swapText(btnMode, 'Terminer', instant);
-    btnMode.classList.add('active');
-  } else {
-    document.body.classList.remove('doc-mode-active');
-    swapText(btnMode, 'Commencer document', instant);
-    btnMode.classList.remove('active');
-  }
-
-  if (ids.length > 0) {
-    badge.textContent = ids.length + ' sélectionnée' + (ids.length > 1 ? 's' : '');
-    badge.classList.add('visible');
-    btnExport.classList.add('visible');
-    btnClear.classList.add('visible');
-  } else {
-    badge.classList.remove('visible');
-    btnExport.classList.remove('visible');
-    btnClear.classList.remove('visible');
-  }
-
-  // Mettre à jour l'état de chaque bouton de carte
-  // Liste et pile de la vue carte (Sprint 16) : même bouton, repéré par data-id
-  document.querySelectorAll('.btn-add-doc[data-id]').forEach(function(btn) {
-    var id = parseInt(btn.dataset.id);
-    var card = btn.closest('article');
-    if (ids.indexOf(id) !== -1) {
-      swapText(btn, '✓ Dans le doc', instant);
-      btn.classList.add('in-doc');
-      if (card) card.classList.add('in-doc');
-    } else {
-      swapText(btn, '+ Doc', instant);
-      btn.classList.remove('in-doc');
-      if (card) card.classList.remove('in-doc');
-    }
+  var bar = document.getElementById('selection-bar');
+  // Liste et pile de la vue carte : même case, repérée par data-id
+  document.querySelectorAll('.select-box[data-id]').forEach(function(box) {
+    var on = ids.indexOf(parseInt(box.dataset.id, 10)) !== -1;
+    box.checked = on;
+    var card = box.closest('article');
+    if (card) card.classList.toggle('is-selected', on);
   });
-}
-
-function toggleDocumentMode() {
-  localStorage.setItem('documentMode', isDocMode() ? 'false' : 'true');
-  updateDocUI();
-}
-
-function toggleAnnonce(id) {
-  var ids = getIds();
-  var idx = ids.indexOf(id);
-  if (idx === -1) { ids.push(id); } else { ids.splice(idx, 1); }
-  saveIds(ids);
-  updateDocUI();
-  if (idx === -1) {
-    var btn = document.getElementById('doc-btn-' + id);
-    pulse(btn);
-    pulseRing(btn && btn.closest('article'));
-    pulse(document.getElementById('doc-count'));
+  document.body.classList.toggle('has-selection', ids.length > 0);
+  if (!bar) return;
+  var count = document.getElementById('selection-count');
+  var text = ids.length + ' sélectionnée' + (ids.length > 1 ? 's' : '');
+  if (ids.length > 0) {
+    var wasHidden = bar.hidden;
+    bar.classList.remove('is-leaving');
+    bar.hidden = false;
+    if (wasHidden || !_selectionReady) count.textContent = text; else swapText(count, text);
+  } else if (!bar.hidden) {
+    if (_selectionReady && !reducedMotion()) leave(bar, function() {
+      bar.classList.remove('is-leaving');
+      if (getIds().length === 0) bar.hidden = true;   // recochée pendant la sortie : la barre reste
+    });
+    else bar.hidden = true;
   }
+  _selectionReady = true;
 }
 
-function clearDocument() {
+function toggleSelection(id, on) {
+  var ids = getIds().filter(function(x) { return x !== id; });
+  if (on) ids.push(id);
+  saveIds(ids);
+  updateSelectionUI();
+  if (on) pulse(document.getElementById('selection-count'));
+}
+
+function clearSelection() {
   saveIds([]);
-  updateDocUI();
+  updateSelectionUI();
 }
 
 function exportDocument() {
   var ids = getIds();
-  if (ids.length === 0) { alert('Aucune annonce sélectionnée.'); return; }
+  if (ids.length === 0) return;
   document.getElementById('doc-ids-input').value = JSON.stringify(ids);
   document.getElementById('doc-form').submit();
 }
 
-// Init au chargement
-updateDocUI();
+document.addEventListener('change', function(e) {
+  var box = e.target.closest && e.target.closest('.select-box');
+  if (box) toggleSelection(parseInt(box.dataset.id, 10), box.checked);
+});
+
+// Ancien « mode document » (avant la sélection par cases) : réglage devenu inutile
+try { localStorage.removeItem('documentMode'); } catch (e) {}
+updateSelectionUI();
 
 // Masquage / restauration AJAX : préserve la position de scroll
 document.querySelectorAll('form[action="/delete"], form[action="/restore"]').forEach(function(form) {
@@ -326,7 +288,8 @@ function applyView(view, instantIndicator) {
   document.getElementById('btn-view-map').classList.toggle('active',  view === 'map');
   positionIndicator(instantIndicator);
   var vi = document.getElementById('view-input');
-  if (vi) vi.value = view;
+  if (vi) vi.value = view === 'map' ? 'map' : '';
+  keepViewInLinks(view);
   if (view === 'map') {
     if (!_mapInitialized) {
       _mapInitialized = true;
@@ -498,7 +461,7 @@ function pushToStack(id) {
   } else {
     var card = buildStackCard(id);
     card.addEventListener('click', function(e) {
-      if (e.target.closest('a, button, form')) return;  // liens et boutons gardent leur rôle
+      if (e.target.closest('a, button, form, label')) return;  // liens, boutons et case de sélection gardent leur rôle
       focusOnMap(id);
     });
     list.prepend(card);
@@ -506,7 +469,7 @@ function pushToStack(id) {
   }
   list.scrollTo({ top: 0, behavior: reducedMotion() ? 'auto' : 'smooth' });
   setActive(id);
-  updateDocUI(true);
+  updateSelectionUI();
 }
 
 /* Clic sur un résumé : la carte revient sur son point, sans réordonner la pile */
@@ -618,8 +581,8 @@ function toggleDetails(card) {
         panel.innerHTML = '<p class="details-empty">Détails indisponibles — réessayer plus tard.</p>';
       });
   }
-  // Haut de la carte juste sous la barre de filtres collante
-  var bar = document.querySelector('.filter-bar');
+  // Haut de la carte juste sous la barre du haut fixe
+  var bar = document.querySelector('.topbar');
   var top = card.getBoundingClientRect().top + window.scrollY - (bar ? bar.offsetHeight : 0) - 12;
   window.scrollTo({ top: top, behavior: reducedMotion() ? 'auto' : 'smooth' });
 }
@@ -632,7 +595,7 @@ function toggleDetails(card) {
     if (!card) return;
     if (e.target.closest('.btn-details')) { toggleDetails(card); return; }
     // Liens, boutons, formulaires et le panneau lui-même gardent leur rôle
-    if (e.target.closest('a, button, form, input, select, .card-details')) return;
+    if (e.target.closest('a, button, form, input, select, label, .card-details')) return;
     if (window.getSelection && String(window.getSelection()).length) return;   // sélection de texte
     toggleDetails(card);
   });
@@ -651,4 +614,78 @@ function toggleDetails(card) {
 (function() {
   var p = new URLSearchParams(window.location.search);
   if (p.get('view') === 'map') { setView('map', true); }
+})();
+
+/* ---- Vue courante (Liste / Carte) conservée dans l'URL et les liens de filtre ---- */
+function withView(href, view) {
+  var url = new URL(href, window.location.href);
+  if (view === 'map') url.searchParams.set('view', 'map'); else url.searchParams.delete('view');
+  return url.pathname + url.search;
+}
+
+function keepViewInLinks(view) {
+  document.querySelectorAll('a[data-keep-view]').forEach(function(a) {
+    a.setAttribute('href', withView(a.getAttribute('href'), view));
+  });
+  if (window.history && history.replaceState) {
+    history.replaceState(history.state, '', withView(window.location.href, view));
+  }
+}
+
+/* ---- Panneau des filtres (<dialog> latéral) ---- */
+(function initFiltersDialog() {
+  var dialog = document.getElementById('filters-dialog');
+  var openBtn = document.getElementById('btn-filters');
+  if (!dialog || !openBtn || !dialog.showModal) return;
+  var form = document.getElementById('filters-form');
+  var submit = document.getElementById('filters-submit');
+  var pending = null, timer = null;
+
+  openBtn.addEventListener('click', function() {
+    dialog.showModal();
+    openBtn.setAttribute('aria-expanded', 'true');
+  });
+  dialog.addEventListener('close', function() {
+    openBtn.setAttribute('aria-expanded', 'false');
+    openBtn.focus();
+  });
+  dialog.querySelectorAll('[data-close-dialog]').forEach(function(b) {
+    b.addEventListener('click', function() { dialog.close(); });
+  });
+  // Clic sur le fond assombri (hors du panneau) : fermeture
+  dialog.addEventListener('click', function(e) {
+    if (e.target === dialog) dialog.close();
+  });
+
+  function params() {
+    var p = new URLSearchParams();
+    new FormData(form).forEach(function(v, k) { if (v !== '') p.append(k, v); });
+    return p;
+  }
+
+  // « Voir N annonces » : même filtrage que la liste, via /api/map-data
+  function refreshCount() {
+    if (pending) pending.abort();
+    pending = window.AbortController ? new AbortController() : null;
+    submit.classList.add('is-counting');
+    fetch('/api/map-data?' + params(), pending ? { signal: pending.signal } : {})
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        var n = data.listings.length;
+        submit.textContent = n === 0 ? 'Aucune annonce' : 'Voir ' + n + ' annonce' + (n > 1 ? 's' : '');
+        submit.classList.remove('is-counting');
+      })
+      .catch(function(err) { if (!err || err.name !== 'AbortError') submit.classList.remove('is-counting'); });
+  }
+  form.addEventListener('input', function() {
+    clearTimeout(timer);
+    timer = setTimeout(refreshCount, 250);
+  });
+
+  // URL propre : les champs vides ne sont pas envoyés
+  form.addEventListener('submit', function() {
+    form.querySelectorAll('input, select').forEach(function(el) {
+      if (el.name && el.value === '') el.disabled = true;
+    });
+  });
 })();

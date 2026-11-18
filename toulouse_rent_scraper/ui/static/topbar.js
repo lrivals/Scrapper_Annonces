@@ -1,4 +1,5 @@
 // ui/static/topbar.js — barre du haut commune : menus (popover natif), thème, scraping.
+// Les menus .tb-menu de la page (ex. tri) profitent du même placement et du même clavier.
 // Ouverture / fermeture / Échap / clic extérieur : gérés par l'attribut popover du navigateur.
 
 function topbarCsrf() {
@@ -53,7 +54,7 @@ function menuItems(menu) {
     .filter(function(el) { return el.offsetParent !== null; });  // ignore les entrées masquées (mobile)
 }
 
-document.querySelectorAll('.topbar [popover]').forEach(function(pop) {
+document.querySelectorAll('[popover].tb-menu, [popover].tb-panel').forEach(function(pop) {
   var btn = invokerOf(pop);
   pop.addEventListener('toggle', function(e) {
     var open = e.newState === 'open';
@@ -69,7 +70,7 @@ document.querySelectorAll('.topbar [popover]').forEach(function(pop) {
   if (btn) btn.setAttribute('aria-expanded', 'false');
 });
 
-document.querySelectorAll('.topbar [role="menu"]').forEach(function(menu) {
+document.querySelectorAll('.tb-menu[role="menu"]').forEach(function(menu) {
   menu.addEventListener('keydown', function(e) {
     var items = menuItems(menu);
     var i = items.indexOf(document.activeElement);
@@ -82,9 +83,12 @@ document.querySelectorAll('.topbar [role="menu"]').forEach(function(menu) {
   });
 });
 
-window.addEventListener('resize', function() {
-  document.querySelectorAll('.topbar [popover]:popover-open').forEach(placePopover);
-});
+// Les menus suivent leur bouton (ceux de la barre d'outils défilent avec la page)
+function placeOpenPopovers() {
+  document.querySelectorAll('.tb-menu:popover-open, .tb-panel:popover-open').forEach(placePopover);
+}
+window.addEventListener('resize', placeOpenPopovers);
+window.addEventListener('scroll', placeOpenPopovers, { passive: true });
 
 /* ---- Thème clair / sombre ---- */
 function effectiveTheme() {
