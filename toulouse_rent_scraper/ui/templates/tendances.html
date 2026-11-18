@@ -7,19 +7,15 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  {% include "_theme_head.html" %}
   <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 </head>
-<body>
+<body data-profile="{{ profile.key }}">
+  {% with active='tendances', profile_url='/tendances?days=' ~ days ~ '&profile=' %}{% include "_topbar.html" %}{% endwith %}
   <div class="wrapper trends-page">
     <header>
       <h1>Tendances — {{ profile.label }}</h1>
-      <nav class="profile-tabs">
-        <a href="/?profile={{ profile.key }}" class="btn-view">← Annonces</a>
-        {% for p in profiles %}
-        <a href="/tendances?profile={{ p.key }}&days={{ days }}" class="btn-view {% if p.key == profile.key %}active{% endif %}">{{ p.label }}</a>
-        {% endfor %}
-      </nav>
       <nav class="profile-tabs trends-days">
         {% for d in day_choices %}
         <a href="/tendances?profile={{ profile.key }}&days={{ d }}" class="btn-view {% if d == days %}active{% endif %}">{{ d }} jours</a>

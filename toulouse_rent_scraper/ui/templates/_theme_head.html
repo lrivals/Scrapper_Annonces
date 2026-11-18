@@ -1,0 +1,5 @@
+{# En-tête commun : jeton CSRF (scraping, vider la base) et thème posé avant le rendu (pas de flash) #}
+  <meta name="csrf-token" content="{{ csrf_token() }}">
+  <script>
+    try { var t = localStorage.getItem('theme'); if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t; } catch (e) {}
+  </script>

@@ -1,0 +1,79 @@
+{# Barre du haut commune à toutes les pages.
+   Contexte : active ('annonces' | 'tendances' | 'settings'), profile / profiles (optionnels),
+   profile_url (préfixe des liens du sélecteur de profil, suivi de la clé du profil). #}
+{% set has_profile = profile is defined and profile %}
+{% set pq = ('?profile=' ~ profile.key) if has_profile else '' %}
+<nav class="topbar" aria-label="Navigation principale">
+  <div class="tb-left">
+    <a href="/{{ pq }}" class="topbar-brand">Annonces</a>
+
+    {% if has_profile and profiles is defined %}
+    <button type="button" class="tb-btn tb-profile" popovertarget="menu-profile" aria-haspopup="menu" title="Changer de profil de recherche">
+      <span class="tb-profile-label">{{ profile.label }}</span>
+      <svg class="tb-chev" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M5.3 7.3a1 1 0 0 1 1.4 0L10 10.6l3.3-3.3a1 1 0 1 1 1.4 1.4l-4 4a1 1 0 0 1-1.4 0l-4-4a1 1 0 0 1 0-1.4z"/></svg>
+    </button>
+    <div popover id="menu-profile" class="tb-menu" role="menu" aria-label="Profils de recherche">
+      {% for p in profiles %}
+      <a role="menuitem" class="tb-item" href="{{ profile_url }}{{ p.key }}" {% if p.key == profile.key %}aria-current="true"{% endif %}>
+        <span>{{ p.label }}</span>
+        <small>{{ p.target_address }}{% if p.min_rent_eur or p.max_rent_eur %} · {{ p.min_rent_eur or 0 }}–{{ p.max_rent_eur or '∞' }} €{% endif %} · {{ p.max_distance_km }} km</small>
+      </a>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <div class="tb-nav">
+      <a href="/{{ pq }}" class="tb-link" data-nav="annonces" {% if active == 'annonces' %}aria-current="page"{% endif %}>Annonces</a>
+      <a href="/tendances{{ pq }}" class="tb-link" data-nav="tendances" {% if active == 'tendances' %}aria-current="page"{% endif %}>Tendances</a>
+    </div>
+  </div>
+
+  <div class="tb-right">
+    <button type="button" class="tb-btn tb-scrape" id="tb-scrape" popovertarget="scrape-panel" data-state="idle" title="Scraping : état et lancement">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 4v5h-5"/></svg>
+      <span class="tb-label">Scraper</span>
+      <span class="tb-dot" aria-hidden="true"></span>
+    </button>
+    <div popover id="scrape-panel" class="tb-panel" role="dialog" aria-label="Scraping">
+      <div class="tb-panel-head">
+        <strong>Scraping{% if has_profile %} · {{ profile.label }}{% endif %}</strong>
+        <span class="tb-state" id="scrape-state">Inactif</span>
+      </div>
+      <button type="button" class="btn-scrape" id="btn-scrape" onclick="startScraping()">Lancer le scraping</button>
+      <pre class="scrape-log" id="scrape-log" aria-live="polite"></pre>
+    </div>
+
+    <button type="button" class="tb-btn tb-icon-btn" popovertarget="menu-settings" aria-haspopup="menu" aria-label="Paramètres et outils" title="Paramètres et outils">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      <svg class="tb-chev" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M5.3 7.3a1 1 0 0 1 1.4 0L10 10.6l3.3-3.3a1 1 0 1 1 1.4 1.4l-4 4a1 1 0 0 1-1.4 0l-4-4a1 1 0 0 1 0-1.4z"/></svg>
+    </button>
+    <div popover id="menu-settings" class="tb-menu" role="menu" aria-label="Paramètres et outils">
+      {# Petits écrans : la navigation principale se replie ici #}
+      <a role="menuitem" class="tb-item tb-mobile-only" data-nav="annonces" href="/{{ pq }}" {% if active == 'annonces' %}aria-current="page"{% endif %}><span>Annonces</span></a>
+      <a role="menuitem" class="tb-item tb-mobile-only" data-nav="tendances" href="/tendances{{ pq }}" {% if active == 'tendances' %}aria-current="page"{% endif %}><span>Tendances</span></a>
+      <hr class="tb-sep tb-mobile-only">
+      <a role="menuitem" class="tb-item" data-nav="requirements" href="/settings/requirements{{ pq }}">
+        <span>Critères du profil</span><small>Surface, meublé, DPE, rez-de-chaussée…</small>
+      </a>
+      <a role="menuitem" class="tb-item" href="/settings/weights">
+        <span>Poids du score</span><small>Appris de vos ⭐ / 📞 / 👎</small>
+      </a>
+      <a role="menuitem" class="tb-item" href="/settings/llm">
+        <span>Connexion LLM</span><small>Votre LLM pour analyser les descriptions</small>
+      </a>
+      <hr class="tb-sep">
+      <form method="POST" action="/clear-db" onsubmit="return confirmClear(this)">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="confirm" value="">
+        <input type="hidden" name="back" value="{{ request.full_path }}">
+        <button type="submit" role="menuitem" class="tb-item tb-danger"><span>Vider la base…</span><small>Supprime toutes les annonces</small></button>
+      </form>
+    </div>
+
+    <button type="button" class="tb-btn tb-icon-btn" id="theme-toggle" aria-label="Basculer le thème clair / sombre" title="Thème clair / sombre">
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+    </button>
+  </div>
+</nav>
+<script src="{{ url_for('static', filename='topbar.js') }}" defer></script>
