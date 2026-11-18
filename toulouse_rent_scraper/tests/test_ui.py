@@ -287,3 +287,48 @@ def test_card_details_panel(client, temp_db):
     assert "Voir l’annonce sur SeLoger" in html
     assert client.get("/annonce/1/details?profile=enac").status_code == 404     # autre profil
     assert client.get("/annonce/999/details?profile=blagnac").status_code == 404
+
+
+# ---- Barre du haut (refonte UI, étape 1) ----
+
+@pytest.mark.parametrize("url", ["/", "/tendances?profile=blagnac", "/settings/weights",
+                                 "/settings/requirements?profile=blagnac", "/settings/llm"])
+def test_topbar_on_every_page(client, url):
+    page = client.get(url).get_data(as_text=True)
+    assert 'class="topbar"' in page and "/static/topbar.js" in page
+    assert 'popovertarget="menu-settings"' in page and 'popovertarget="scrape-panel"' in page
+    assert 'id="theme-toggle"' in page
+    assert f'<meta name="csrf-token" content="{client.token}">' in page
+
+
+def test_settings_menu_groups_secondary_actions(client):
+    page = client.get("/?profile=blagnac").get_data(as_text=True)
+    menu = page[page.index('id="menu-settings"'):]
+    menu = menu[:menu.index("</div>")]
+    for href in ("/settings/requirements?profile=blagnac", "/settings/weights", "/settings/llm"):
+        assert f'href="{href}"' in menu
+    assert 'action="/clear-db"' in menu and 'name="confirm"' in menu and "Vider la base" in menu
+    assert f'value="{client.token}"' in menu
+    assert "action-bar" not in page and "btn-clear-db" not in page
+
+
+def test_profile_menu_marks_current_profile(client):
+    from config import SEARCH_PROFILES
+    page = client.get("/?profile=blagnac").get_data(as_text=True)
+    menu = page[page.index('id="menu-profile"'):]
+    menu = menu[:menu.index("</div>")]
+    for key in SEARCH_PROFILES:
+        assert f'href="/?profile={key}"' in menu
+    assert menu.count('aria-current="true"') == 1
+    current = menu[:menu.index('aria-current="true"')]
+    assert current.rstrip().endswith('href="/?profile=blagnac"')
+    # Tendances : le sélecteur garde la période choisie
+    trends = client.get("/tendances?profile=blagnac&days=30").get_data(as_text=True)
+    assert 'href="/tendances?days=30&amp;profile=enac"' in trends
+
+
+def test_index_keeps_document_and_view_controls(client):
+    page = client.get("/").get_data(as_text=True)
+    for el_id in ("annonce-count", "btn-doc-mode", "btn-export", "doc-form", "view-toggle", "btn-scrape", "scrape-log"):
+        assert f'id="{el_id}"' in page
+    assert client.get("/static/topbar.js").status_code == 200

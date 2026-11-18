@@ -9,34 +9,15 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <meta name="csrf-token" content="{{ csrf_token() }}">
+  {% include "_theme_head.html" %}
   <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
 </head>
-<body data-profile="{{ profile.key }}">
+<body data-profile="{{ profile.key }}" data-page="index">
+  {% with active='annonces', profile_url='/?profile=' %}{% include "_topbar.html" %}{% endwith %}
   <div class="wrapper">
-    <header>
-      <h1>Annonces Toulouse</h1>
-      <nav class="profile-tabs">
-        {% for p in profiles %}
-        <a href="/?profile={{ p.key }}" class="btn-view {% if p.key == profile.key %}active{% endif %}"
-           title="{{ p.target_address }}{% if p.min_rent_eur or p.max_rent_eur %} — {{ p.min_rent_eur or 0 }}–{{ p.max_rent_eur or '∞' }} €{% endif %} — {{ p.max_distance_km }} km">{{ p.label }}</a>
-        {% endfor %}
-      </nav>
+    <h1 class="visually-hidden">Annonces — {{ profile.label }}</h1>
+    <div class="toolbar">
       <div class="count" id="annonce-count">{{ total }} annonce{{ 's' if total != 1 else '' }}</div>
-      <div class="action-bar">
-        <button class="btn-scrape" id="btn-scrape" onclick="startScraping()">Lancer le scraping</button>
-        <a href="/settings/llm" class="btn-view" title="Brancher votre propre LLM pour analyser les descriptions">Connexion LLM</a>
-        <a href="/settings/requirements?profile={{ profile.key }}" class="btn-view" title="Critères éliminatoires du profil (surface, meublé, DPE, rez-de-chaussée…)">Critères</a>
-        <a href="/tendances?profile={{ profile.key }}" class="btn-view" title="Nouvelles annonces et loyers médians au fil du temps">Tendances</a>
-        <a href="/settings/weights" class="btn-view" title="Poids du score appris de vos ⭐ / 📞 / 👎">Poids du score</a>
-        <form method="POST" action="/clear-db" onsubmit="return confirmClear(this)">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <input type="hidden" name="confirm" value="">
-          <input type="hidden" name="back" value="{{ request.full_path }}">
-          <button type="submit" class="btn-clear-db">Vider la BD</button>
-        </form>
-      </div>
-      <div class="scrape-log" id="scrape-log"></div>
       <div class="doc-bar">
         <button class="btn-doc-start" id="btn-doc-mode" onclick="toggleDocumentMode()">Commencer document</button>
         <span class="doc-count-badge" id="doc-count"></span>
@@ -53,7 +34,7 @@
         <button class="btn-view active" id="btn-view-list" onclick="setView('list')">&#9776; Liste</button>
         <button class="btn-view" id="btn-view-map" onclick="setView('map')">&#128506; Carte</button>
       </div>
-    </header>
+    </div>
 
     {% if flash %}
     <div class="flash flash-{{ flash.type }}">{{ flash.msg }}</div>

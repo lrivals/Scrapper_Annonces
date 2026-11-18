@@ -61,19 +61,6 @@ function leave(el, done) {
   setTimeout(finish, DUR_EXIT + 100);  // filet de sécurité
 }
 
-function showScrapeLog(line) {
-  var el = document.getElementById('scrape-log');
-  if (el) el.textContent = line || '';
-}
-
-/* Vider la base : confirmation saisie, vérifiée aussi côté serveur */
-function confirmClear(form) {
-  var answer = prompt('Toutes les annonces seront supprimées.\nTapez VIDER pour confirmer :');
-  if (answer === null) return false;
-  form.querySelector('input[name="confirm"]').value = answer.trim();
-  return true;
-}
-
 function toggleOrder() {
   var inp = document.getElementById('order-input');
   var btn = document.getElementById('order-btn');
@@ -108,6 +95,7 @@ function updateDocUI() {
   var badge = document.getElementById('doc-count');
   var btnExport = document.getElementById('btn-export');
   var btnClear = document.getElementById('btn-clear');
+  if (!btnMode) return;  // pages de réglages : pas de mode document
 
   if (active) {
     document.body.classList.add('doc-mode-active');
@@ -180,64 +168,6 @@ function exportDocument() {
 
 // Init au chargement
 updateDocUI();
-
-/* ---- Scraping background ---- */
-var _scrapingPoll = null;
-
-function startScraping() {
-  var btn = document.getElementById('btn-scrape');
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span>Scraping en cours…';
-
-  fetch('/start-scraping?profile=' + encodeURIComponent(document.body.dataset.profile), {
-    method: 'POST',
-    headers: { 'X-CSRF-Token': csrfToken() }
-  })
-    .then(function(r) { return r.json(); })
-    .then(function(data) {
-      if (data.status === 'already_running') {
-        pollScrapingStatus();
-      } else {
-        pollScrapingStatus();
-      }
-    })
-    .catch(function() {
-      btn.disabled = false;
-      btn.textContent = 'Lancer le scraping';
-    });
-}
-
-function pollScrapingStatus() {
-  if (_scrapingPoll) clearInterval(_scrapingPoll);
-  _scrapingPoll = setInterval(function() {
-    fetch('/scraping-status')
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        showScrapeLog(data.last_line);
-        if (!data.running) {
-          clearInterval(_scrapingPoll);
-          _scrapingPoll = null;
-          var btn = document.getElementById('btn-scrape');
-          btn.disabled = false;
-          btn.textContent = '✓ Terminé';
-          pulse(btn);
-          setTimeout(function() { window.location.reload(); }, 1500);
-        }
-      });
-  }, 3000);
-}
-
-// Reprendre le polling si un scraping est déjà en cours au chargement de la page
-fetch('/scraping-status')
-  .then(function(r) { return r.json(); })
-  .then(function(data) {
-    if (data.running) {
-      var btn = document.getElementById('btn-scrape');
-      btn.disabled = true;
-      btn.innerHTML = '<span class="spinner"></span>Scraping en cours…';
-      pollScrapingStatus();
-    }
-  });
 
 // Masquage / restauration AJAX : préserve la position de scroll
 document.querySelectorAll('form[action="/delete"], form[action="/restore"]').forEach(function(form) {
