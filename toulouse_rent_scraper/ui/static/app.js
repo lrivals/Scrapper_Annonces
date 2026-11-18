@@ -135,6 +135,7 @@ updateSelectionUI();
 document.querySelectorAll('form[action="/delete"], form[action="/restore"]').forEach(function(form) {
   form.addEventListener('submit', function(e) {
     e.preventDefault();
+    closeMenuOf(form);
     var data = new FormData(form);
     fetch(form.getAttribute('action'), {
       method: 'POST',
@@ -146,10 +147,8 @@ document.querySelectorAll('form[action="/delete"], form[action="/restore"]').for
       if (res.ok) {
         var card = form.closest('article');
         if (card) {
+          if (_detailId === card.dataset.id) closeDetail();
           removeCard(card);
-          // Son résumé éventuel dans la pile de la carte disparaît aussi
-          var twin = document.querySelector('#map-stack-list article[data-id="' + card.dataset.id + '"]');
-          if (twin) removeCard(twin);
         }
         var countEl = document.getElementById('annonce-count');
         if (countEl) {
@@ -165,8 +164,15 @@ document.querySelectorAll('form[action="/delete"], form[action="/restore"]').for
   });
 });
 
+/* Menu ⋯ d'une carte : refermé dès qu'une de ses actions est lancée */
+function closeMenuOf(el) {
+  var pop = el.closest('[popover]');
+  if (pop && pop.hidePopover && pop.matches(':popover-open')) pop.hidePopover();
+}
+
 /* Retours ⭐ / 📞 / 👎 (Sprint 15.6) : un seul actif par carte ; re-cliquer l'efface */
 function sendFeedback(btn) {
+  closeMenuOf(btn);
   var data = new FormData();
   data.append('id', btn.dataset.id);
   data.append('value', btn.dataset.value);
@@ -176,7 +182,7 @@ function sendFeedback(btn) {
     .then(function(r) { return r.json(); })
     .then(function(res) {
       if (!res.ok) { showToast('err', res.msg); return; }
-      // Même annonce dans la liste et dans la pile de la carte : on synchronise les deux
+      // Même annonce sur la carte de la liste, dans son menu ⋯ et dans le panneau de détail
       document.querySelectorAll('.btn-fb[data-id="' + btn.dataset.id + '"]').forEach(function(b) {
         var on = b.dataset.value === res.feedback;
         b.classList.toggle('is-on', on);
@@ -187,6 +193,7 @@ function sendFeedback(btn) {
       // 👎 dans la vue par défaut (sans les 👎) : la carte sort de la liste (et de la pile)
       var fb = new URLSearchParams(window.location.search).get('fb') || '';
       if (res.feedback === 'dislike' && fb === '') {
+        if (_detailId === btn.dataset.id) closeDetail();
         document.querySelectorAll('article.card[data-id="' + btn.dataset.id + '"]').forEach(removeCard);
       }
     })
@@ -204,7 +211,6 @@ function removeCard(card) {
     });
     var before = siblings.map(function(c) { return c.getBoundingClientRect(); });
     card.remove();
-    updateStackEmpty();
     if (reducedMotion()) return;
     siblings.forEach(function(c, i) {
       var after = c.getBoundingClientRect();
@@ -237,9 +243,8 @@ function showToast(type, msg) {
 var _mapInitialized = false;
 var _leafletMap = null;
 var _markers = {};       // id annonce → {marker, listing}
-var _activeId = null;    // annonce mise en avant (marqueur + résumé)
+var _activeId = null;    // annonce mise en avant (marqueur dont le détail est ouvert)
 var _apptIcon = null;    // fabrique d'icônes définie dans initMap
-var _mapTarget = null;   // cible du profil (pour le résumé de repli)
 
 /* Indicateur partagé Liste / Carte : un seul élément qui se déplace */
 function positionIndicator(instant) {
@@ -328,7 +333,6 @@ function initMap() {
     .then(function(r) { return r.json(); })
     .then(function(data) {
       var t = data.target;
-      _mapTarget = t;
       _leafletMap = L.map('map', {preferCanvas: true}).setView([t.lat, t.lon], 12);
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
@@ -344,12 +348,12 @@ function initMap() {
       var ungeolocated = 0;
       data.listings.forEach(function(l) {
         if (l.lat === null || l.lon === null) { ungeolocated++; return; }
-        // Clic sur un point : son résumé arrive en haut de la pile à droite
+        // Clic sur un point : son détail s'ouvre dans le panneau latéral
         var marker = L.marker([l.lat, l.lon], {icon: apptIcon(l.score), riseOnHover: true})
           .addTo(_leafletMap)
           .bindTooltip(escapeHtml(l.title || 'Annonce') + ' · ' + (l.price ? l.price + ' €' : '—'),
                        {direction: 'top', offset: [0, -6]})
-          .on('click', function() { pushToStack(l.id); });
+          .on('click', function() { openDetail(l.id); });
         _markers[l.id] = {marker: marker, listing: l};
       });
 
@@ -365,65 +369,13 @@ function initMap() {
     });
 }
 
-/* ---- Pile des annonces consultées (Sprint 16) ----
-   Chaque clic sur un point empile son résumé en haut, sans doublon : un point déjà
-   consulté voit son résumé remonter. Cliquer un résumé recentre la carte sur son point. */
 function escapeHtml(text) {
   var div = document.createElement('div');
   div.textContent = text == null ? '' : String(text);
   return div.innerHTML;
 }
 
-function updateStackEmpty() {
-  var list = document.getElementById('map-stack-list');
-  if (!list) return;
-  var empty = list.children.length === 0;
-  document.getElementById('map-stack-empty').hidden = !empty;
-  document.getElementById('map-stack-clear').hidden = empty;
-}
-
-/* Résumé = clone compact de la carte de la vue Liste ; repli sur les données de la carte */
-function buildStackCard(id) {
-  var source = document.querySelector('#card-grid article.card[data-id="' + id + '"]');
-  if (source) {
-    var card = source.cloneNode(true);
-    card.classList.remove('is-leaving');
-    card.style.removeProperty('--i');
-    // Masquer / Restaurer restent dans la vue Liste (gestion AJAX propre à celle-ci)
-    card.querySelectorAll('form').forEach(function(f) { f.remove(); });
-    // Panneau « Détails » : vue liste seulement
-    card.classList.remove('is-expanded');
-    card.querySelectorAll('.btn-details, .card-details').forEach(function(el) { el.remove(); });
-    card.querySelectorAll('[id]').forEach(function(el) { el.removeAttribute('id'); });
-    return card;
-  }
-  var l = _markers[id].listing;
-  var card = document.createElement('article');
-  card.className = 'card';
-  card.dataset.id = id;
-  var score = l.score !== null && l.score !== undefined ? Math.round(l.score) : null;
-  card.innerHTML =
-    '<div class="card-content">'
-    + '<div class="card-header">'
-    + (score !== null ? '<span class="score-pill ' + (score >= 70 ? 'score-high' : score >= 45 ? 'score-mid' : 'score-low') + '">★ ' + score + '</span>' : '')
-    + '<div class="price-block"><div class="price-tag">' + (l.price ? l.price + ' €' : '—')
-    + (l.price_note ? ' <span class="price-note">' + escapeHtml(l.price_note) + '</span>' : '') + '</div></div></div>'
-    + '<a class="card-title" target="_blank" href="' + escapeHtml(l.url) + '">' + escapeHtml(l.title || 'Annonce') + '</a>'
-    + (l.key_facts && l.key_facts.length ? '<p class="card-keyfacts">' + escapeHtml(l.key_facts.join(' · ')) + '</p>' : '')
-    + '<div class="card-meta">'
-    + (l.location_raw ? '<div class="meta-item">' + escapeHtml(l.location_raw) + '</div>' : '')
-    + (l.distance_label && _mapTarget
-        ? '<div class="meta-item">' + escapeHtml(l.distance_label) + ' de ' + escapeHtml(_mapTarget.label) + '</div>' : '')
-    + '</div>'
-    + (l.energy && l.energy.length
-        ? '<div class="card-feats"><div class="feat-row">' + l.energy.map(function(e) {
-            return '<span class="energy"><span class="energy-grade energy-' + escapeHtml(e[1]) + '">' + escapeHtml(e[1]) + '</span>' + escapeHtml(e[0]) + '</span>';
-          }).join('') + '</div></div>' : '')
-    + '<a class="card-fallback-link" target="_blank" href="' + escapeHtml(l.url) + '">Voir l&rsquo;annonce →</a>'
-    + '</div>';
-  return card;
-}
-
+/* Point de la carte mis en avant pendant que son détail est ouvert */
 function setActive(id) {
   if (_activeId !== null && _markers[_activeId]) {
     var prev = _markers[_activeId];
@@ -435,114 +387,13 @@ function setActive(id) {
     _markers[id].marker.setIcon(_apptIcon(_markers[id].listing.score, true));
     _markers[id].marker.setZIndexOffset(1000);
   }
-  document.querySelectorAll('#map-stack-list .card').forEach(function(c) {
-    c.classList.toggle('is-active', String(c.dataset.id) === String(id));
-  });
 }
 
-function pushToStack(id) {
-  var list = document.getElementById('map-stack-list');
-  var existing = list.querySelector('article[data-id="' + id + '"]');
-  if (existing) {
-    if (existing !== list.firstElementChild) {
-      // Remontée en tête, les autres résumés glissent à leur nouvelle place (FLIP)
-      var items = Array.prototype.slice.call(list.children);
-      var before = items.map(function(c) { return c.getBoundingClientRect(); });
-      list.prepend(existing);
-      if (!reducedMotion()) {
-        items.forEach(function(c, i) {
-          var after = c.getBoundingClientRect();
-          var dy = before[i].top - after.top;
-          if (dy) c.animate([{ transform: 'translateY(' + dy + 'px)' }, { transform: 'none' }],
-                            { duration: DUR_MOVE, easing: EASE_IN_OUT });
-        });
-      }
-    }
-  } else {
-    var card = buildStackCard(id);
-    card.addEventListener('click', function(e) {
-      if (e.target.closest('a, button, form, label')) return;  // liens, boutons et case de sélection gardent leur rôle
-      focusOnMap(id);
-    });
-    list.prepend(card);
-    updateStackEmpty();
-  }
-  list.scrollTo({ top: 0, behavior: reducedMotion() ? 'auto' : 'smooth' });
-  setActive(id);
-  updateSelectionUI();
-}
+/* ---- Panneau de détail commun (carte de la liste ou point de la carte) ----
+   Non modal : on peut cliquer une autre carte ou un autre point pendant qu'il est ouvert. */
+var _detailId = null, _detailTrigger = null, _detailRequest = null;
 
-/* Clic sur un résumé : la carte revient sur son point, sans réordonner la pile */
-function focusOnMap(id) {
-  var m = _markers[id];
-  if (!m) return;
-  var zoom = Math.max(_leafletMap.getZoom(), 15);
-  if (reducedMotion()) _leafletMap.setView(m.marker.getLatLng(), zoom);
-  else _leafletMap.flyTo(m.marker.getLatLng(), zoom, { duration: 0.6 });
-  setActive(id);
-}
-
-function clearStack() {
-  document.getElementById('map-stack-list').innerHTML = '';
-  setActive(null);
-  updateStackEmpty();
-}
-
-/* ---- Carte dépliable (vue liste) : description, particularités, photos ---- */
-var _expandedCard = null;
-
-/* Fondu enchaîné de la flèche ▾ / ▴ avec un peu d'échelle et de flou */
-function swapChevron(btn, glyph) {
-  var chev = btn && btn.querySelector('.chev');
-  if (!chev || chev.textContent === glyph) return;
-  if (!canAnimate(chev)) { chev.textContent = glyph; return; }
-  chev.animate(
-    [{ opacity: 1, transform: 'scale(1)', filter: 'blur(0)' }, { opacity: 0, transform: 'scale(0.6)', filter: 'blur(2px)' }],
-    { duration: DUR_EXIT, easing: EASE_IN }
-  ).onfinish = function() {
-    chev.textContent = glyph;
-    chev.animate(
-      [{ opacity: 0, transform: 'scale(0.6)', filter: 'blur(2px)' }, { opacity: 1, transform: 'scale(1)', filter: 'blur(0)' }],
-      { duration: DUR_ENTER, easing: EASE_OUT }
-    );
-  };
-}
-
-function setExpanded(card, open) {
-  var btn = card.querySelector('.btn-details');
-  var panel = card.querySelector('.card-details');
-  card.classList.toggle('is-expanded', open);
-  panel.hidden = !open;
-  if (btn) {
-    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
-    swapChevron(btn, open ? '▴' : '▾');
-  }
-}
-
-/*
- * Les cartes visibles glissent de leur ancienne place à la nouvelle (FLIP, ease-in-out)
- * au lieu de sauter quand une carte s'ouvre ou se referme. Même élément avant / après :
- * la carte dépliée « garde son identité » pendant le déplacement.
- */
-function flipCards(mutate) {
-  var grid = document.getElementById('card-grid');
-  if (!canAnimate(grid)) { mutate(); return; }
-  var vh = window.innerHeight;
-  var visible = function(r) { return r.bottom > -200 && r.top < vh + 200; };
-  var cards = Array.prototype.slice.call(grid.querySelectorAll(':scope > article.card'));
-  var before = cards.map(function(c) { return c.getBoundingClientRect(); });
-  mutate();
-  cards.forEach(function(c, i) {
-    var a = before[i], b = c.getBoundingClientRect();
-    if (!visible(a) && !visible(b)) return;
-    var dx = a.left - b.left, dy = a.top - b.top;
-    if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
-    c.animate([{ transform: 'translate(' + dx + 'px, ' + dy + 'px)' }, { transform: 'none' }],
-              { duration: DUR_MOVE, easing: EASE_IN_OUT });
-  });
-}
-
-/* Révélation du panneau : fondu + légère montée, durée « weighty » ; photos décalées de 30 ms */
+/* Photos décalées de 30 ms à l'arrivée du contenu */
 function revealPanel(panel) {
   if (!canAnimate(panel)) return;
   panel.animate([{ opacity: 0, transform: 'translateY(8px)' }, { opacity: 1, transform: 'none' }],
@@ -553,60 +404,104 @@ function revealPanel(panel) {
   });
 }
 
-function toggleDetails(card) {
-  var open = !card.classList.contains('is-expanded');
-  var previous = _expandedCard && _expandedCard !== card ? _expandedCard : null;
-  // L'ancienne carte se referme pendant que la nouvelle s'ouvre (un seul déplacement)
-  flipCards(function() {
-    if (previous) setExpanded(previous, false);
-    setExpanded(card, open);
+/* Retours ⭐ / 📞 / 👎 du panneau : même état que la carte de la liste */
+function syncDetailFeedback(id) {
+  document.querySelectorAll('#detail-body .btn-fb[data-id="' + id + '"]').forEach(function(b) {
+    var twin = document.querySelector('#card-grid .btn-fb.is-on[data-id="' + id + '"]');
+    var on = !!twin && twin.dataset.value === b.dataset.value;
+    b.classList.toggle('is-on', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
   });
-  _expandedCard = open ? card : null;
-  if (!open) return;
-
-  var panel = card.querySelector('.card-details');
-  if (panel.dataset.loaded === 'yes') revealPanel(panel);
-  if (!panel.dataset.loaded) {
-    panel.dataset.loaded = 'loading';
-    panel.innerHTML = '<p class="details-empty">Chargement…</p>';
-    fetch('/annonce/' + card.dataset.id + '/details?profile=' + encodeURIComponent(document.body.dataset.profile))
-      .then(function(r) { if (!r.ok) throw new Error(r.status); return r.text(); })
-      .then(function(html) {
-        panel.innerHTML = html;
-        panel.dataset.loaded = 'yes';
-        revealPanel(panel);
-      })
-      .catch(function() {
-        delete panel.dataset.loaded;   // nouvel essai au prochain dépliage
-        panel.innerHTML = '<p class="details-empty">Détails indisponibles — réessayer plus tard.</p>';
-      });
-  }
-  // Haut de la carte juste sous la barre du haut fixe
-  var bar = document.querySelector('.topbar');
-  var top = card.getBoundingClientRect().top + window.scrollY - (bar ? bar.offsetHeight : 0) - 12;
-  window.scrollTo({ top: top, behavior: reducedMotion() ? 'auto' : 'smooth' });
 }
 
-(function initCardDetails() {
+function markSelectedCard(id) {
+  document.querySelectorAll('#card-grid article.card.is-viewing').forEach(function(c) { c.classList.remove('is-viewing'); });
+  if (id === null) return;
+  var card = document.querySelector('#card-grid article.card[data-id="' + id + '"]');
+  if (card) card.classList.add('is-viewing');
+}
+
+function openDetail(id, trigger) {
+  var dialog = document.getElementById('detail-panel');
+  var body = document.getElementById('detail-body');
+  var title = document.getElementById('detail-title');
+  if (!dialog) return;
+  id = String(id);
+  _detailTrigger = trigger || document.activeElement;
+  if (!dialog.open) dialog.show();
+  title.focus({ preventScroll: true });
+  markSelectedCard(id);
+  if (_markers[id]) setActive(id);
+  if (_detailId === id && body.dataset.loaded === 'yes') return;
+
+  _detailId = id;
+  body.dataset.loaded = 'loading';
+  var card = document.querySelector('#card-grid article.card[data-id="' + id + '"]');
+  var cardTitle = card && card.querySelector('.card-title');
+  title.textContent = cardTitle ? cardTitle.textContent.trim() : 'Annonce';
+  body.innerHTML = '<p class="details-empty">Chargement…</p>';
+  body.scrollTop = 0;
+  if (_detailRequest) _detailRequest.abort();
+  _detailRequest = window.AbortController ? new AbortController() : null;
+  fetch('/annonce/' + encodeURIComponent(id) + '/details?profile=' + encodeURIComponent(document.body.dataset.profile),
+        _detailRequest ? { signal: _detailRequest.signal } : {})
+    .then(function(r) { if (!r.ok) throw new Error(r.status); return r.text(); })
+    .then(function(html) {
+      if (_detailId !== id) return;
+      body.innerHTML = html;
+      body.dataset.loaded = 'yes';
+      var head = body.querySelector('.detail-head');
+      if (head) title.textContent = head.dataset.title;
+      syncDetailFeedback(id);
+      revealPanel(body);
+    })
+    .catch(function(err) {
+      if (err && err.name === 'AbortError') return;
+      delete body.dataset.loaded;   // nouvel essai au prochain clic
+      body.innerHTML = '<p class="details-empty">Détails indisponibles — réessayer plus tard.</p>';
+    });
+}
+
+function closeDetail() {
+  var dialog = document.getElementById('detail-panel');
+  if (dialog && dialog.open) dialog.close();
+}
+
+(function initDetailPanel() {
+  var dialog = document.getElementById('detail-panel');
+  if (!dialog) return;
+  dialog.querySelectorAll('[data-close-dialog]').forEach(function(b) { b.addEventListener('click', closeDetail); });
+  dialog.addEventListener('close', function() {
+    markSelectedCard(null);
+    setActive(null);
+    var back = _detailTrigger;
+    _detailTrigger = null;
+    if (back && document.contains(back) && back.focus) back.focus({ preventScroll: true });
+  });
+  // Échap : un dialog non modal ne se ferme pas tout seul (les menus ouverts passent avant)
+  document.addEventListener('keydown', function(e) {
+    if (e.key !== 'Escape' || !dialog.open || e.defaultPrevented) return;
+    if (document.querySelector(':popover-open') || document.querySelector('dialog:modal')) return;
+    closeDetail();
+  });
+
   var grid = document.getElementById('card-grid');
   if (!grid) return;
   grid.addEventListener('click', function(e) {
     var card = e.target.closest('article.card');
     if (!card) return;
-    if (e.target.closest('.btn-details')) { toggleDetails(card); return; }
-    // Liens, boutons, formulaires et le panneau lui-même gardent leur rôle
-    if (e.target.closest('a, button, form, input, select, label, .card-details')) return;
-    if (window.getSelection && String(window.getSelection()).length) return;   // sélection de texte
-    toggleDetails(card);
-  });
-  document.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape' && _expandedCard) {
-      var card = _expandedCard;
-      flipCards(function() { setExpanded(card, false); });
-      _expandedCard = null;
-      var btn = card.querySelector('.btn-details');
-      if (btn) btn.focus();
+    var link = e.target.closest('[data-open-detail]');
+    if (link) {
+      // Clic molette / Ctrl / Maj : le lien garde son rôle (annonce sur le site, nouvel onglet)
+      if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+      e.preventDefault();
+      openDetail(card.dataset.id, card.querySelector('.card-title'));
+      return;
     }
+    // Liens, boutons, formulaires, case de sélection et menus gardent leur rôle
+    if (e.target.closest('a, button, form, input, select, label, [popover]')) return;
+    if (window.getSelection && String(window.getSelection()).length) return;   // sélection de texte
+    openDetail(card.dataset.id, card.querySelector('.card-title'));
   });
 })();
 
