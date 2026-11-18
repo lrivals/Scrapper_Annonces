@@ -271,7 +271,7 @@ class TestUi:
         res = _post_fb(client, aid, "favorite").get_json()
         assert res == {"ok": True, "feedback": "favorite", "msg": "« Studio 001 » : favori."}
         html = client[0].get("/?profile=enac").get_data(as_text=True)
-        assert 'class="btn-fb is-on"' in html
+        assert 'class="btn-fb btn-fav is-on"' in html      # ⭐ direct sur la carte
 
         res = _post_fb(client, aid, "favorite").get_json()   # re-clic : effacé
         assert res["feedback"] is None and get_feedback(aid, "enac") is None

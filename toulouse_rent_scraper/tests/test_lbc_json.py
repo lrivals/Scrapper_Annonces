@@ -5,6 +5,7 @@
 # =========================
 
 import json
+import re
 import sqlite3
 from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
@@ -319,11 +320,17 @@ def test_ui_shows_feature_badges(db):
                                     "furnished": False, "charges_included": True, "nb_rooms": 2,
                                     "lat": 43.58, "lon": 1.45, "geo_precision": "exact"})
     app.config["TESTING"] = True
-    html = app.test_client().get("/?profile=enac").get_data(as_text=True)
-    # Étiquettes énergie colorées, ligne clé, prix CC ; distance exacte = sans « ≈ » (ui/cards.py)
-    for label in ("energy-D\">D</span>DPE", "energy-B\">B</span>GES", "Vide", "CC", "T2"):
+    client = app.test_client()
+    html = client.get("/?profile=enac").get_data(as_text=True)
+    # Carte : ligne clé et prix CC ; distance exacte = sans « ≈ » (ui/cards.py)
+    for label in ("CC", "T2"):
         assert label in html
-    assert "≈" not in html.split('class="card-meta"')[1].split("</div>")[0]
+    assert "≈" not in html.split('class="card-keyfacts"')[1].split("</p>")[0]
+    # Étiquettes énergie colorées et particularités : dans le panneau de détail
+    aid = re.search(r'<article class="card" data-id="(\d+)"', html).group(1)
+    details = client.get(f"/annonce/{aid}/details?profile=enac").get_data(as_text=True)
+    for label in ("energy-D\">D</span>DPE", "energy-B\">B</span>GES", "Vide"):
+        assert label in details
 
 
 def test_json_rate_counts_api_source():
