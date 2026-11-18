@@ -28,6 +28,7 @@ from config import (
     SearchProfile,
 )
 from scrapers import antibot
+from scrapers.smart_pagination import PaginationPlan
 from scrapers.browser import chrome_session, BrowserError, PlaywrightTimeoutError
 from utils.logger import setup_logger
 
@@ -55,6 +56,11 @@ class BaseScraper(ABC):
         )
         self.logger = setup_logger(self.site_name().lower())
         self.results: List[Dict] = []
+        # Pagination intelligente : True = lire toutes les pages (scrape --full-scan)
+        self.force_full_scan = False
+        self.pagination: Optional[PaginationPlan] = None
+        # Fin de la recherche : "stale" | "end" | "max" (normale) ou "error"
+        self.scan_status = "error"
 
     # =========================
     # Méthodes abstraites
@@ -377,6 +383,7 @@ class BaseScraper(ABC):
         les cartes affichées, puis cartes DOM pour les annonces absentes du JSON.
         """
         self.logger.info(f"Scraping page {page_num}")
+        start = len(self.results)
 
         # Premier scroll pour déclencher le chargement initial
         self.human_scroll(page, scroll_back=True)
@@ -386,7 +393,7 @@ class BaseScraper(ABC):
         json_annonces = self._json_annonces_for_cards(page, cards)
         if not cards and not json_annonces:
             self.logger.warning(f"Aucune annonce trouvee sur la page {page_num}")
-            return
+            return []
 
         json_keys = set()
         for annonce in json_annonces:
@@ -426,6 +433,15 @@ class BaseScraper(ABC):
         if json_annonces and from_cards:
             self.logger.info(f"  {from_cards} carte(s) absente(s) du JSON extraite(s) depuis le DOM")
         self.logger.info(f"  {len(cards)} cartes trouvees, total: {len(self.results)} annonces")
+        return self.results[start:]
+
+    def _page_is_stale(self, annonces: List[Dict], page_num: int) -> bool:
+        """Pagination intelligente : True si les pages suivantes ont déjà été lues."""
+        reason = self.pagination.stale_reason(annonces, page_num) if self.pagination else None
+        if reason:
+            self.logger.info(f"⏭ Pagination intelligente : {reason} — pages suivantes ignorées")
+            self.scan_status = "stale"
+        return bool(reason)
 
     # =========================
     # Scraping principal
@@ -434,6 +450,7 @@ class BaseScraper(ABC):
     def scrape(self) -> List[Dict]:
         """Lance le scraping complet et retourne la liste des annonces."""
         self.results = []
+        self.scan_status = "error"
         if not self.search_url():
             self.logger.warning(
                 f"Profil '{self.profile.key}' non configuré pour {self.site_name()} "
@@ -441,18 +458,25 @@ class BaseScraper(ABC):
             )
             return self.results
         self.logger.info(f"Demarrage scraping {self.site_name()} — profil {self.profile.label}")
+        self.pagination = PaginationPlan(self.site_name(), self.profile.key,
+                                         force_full=self.force_full_scan)
+        self.logger.info(f"Pagination : {self.pagination.describe()}")
 
         try:
             with chrome_session() as (_browser, page):
                 selector = self._open_search(page)
                 if selector:
-                    self._scrape_current_page(page, selector, page_num=1)
-                    self._paginate(page, selector)
+                    first = self._scrape_current_page(page, selector, page_num=1)
+                    if not self._page_is_stale(first, 1):
+                        self._paginate(page, selector)
         except BrowserError as e:
+            self.scan_status = "error"
             self.logger.error(f"Navigateur indisponible : {e}")
         except Exception as e:
+            self.scan_status = "error"
             self.logger.error(f"Erreur critique lors du scraping : {e}", exc_info=True)
 
+        self.pagination.record(self.scan_status)
         self.logger.info(f"Scraping termine : {len(self.results)} annonces au total")
         return self.results
 
@@ -582,7 +606,11 @@ class BaseScraper(ABC):
             self.logger.debug(f"Capture de debug impossible : {e}")
 
     def _paginate(self, page, selector: str):
-        """Pages suivantes : URLs directes si fournies, sinon bouton « suivant »."""
+        """
+        Pages suivantes : URLs directes si fournies, sinon bouton « suivant ».
+        Pose `scan_status` : "end" / "max" si la pagination se termine normalement,
+        "stale" si la pagination intelligente l'arrête, "error" sinon.
+        """
         urls = self.search_urls()
         if len(urls) > 1:
             self._paginate_by_urls(page, urls[1:])
@@ -590,6 +618,7 @@ class BaseScraper(ABC):
             self._paginate_by_button(page, selector)
 
     def _paginate_by_urls(self, page, urls: List[str]):
+        self.scan_status = "max"
         for page_num, url in enumerate(urls, start=2):
             if page_num > MAX_PAGES_PER_SITE:
                 break
@@ -602,6 +631,7 @@ class BaseScraper(ABC):
                 page.goto(url, timeout=PAGE_LOAD_TIMEOUT, wait_until="domcontentloaded")
             except Exception as nav_err:
                 self.logger.warning(f"Erreur navigation page {page_num}: {nav_err}")
+                self.scan_status = "error"
                 break
 
             time.sleep(random.uniform(3, 5))
@@ -609,6 +639,7 @@ class BaseScraper(ABC):
             if self.is_page_blocked(page):
                 self.logger.warning(f"Blocage detecte page {page_num}")
                 if not self.wait_for_challenge(page):
+                    self.scan_status = "error"
                     break
 
             self.handle_cookie_consent(page)
@@ -616,18 +647,24 @@ class BaseScraper(ABC):
 
             selector = self._find_working_selector(page)
             if not selector:
+                # Au-delà de la dernière page de résultats (ou page changée)
                 self.logger.warning(f"Aucun selecteur trouve page {page_num}, arret")
+                self.scan_status = "end"
                 break
 
-            self._scrape_current_page(page, selector, page_num)
+            added = self._scrape_current_page(page, selector, page_num)
+            if self._page_is_stale(added, page_num):
+                break
 
     def _paginate_by_button(self, page, selector: str):
+        self.scan_status = "max"
         current_page = 1
         while current_page < MAX_PAGES_PER_SITE:
             try:
                 next_button = page.query_selector(self.next_page_selector())
                 if not next_button:
                     self.logger.info("Pas de page suivante, fin de la pagination")
+                    self.scan_status = "end"
                     break
 
                 self.human_mouse_move(page)
@@ -639,16 +676,21 @@ class BaseScraper(ABC):
                 page.wait_for_selector(selector, timeout=PAGE_LOAD_TIMEOUT)
 
                 if not self.wait_for_challenge(page):
+                    self.scan_status = "error"
                     break
 
                 time.sleep(random.uniform(1, 3))
                 self.human_scroll(page)
 
-                self._scrape_current_page(page, selector, current_page)
+                added = self._scrape_current_page(page, selector, current_page)
+                if self._page_is_stale(added, current_page):
+                    break
 
             except PlaywrightTimeoutError:
                 self.logger.warning("Timeout lors de la pagination, arret")
+                self.scan_status = "error"
                 break
             except Exception as e:
                 self.logger.error(f"Erreur lors de la pagination : {e}")
+                self.scan_status = "error"
                 break

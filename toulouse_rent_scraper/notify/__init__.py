@@ -85,8 +85,9 @@ def _top10_state() -> dict:
 
 def notify_top10(profile_keys: Iterable[str], now=None) -> int:
     """
-    Sprint 5.6 — envoie le Top 10 de chaque profil selon NOTIFY_TOP10 :
-    "run" après chaque run, "daily" au plus une fois par jour et par profil, sinon rien.
+    Sprint 5.6 — envoie le Top N (NOTIFY_TOP_N, 10 par défaut) de chaque profil selon
+    NOTIFY_TOP10 : "run" après chaque run, "daily" au plus une fois par jour et par profil
+    (au premier run à partir de NOTIFY_TOP_HOUR s'il est défini), sinon rien.
     Retourne le nombre de messages envoyés.
     """
     import json
@@ -95,27 +96,31 @@ def notify_top10(profile_keys: Iterable[str], now=None) -> int:
     mode = config.NOTIFY_TOP10
     if mode not in ("run", "daily") or not is_enabled():
         return 0
-    from notify.messages import top10_message
+    from notify.messages import top_messages
     from storage.run_stats import profile_rows
     from storage.sqlite import connect
 
-    today = (now or datetime.now()).date().isoformat()
+    now = now or datetime.now()
+    if mode == "daily" and config.NOTIFY_TOP_HOUR is not None and now.hour < config.NOTIFY_TOP_HOUR:
+        return 0
+    today = now.date().isoformat()
     state = _top10_state()
     sent = 0
     for key in profile_keys:
         if mode == "daily" and state.get(key) == today:
             continue
         with connect() as conn:
-            message = top10_message(key, profile_rows(conn, key))
-        if message and send(**message):
-            sent += 1
+            messages = top_messages(key, profile_rows(conn, key), n=config.NOTIFY_TOP_N)
+        delivered = sum(send(**message) for message in messages)
+        if delivered:
+            sent += delivered
             state[key] = today
     if sent:
         try:
             config.TOP10_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
             config.TOP10_STATE_FILE.write_text(json.dumps(state), encoding="utf-8")
         except OSError as e:
-            logger.warning(f"Date du dernier Top 10 non enregistrée : {e}")
+            logger.warning(f"Date du dernier Top non enregistrée : {e}")
     return sent
 
 

@@ -43,6 +43,10 @@ class ApiScraper(ABC):
         self.results: List[Dict] = []
         self._session: Optional[requests.Session] = None
         self._requests = 0
+        # Pagination intelligente (voir scrapers/smart_pagination.py)
+        self.force_full_scan = False
+        self.pagination = None
+        self.scan_status = "error"
 
     # --- À définir par chaque source ---
 
@@ -87,6 +91,17 @@ class ApiScraper(ABC):
         resp.raise_for_status()
         return resp.json()
 
+    def page_is_stale(self, annonces: List[Dict], page_num: int) -> bool:
+        """
+        À appeler après chaque page de `fetch_annonces` (qui pose `scan_status` à "end" ou
+        "max" en fin normale) : True si les pages suivantes ont déjà été lues.
+        """
+        reason = self.pagination.stale_reason(annonces, page_num) if self.pagination else None
+        if reason:
+            self.logger.info(f"⏭ Pagination intelligente : {reason} — pages suivantes ignorées")
+            self.scan_status = "stale"
+        return bool(reason)
+
     # --- Point d'entrée commun ---
 
     def scrape(self) -> List[Dict]:
@@ -97,19 +112,29 @@ class ApiScraper(ABC):
             )
             return self.results
         self.logger.info(f"Demarrage {self.site_name()} (API) — profil {self.profile.label}")
+        from scrapers.smart_pagination import PaginationPlan
+        self.pagination = PaginationPlan(self.site_name(), self.profile.key,
+                                         force_full=self.force_full_scan)
+        self.logger.info(f"Pagination : {self.pagination.describe()}")
+        # Une source sans pagination (une seule requête) termine normalement par défaut
+        self.scan_status = "end"
         try:
             self.fetch_annonces()
         except ApiBlocked as e:
             from scrapers.antibot import record_block
+            self.scan_status = "error"
             self.logger.error(f"{self.site_name()} refuse les requêtes ({e}) : arrêt, site mis en pause")
             record_block(self.site_name())
         except (requests.RequestException, ValueError) as e:
+            self.scan_status = "error"
             self.logger.error(f"Erreur API {self.site_name()} : {e}")
         except Exception as e:
+            self.scan_status = "error"
             self.logger.error(f"Erreur inattendue {self.site_name()} : {e}", exc_info=True)
         finally:
             if self._session is not None:
                 self._session.close()
                 self._session = None
+        self.pagination.record(self.scan_status)
         self.logger.info(f"{self.site_name()} : {len(self.results)} annonces")
         return self.results

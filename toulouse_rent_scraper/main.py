@@ -2,7 +2,7 @@
 # =========================
 # Point d'entrée CLI
 #
-#   python main.py scrape [--site leboncoin] [--profile blagnac] [--no-enrich] [--limit 20] [--export csv]
+#   python main.py scrape [--site leboncoin] [--profile blagnac] [--no-enrich] [--limit 20] [--full-scan] [--export csv]
 #   python main.py enrich [--site seloger] [--limit 20]
 #   python main.py check-links [--limit 50]
 #   python main.py purge
@@ -58,6 +58,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Vérifier les annonces expirées après le scraping (requêtes HEAD)")
     scrape.add_argument("--unattended", action="store_true",
                         help="Run planifié : captcha notifié et attendu 10 min, sites bloqués récemment sautés")
+    scrape.add_argument("--full-scan", action="store_true",
+                        help="Lire toutes les pages (désactive la pagination intelligente pour ce run)")
 
     enrich = sub.add_parser("enrich", help="Enrichir les annonces en attente (surface, DPE…)")
     enrich.add_argument("--site", **site_opt)
@@ -379,8 +381,8 @@ def cmd_report(profile_keys=None, pdf: bool = False, since_hours: int = 24,
             sent = notify_top10(p.key for p in profiles)
         finally:
             config.NOTIFY_TOP10 = mode
-        print(f"Top 10 envoyé : {sent} message(s)" if sent else
-              "Top 10 non envoyé (notifications désactivées ou en échec — voir notify-test)")
+        print(f"Top {config.NOTIFY_TOP_N} envoyé : {sent} message(s)" if sent else
+              f"Top {config.NOTIFY_TOP_N} non envoyé (notifications désactivées ou en échec — voir notify-test)")
     return written
 
 
@@ -400,7 +402,7 @@ def cmd_scrape(args):
 
     try:
         run_scraping(profiles, site_keys, unattended=args.unattended,
-                     enrich=args.open_details, limit=args.limit)
+                     enrich=args.open_details, limit=args.limit, full_scan=args.full_scan)
         if args.purge:
             cmd_purge()
         if args.export:

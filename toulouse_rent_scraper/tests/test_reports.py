@@ -270,21 +270,42 @@ def test_pdf_failure_does_not_raise(tmp_path, monkeypatch):
 # ---- 5.6 Top 10 par notification ----
 
 def test_top10_message_plain_text(db):
-    from notify.messages import top10_message
+    from notify.messages import top_messages
     from storage.run_stats import profile_rows
     from storage.sqlite import connect
 
     for n in range(12):
         _add(db, n, price=600 + n, score=50 + n)
     with connect() as conn:
-        message = top10_message("blagnac", profile_rows(conn, "blagnac"))
+        messages = top_messages("blagnac", profile_rows(conn, "blagnac"))
+    assert len(messages) == 1
+    message = messages[0]
     assert message["title"].startswith("🏆 Top 10")
     lines = message["body"].splitlines()
     assert lines[0].startswith("1. ⚠️ 61") or lines[0].startswith("1. ✅ 61")
     assert lines[1] == "https://www.seloger.com/annonce/11"
     assert "[lien]" not in message["body"] and " · " in lines[0]
     assert "📊 12 annonce(s)" in message["body"]
-    assert top10_message("blagnac", []) is None
+    assert top_messages("blagnac", []) == []
+
+
+def test_top50_split_under_telegram_limit(db):
+    from notify.messages import TELEGRAM_MAX_CHARS, top_messages
+    from storage.run_stats import profile_rows
+    from storage.sqlite import connect
+
+    for n in range(60):
+        _add(db, n, price=600 + n, score=20 + n)
+    with connect() as conn:
+        messages = top_messages("blagnac", profile_rows(conn, "blagnac"), n=50)
+    assert len(messages) > 1
+    assert all(len(m["title"]) + len(m["body"]) < TELEGRAM_MAX_CHARS for m in messages)
+    assert messages[0]["title"].startswith("🏆 Top 50") and messages[0]["title"].endswith(f"(1/{len(messages)})")
+    body = "\n".join(m["body"] for m in messages)
+    # 50 annonces, chacune avec son lien, dans l'ordre ; résumé du marché à la fin
+    assert body.count("https://www.seloger.com/annonce/") == 50
+    assert body.index("1. ") < body.index("50. ")
+    assert "📊 60 annonce(s)" in messages[-1]["body"]
 
 
 @pytest.fixture
@@ -313,3 +334,15 @@ def test_top10_off_by_default_and_run_mode(db, sent, monkeypatch):
     assert notify_top10(["blagnac"]) == 0                 # conftest : NOTIFY_TOP10 = "off"
     monkeypatch.setattr(config, "NOTIFY_TOP10", "run")
     assert notify_top10(["blagnac"]) == notify_top10(["blagnac"]) == 1
+
+
+def test_top_daily_waits_for_hour(db, sent, monkeypatch):
+    from notify import notify_top10
+    _add(db, 1)
+    monkeypatch.setattr(config, "NOTIFY_TOP10", "daily")
+    monkeypatch.setattr(config, "NOTIFY_TOP_HOUR", 19)
+    day = datetime(2026, 11, 14)
+    assert notify_top10(["blagnac"], now=day.replace(hour=8)) == 0
+    assert notify_top10(["blagnac"], now=day.replace(hour=13)) == 0
+    assert notify_top10(["blagnac"], now=day.replace(hour=19, minute=12)) == 1
+    assert notify_top10(["blagnac"], now=day.replace(hour=21)) == 0     # déjà envoyé

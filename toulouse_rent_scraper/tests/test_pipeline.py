@@ -131,6 +131,32 @@ def test_run_scraping_rescores_and_notifies(db):
         assert con.execute("SELECT score FROM annonce_profiles").fetchone()[0] is not None
 
 
+@pytest.mark.parametrize("results,expected", [({"enac": [_raw(1)]}, 1), ({}, 0)])
+def test_top_sent_only_when_annonces_scraped(db, results, expected):
+    """Top N : uniquement si le run a vraiment récupéré des annonces (pas si tout est sauté)."""
+    Fake = _fake_scraper_class(results)
+    with patch("scrapers.get_scraper_class", return_value=Fake), \
+         patch("reporting.generator.generate_summary_reports"), \
+         patch("notify.notify_top10") as top:
+        run_scraping([ENAC], ["leboncoin"], sleep=MagicMock(), enrich=False)
+    assert top.call_count == expected
+
+
+def test_full_scan_flag_reaches_scrapers(db):
+    Fake = _fake_scraper_class({"enac": [_raw(1)]})
+    built = []
+
+    class Recording(Fake):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            built.append(self)
+
+    with patch("scrapers.get_scraper_class", return_value=Recording), \
+         patch("reporting.generator.generate_summary_reports"):
+        run_scraping([ENAC], ["leboncoin"], sleep=MagicMock(), enrich=False, full_scan=True)
+    assert built[0].force_full_scan is True
+
+
 # ---- Sprint 16 — ouverture des fiches dans le pipeline ----
 
 def _fake_open(calls, details=None):

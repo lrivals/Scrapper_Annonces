@@ -431,9 +431,11 @@ class BienIciScraper(ApiScraper):
         zones = self.zone_ids()
         if not zones:
             self.logger.error("Bien'ici : aucune zone de recherche résolue, recherche annulée")
+            self.scan_status = "error"
             return
         seen = set()
         size = page_size(self.profile)
+        self.scan_status = "max"
         for page in range(1, max_pages(self.profile) + 1):
             self.polite_delay(BIENICI_MIN_DELAY, BIENICI_MAX_DELAY)
             data = self.get_json(
@@ -444,7 +446,7 @@ class BienIciScraper(ApiScraper):
             ads = data.get("realEstateAds") if isinstance(data, dict) else None
             if not isinstance(ads, list):
                 raise ValueError("réponse sans « realEstateAds » (format de l'API modifié ?)")
-            added = 0
+            page_annonces = []
             for ad in ads:
                 try:
                     listing = parse_ad(ad) if isinstance(ad, dict) else None
@@ -453,9 +455,12 @@ class BienIciScraper(ApiScraper):
                     continue
                 if listing and listing.url not in seen:
                     seen.add(listing.url)
-                    self.results.append(listing.to_annonce())
-                    added += 1
+                    page_annonces.append(listing.to_annonce())
+            self.results.extend(page_annonces)
             total = data.get("total")
-            self.logger.info(f"  Page {page} : {added} annonces (total annoncé : {total})")
+            self.logger.info(f"  Page {page} : {len(page_annonces)} annonces (total annoncé : {total})")
             if len(ads) < size or (isinstance(total, int) and page * size >= total):
+                self.scan_status = "end"
+                break
+            if self.page_is_stale(page_annonces, page):
                 break

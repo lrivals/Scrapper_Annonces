@@ -107,6 +107,7 @@ python main.py analyze [--limit 20]                # analyse LLM des nouvelles d
 python main.py analyze --stats                     # registre des lectures LLM (appels, jetons), sans appel
 python main.py analyze --retry-errors              # relancer une fois les analyses en erreur
 python main.py scrape --unattended                 # mode planifié (captcha notifié, sites bloqués sautés)
+python main.py scrape --full-scan                  # lire toutes les pages (sans pagination intelligente)
 python main.py ui [--port 8080] [--no-browser]     # interface web (+ API JSON /api/v1, page /tendances)
 ```
 
@@ -197,7 +198,9 @@ résoudre est aussi signalé. Les fiches sont ouvertes avant l'envoi : une ligne
 2. `cp .env.example .env` puis renseigner `NOTIFY_BACKEND=ntfy` et `NTFY_TOPIC=…` (ou Telegram).
 3. `python main.py notify-test`
 
-Top 10 quotidien (Sprint 5.6) : `NOTIFY_TOP10=daily` dans `.env` (premier run de la journée), ou `run`.
+Top quotidien (Sprint 5.6) : `NOTIFY_TOP10=daily` dans `.env` (premier run de la journée qui a
+récupéré des annonces), ou `run`. `NOTIFY_TOP_N=50` pour un Top 50 (découpé en plusieurs messages
+sous la limite de Telegram) ; `NOTIFY_TOP_HOUR=19` pour ne l'envoyer qu'à partir du run de 19 h.
 
 Les actions (masquer, vider la base, lancer le scraping) sont protégées par un jeton CSRF ;
 « Vider la BD » demande de taper `VIDER`.
@@ -349,7 +352,9 @@ Modifiez `config.py` pour ajuster :
     donne charges, dépôt, DPE/GES, rue et GPS. Structure des pages : `docs/pap_selectors.md`.
 - `MAX_RENT_EUR` / `MAX_DISTANCE_KM` : budget et rayon du profil historique `enac`
 - `CHROME_BINARY` / `CHROME_DEBUG_PORT` : Chrome utilisé et port CDP (`0` = port libre)
-- `MAX_PAGES_PER_SITE` : Nombre de pages à scraper (défaut : 10)
+- `MAX_PAGES_PER_SITE` : Nombre de pages à scraper au plus (défaut : 10)
+- `SMART_PAGINATION` (`.env`, `0` pour désactiver), `SMART_PAGINATION_MARGIN_DAYS`,
+  `SMART_FULL_SCAN_DAYS` : pagination intelligente (voir ci-dessous)
 - `PROFILE_SWITCH_MIN_DELAY` / `MAX_DELAY` : pause entre deux recherches d'un même run
 - `WARMUP_STEP_MIN/MAX_DELAY` (15–30 s) et `WARMUP_PAGE_MIN/MAX_DELAY` (10–20 s) : cooldowns
   entre étapes de navigation et entre pages, pour les recherches qui ont des warm-ups
@@ -367,6 +372,19 @@ accueil → warm-up 1 → warm-up 2 … → recherche scannée → page 2 → �
 Chaque étape inclut mouvements de souris, scroll et détection de challenge. La pagination
 s'arrête dès qu'une page ne contient plus d'annonces. Un run Blagnac complet (2 sites × 10
 pages) prend environ 25 minutes.
+
+### Pagination intelligente
+
+Les recherches sont triées des plus récentes aux plus anciennes (LBC, SeLoger, Bien'ici). Après
+chaque page, le scraper compare les dates des annonces (date de remontée LBC, date de publication
+SeLoger / Bien'ici) au dernier passage de cette recherche (`data/.search_state.json`) : si
+toutes sont antérieures (avec 1 jour de marge), les pages suivantes ont déjà été lues et le
+scraper s'arrête. Une page sans dates s'arrête si toutes ses annonces sont déjà en base.
+
+Un parcours complet des 10 pages est refait au premier passage, puis tous les
+`SMART_FULL_SCAN_DAYS` jours (7), pour revoir les prix des annonces plus anciennes ; ou à la
+demande avec `scrape --full-scan`. Un passage interrompu (blocage, erreur) n'est pas enregistré :
+le suivant ne saute aucune page. PAP (défilement infini, sans dates) n'est pas concerné.
 - `UI_SECRET_KEY` (variable d'environnement, optionnelle) : clé de session fixe de l'interface
 
 ---
