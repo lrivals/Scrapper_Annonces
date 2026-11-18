@@ -405,7 +405,15 @@ def search_ad_to_annonce(ad: Dict) -> Optional[Dict]:
     surface) pour se passer de la visite de la page de détail.
     """
     listing = search_ad_to_listing(ad)
-    return listing.to_annonce() if listing else None
+    if not listing:
+        return None
+    annonce = listing.to_annonce()
+    # Date de remontée en tête (index_date) : c'est elle qui ordonne la recherche « Plus
+    # récentes », pas la première publication (pagination intelligente)
+    m = re.match(r"(\d{4}-\d{2}-\d{2})", str(ad.get("index_date") or ""))
+    if m:
+        annonce["listed_at"] = m.group(1)
+    return annonce
 
 
 def search_annonces_from_html(html: Optional[str]) -> List[Dict]:

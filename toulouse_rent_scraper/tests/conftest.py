@@ -20,6 +20,10 @@ def isolated_state(tmp_path, monkeypatch):
     # Top 10 (5.6) : désactivé, jamais le vrai fichier d'état
     monkeypatch.setattr(config, "NOTIFY_TOP10", "off")
     monkeypatch.setattr(config, "TOP10_STATE_FILE", tmp_path / ".last_top10.json")
+    monkeypatch.setattr(config, "NOTIFY_TOP_N", 10)
+    monkeypatch.setattr(config, "NOTIFY_TOP_HOUR", None)
+    # Pagination intelligente : jamais le vrai fichier d'état
+    monkeypatch.setattr(config, "SEARCH_STATE_FILE", tmp_path / ".search_state.json")
     # Poids appris (15.6) : jamais le vrai fichier
     monkeypatch.setattr(config, "SCORE_WEIGHTS_FILE", tmp_path / "score_weights.json")
     # Critères saisis dans l'interface (15.5) : jamais le vrai fichier

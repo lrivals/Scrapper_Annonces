@@ -269,6 +269,7 @@ def run_scraping(
     unattended: bool = False,
     enrich: bool = True,
     limit: Optional[int] = None,
+    full_scan: bool = False,
 ) -> RunStats:
     """
     Lance une recherche par couple (profil, site), traite les résultats, ouvre les fiches
@@ -277,6 +278,7 @@ def run_scraping(
     `unattended` (run planifié) : captcha notifié et attendu plus longtemps, et un site
     bloqué récemment est sauté (anti-ban).
     `limit` : plafond global de fiches ouvertes (en plus de DETAIL_VISITS_PER_RUN par site).
+    `full_scan` : lire toutes les pages, sans pagination intelligente.
     """
     from scrapers.antibot import recently_blocked
     from reporting.generator import generate_summary_reports
@@ -294,6 +296,7 @@ def run_scraping(
 
     for profile, site_key in runs:
         scraper = get_scraper_class(site_key)(profile, unattended=unattended)
+        scraper.force_full_scan = full_scan
         site_name = scraper.site_name()
 
         if not scraper.search_url():
@@ -381,7 +384,11 @@ def run_scraping(
     generate_summary_reports(run_start, profiles=profiles)
     logger.info("📄 Rapports générés dans le dossier reports/")
 
-    # Top 10 par profil (Sprint 5.6, NOTIFY_TOP10)
-    from notify import notify_top10
-    notify_top10(p.key for p in profiles)
+    # Top N par profil (Sprint 5.6, NOTIFY_TOP10 / NOTIFY_TOP_N) : seulement si le run a
+    # vraiment récupéré des annonces (pas quand tous les sites ont été sautés ou bloqués)
+    if total.raw:
+        from notify import notify_top10
+        notify_top10(p.key for p in profiles)
+    else:
+        logger.info("Top des annonces non envoyé : aucune annonce récupérée pendant ce run")
     return total

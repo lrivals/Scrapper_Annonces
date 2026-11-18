@@ -133,25 +133,41 @@ def favorite_gone_messages(annonces: List[Dict]) -> List[Dict]:
 TELEGRAM_MAX_CHARS = 4096
 
 
-def top10_message(profile_key: str, ads: List[Dict], n: int = 10) -> Optional[Dict]:
+def top_messages(profile_key: str, ads: List[Dict], n: int = 10) -> List[Dict]:
     """
-    Sprint 5.6 — Top 10 d'un profil en un message : une ligne par annonce et son lien
-    (texte brut, lisible sur Telegram comme sur ntfy). None si aucune annonce.
+    Sprint 5.6 — Top N d'un profil : une ligne par annonce et son lien (texte brut, lisible
+    sur Telegram comme sur ntfy). Découpé en plusieurs messages sous la limite de Telegram
+    (Top 50 ≈ 3 messages), le résumé du marché à la fin du dernier. Liste vide si aucune annonce.
     """
     from reporting.generator import _by_score, market_line, _new_today, top10_lines
 
     best = _by_score(ads)[:n]
     if not best:
-        return None
+        return []
     label = SEARCH_PROFILES[profile_key].label if profile_key in SEARCH_PROFILES else profile_key
-    lines = []
+    entries = []
     for line, ad in zip(top10_lines(best, n=n), best):
         # « 1. ⭐ 92 | … | [lien](url) » → texte brut, lien sur sa propre ligne
         text = line.rsplit(" | [lien](", 1)[0].replace(" | ", " · ")
-        lines.append(f"{text}\n{ad['url']}")
-    body = "\n".join(lines) + "\n\n" + market_line(ads, _new_today(ads))
+        entries.append(f"{text}\n{ad['url']}")
+    entries.append("\n" + market_line(ads, _new_today(ads)))
+
     # Marge pour le titre ajouté par le backend
     limit = TELEGRAM_MAX_CHARS - 200
-    if len(body) > limit:
-        body = body[:limit].rsplit("\n", 1)[0] + "\n…"
-    return {"title": f"🏆 Top {len(best)} — {label}", "body": body, "priority": "low", "tags": ["trophy"]}
+    chunks: List[str] = []
+    current = ""
+    for entry in entries:
+        entry = entry[:limit]
+        if current and len(current) + 1 + len(entry) > limit:
+            chunks.append(current)
+            current = entry.lstrip("\n")
+        else:
+            current = f"{current}\n{entry}" if current else entry
+    chunks.append(current)
+
+    title = f"🏆 Top {len(best)} — {label}"
+    return [
+        {"title": title if len(chunks) == 1 else f"{title} ({i}/{len(chunks)})",
+         "body": body, "priority": "low", "tags": ["trophy"]}
+        for i, body in enumerate(chunks, start=1)
+    ]

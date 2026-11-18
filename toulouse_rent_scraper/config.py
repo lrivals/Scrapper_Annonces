@@ -343,6 +343,17 @@ MAX_ACTION_DELAY = 1.5
 
 MAX_PAGES_PER_SITE = 10
 
+# Pagination intelligente : les recherches sont triées des plus récentes aux plus anciennes.
+# Dès qu'une page ne contient plus que des annonces publiées avant le dernier passage
+# complet de cette recherche (moins une marge), les pages suivantes ont déjà été vues : on
+# s'arrête. Un parcours complet (MAX_PAGES_PER_SITE) reste fait régulièrement pour revoir
+# les prix des annonces plus anciennes (baisses de prix, annonces réactivées).
+SMART_PAGINATION = (os.environ.get("SMART_PAGINATION") or "1").strip().lower() not in ("0", "off", "false", "non")
+SMART_PAGINATION_MARGIN_DAYS = 1    # dates au jour près, fuseaux (UTC / Paris) : 1 jour de marge
+SMART_PAGINATION_MIN_PAGES = 1      # pages toujours lues avant de pouvoir s'arrêter
+SMART_PAGINATION_DATED_RATIO = 0.5  # part minimale d'annonces datées pour juger une page
+SMART_FULL_SCAN_DAYS = 7            # parcours complet si le dernier date de plus de N jours
+
 # =========================
 # 💾 STOCKAGE
 # =========================
@@ -402,6 +413,8 @@ UNATTENDED_CHALLENGE_TIMEOUT_SECONDS = 600   # mode planifié : le temps de voir
 # Après un blocage non résolu, un run planifié saute ce site pendant ce délai (anti-ban IP)
 BLOCK_COOLDOWN_HOURS = 6
 BLOCK_STATE_FILE = DATA_DIR / ".last_block.json"
+# Pagination intelligente : date du dernier passage de chaque recherche (site, profil)
+SEARCH_STATE_FILE = DATA_DIR / ".search_state.json"
 
 
 # =========================
@@ -537,6 +550,10 @@ NOTIFY_GROUP_MAX_ITEMS = 8     # nombre d'annonces listées dans un récapitulat
 # une fois par jour, au premier run de la journée), "run" (après chaque run)
 NOTIFY_TOP10 = (os.environ.get("NOTIFY_TOP10") or "off").strip().lower()
 TOP10_STATE_FILE = DATA_DIR / ".last_top10.json"
+# Nombre d'annonces du Top envoyé (NOTIFY_TOP_N=50 : Top 50, découpé en plusieurs messages
+# si besoin) et heure à partir de laquelle le Top « daily » part (vide : premier run du jour)
+NOTIFY_TOP_N = int(os.environ.get("NOTIFY_TOP_N") or 10)
+NOTIFY_TOP_HOUR = int(os.environ["NOTIFY_TOP_HOUR"]) if os.environ.get("NOTIFY_TOP_HOUR") else None
 
 # Sprint 2-bis — jeton de l'API /api/v1, exigé pour tout accès qui ne vient pas de la machine
 # (réseau, conteneur Docker). Vide : l'API ne répond qu'en local.

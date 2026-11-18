@@ -132,8 +132,12 @@ class PAPScraper(BaseScraper):
 
     def _scrape_current_page(self, page, selector: str, page_num: int):
         self._scroll_until_complete(page)
-        super()._scrape_current_page(page, selector, page_num)
+        return super()._scrape_current_page(page, selector, page_num)
+
+    def _page_is_stale(self, annonces, page_num: int) -> bool:
+        # Une seule « page » (défilement infini) et pas de date sur les cartes
+        return False
 
     def _paginate(self, page, selector: str):
         """Tout est chargé par le défilement de la première page."""
-        return
+        self.scan_status = "end"
