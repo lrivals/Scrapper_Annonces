@@ -249,7 +249,7 @@ def test_map_view_has_summary_stack(client):
     page = client.get("/").get_data(as_text=True)
     assert 'id="map-stack"' in page and 'id="map-stack-list"' in page
     assert '<article class="card" data-id="1"' in page
-    assert 'class="btn-add-doc" id="doc-btn-1" data-id="1"' in page
+    assert 'class="select-box" data-id="1"' in page      # case de sélection, synchronisée avec la pile
 
 
 def test_card_shows_full_detail(client, temp_db):
@@ -327,8 +327,98 @@ def test_profile_menu_marks_current_profile(client):
     assert 'href="/tendances?days=30&amp;profile=enac"' in trends
 
 
-def test_index_keeps_document_and_view_controls(client):
+def test_index_keeps_count_view_and_scrape_controls(client):
     page = client.get("/").get_data(as_text=True)
-    for el_id in ("annonce-count", "btn-doc-mode", "btn-export", "doc-form", "view-toggle", "btn-scrape", "scrape-log"):
+    for el_id in ("annonce-count", "view-toggle", "btn-scrape", "scrape-log"):
         assert f'id="{el_id}"' in page
     assert client.get("/static/topbar.js").status_code == 200
+
+
+# ---- Barre d'outils, puces des filtres actifs, panneau des filtres (refonte UI, étape 2) ----
+
+def _args(qs):
+    from werkzeug.datastructures import MultiDict
+    from urllib.parse import parse_qsl
+    return MultiDict(parse_qsl(qs))
+
+
+def test_chips_remove_only_their_own_param():
+    from ui.filter_bar import filter_bar
+    bar = filter_bar(_args("profile=blagnac&prix_max=800&site=LeBonCoin&sort=price&order=asc&view=map"
+                           "&flash=ok&flash_msg=Hello"), "price", "asc")
+    chips = {c.label: c.url for c in bar.chips}
+    assert chips == {
+        "Prix ≤ 800 €": "/?profile=blagnac&site=LeBonCoin&sort=price&order=asc&view=map",
+        "LeBonCoin": "/?profile=blagnac&prix_max=800&sort=price&order=asc&view=map",
+    }
+    assert bar.count == 2
+    # Tout effacer : garde profil, tri et vue ; jamais le message flash
+    assert bar.clear_url == "/?profile=blagnac&sort=price&order=asc&view=map"
+
+
+def test_chips_ignore_defaults_and_invalid_values():
+    from ui.filter_bar import filter_bar
+    bar = filter_bar(_args("profile=enac&site=&status=&prix_min=abc&dups=&excl=bogus&fb=favorite"), "score", "desc")
+    assert bar.chips == []           # ⭐ Favoris est un filtre rapide, pas une puce
+    assert [q.current for q in bar.quick] == [True, False]
+    assert bar.quick[0].url == "/?profile=enac&prix_min=abc&excl=bogus"   # second clic : retire fb
+    assert bar.quick[1].url.endswith("fb=contacted")
+
+
+def test_chip_labels():
+    from ui.filter_bar import filter_bar
+    bar = filter_bar(_args("prix_min=400&status=hidden&dups=hide&fb=dislike&excl=only"), "score", "desc")
+    assert [c.label for c in bar.chips] == ["Prix ≥ 400 €", "Masquées", "Sans doublons", "👎 Pas intéressé",
+                                             "Exclues seulement"]
+
+
+def test_sort_menu_marks_current_option():
+    from ui.filter_bar import filter_bar
+    bar = filter_bar(_args("profile=blagnac&sort=price&order=desc"), "price", "desc")
+    assert bar.sort_label == "Prix ↓"
+    current = [s for s in bar.sorts if s.current]
+    assert len(current) == 1 and current[0].url == "/?profile=blagnac&sort=price&order=desc"
+    assert filter_bar(_args(""), "distance_enac_km", "asc").sort_label == "Distance"
+    assert filter_bar(_args(""), "score", "asc").sort_label == "Score ↑"   # hors menu
+
+
+def test_index_toolbar_chips_and_filters_dialog(client):
+    _add("https://ex.com/1", price=450)
+    _add("https://ex.com/2", price=900, site="LeBonCoin")
+    page = client.get("/?prix_max=800&sort=price&order=asc").get_data(as_text=True)
+    assert "Studio 450" in page and "Studio 900" not in page
+    assert 'class="chip"' in page and "Prix ≤ 800 €" in page
+    assert 'href="/?sort=price&amp;order=asc"' in page                  # ✕ de la puce
+    assert 'class="btn-tool-badge"' in page and "Trier :</span> Prix ↑" in page
+    assert 'aria-pressed="false"' in page and "⭐ Favoris" in page
+    # Panneau : formulaire GET existant, tri et vue conservés, bouton « Voir N annonces »
+    dialog = page[page.index('<dialog id="filters-dialog"'):page.index("</dialog>")]
+    assert 'method="get"' in dialog
+    for name in ("prix_min", "prix_max", "site", "status", "fb", "dups"):
+        assert f'name="{name}"' in dialog
+    assert 'name="sort" value="price"' in dialog and 'name="order" value="asc"' in dialog
+    assert "Voir 1 annonce<" in dialog
+    assert "filter-bar" not in page and "order-btn" not in page
+
+
+def test_index_without_filters_has_no_chips_row(client):
+    _add("https://ex.com/1")
+    page = client.get("/").get_data(as_text=True)
+    assert 'class="chips-row"' not in page and 'class="btn-tool-badge"' not in page
+
+
+# ---- Sélection par cases à cocher et barre d'export (refonte UI, étape 3) ----
+
+def test_cards_have_selection_checkbox_and_export_bar(client):
+    _add("https://ex.com/1", price=450)
+    page = client.get("/").get_data(as_text=True)
+    assert 'class="select-box" data-id="1"' in page
+    assert "Sélectionner « Studio 450 » pour l’export" in page
+    bar = page[page.index('id="selection-bar"'):]
+    bar = bar[:bar.index("</form>")]
+    assert "hidden" in bar.split(">")[0]                  # cachée tant que rien n'est coché
+    assert "Exporter" in bar and "Tout décocher" in bar
+    assert 'action="/export-document"' in bar and 'name="ids"' in bar and 'name="profile"' in bar
+    # Ancien mode document retiré
+    for gone in ("btn-doc-mode", "btn-add-doc", "Commencer document", "doc-bar"):
+        assert gone not in page

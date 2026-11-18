@@ -28,6 +28,9 @@ def create_app() -> Flask:
     # Signaux d'arnaque (colonne JSON) → liste, pour l'infobulle de la pastille ⚠️ (15.4)
     from analysis.llm import describe_flags
     app.jinja_env.filters["flags"] = describe_flags
+    # Puces des filtres actifs, filtres rapides, menu de tri (barre d'outils de la liste)
+    from ui.filter_bar import filter_bar
+    app.jinja_env.globals["filter_bar"] = filter_bar
     # Requêtes HTTP de Werkzeug : seulement les avertissements
     logging.getLogger("werkzeug").setLevel(logging.WARNING)
     return app

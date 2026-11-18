@@ -16,128 +16,148 @@
   {% with active='annonces', profile_url='/?profile=' %}{% include "_topbar.html" %}{% endwith %}
   <div class="wrapper">
     <h1 class="visually-hidden">Annonces — {{ profile.label }}</h1>
+    {% set fbar = filter_bar(request.args, current_sort, current_order) %}
+    {% set chev %}<svg class="tb-chev" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M5.3 7.3a1 1 0 0 1 1.4 0L10 10.6l3.3-3.3a1 1 0 1 1 1.4 1.4l-4 4a1 1 0 0 1-1.4 0l-4-4a1 1 0 0 1 0-1.4z"/></svg>{% endset %}
     <div class="toolbar">
-      <div class="count" id="annonce-count">{{ total }} annonce{{ 's' if total != 1 else '' }}</div>
-      <div class="doc-bar">
-        <button class="btn-doc-start" id="btn-doc-mode" onclick="toggleDocumentMode()">Commencer document</button>
-        <span class="doc-count-badge" id="doc-count"></span>
-        <button class="btn-doc-export" id="btn-export" onclick="exportDocument()">Exporter ↓</button>
-        <button class="btn-doc-clear" id="btn-clear" onclick="clearDocument()">Vider</button>
+      <div class="toolbar-group">
+        <div class="count" id="annonce-count">{{ total }} annonce{{ 's' if total != 1 else '' }}</div>
+        {% for q in fbar.quick %}
+        <a href="{{ q.url }}" class="chip-toggle" data-keep-view aria-pressed="{{ 'true' if q.current else 'false' }}" title="{{ q.title }}">{{ q.label }}</a>
+        {% endfor %}
+        <button type="button" class="btn-tool" id="btn-filters" aria-haspopup="dialog" aria-controls="filters-dialog">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M7 12h10M10 18h4"/></svg>
+          Filtres{% if fbar.count %} <span class="btn-tool-badge" aria-label="{{ fbar.count }} actif{{ 's' if fbar.count > 1 else '' }}">{{ fbar.count }}</span>{% endif %}
+        </button>
       </div>
-      <form id="doc-form" method="POST" action="/export-document" style="display:none">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <input type="hidden" name="ids" id="doc-ids-input">
-        <input type="hidden" name="profile" value="{{ profile.key }}">
-      </form>
-      <div class="view-toggle" id="view-toggle">
-        <span class="view-indicator" id="view-indicator" aria-hidden="true" hidden></span>
-        <button class="btn-view active" id="btn-view-list" onclick="setView('list')">&#9776; Liste</button>
-        <button class="btn-view" id="btn-view-map" onclick="setView('map')">&#128506; Carte</button>
+      <div class="toolbar-group toolbar-end">
+        <button type="button" class="btn-tool" popovertarget="menu-sort" aria-haspopup="menu">
+          <span class="btn-tool-muted">Trier :</span> {{ fbar.sort_label }} {{ chev }}
+        </button>
+        <div popover id="menu-sort" class="tb-menu" role="menu" aria-label="Trier les annonces">
+          {% for s in fbar.sorts %}
+          <a role="menuitem" class="tb-item" href="{{ s.url }}" data-keep-view {% if s.current %}aria-current="true"{% endif %}><span>{{ s.label }}</span></a>
+          {% endfor %}
+        </div>
+        <div class="view-toggle" id="view-toggle">
+          <span class="view-indicator" id="view-indicator" aria-hidden="true" hidden></span>
+          <button class="btn-view active" id="btn-view-list" onclick="setView('list')">&#9776; Liste</button>
+          <button class="btn-view" id="btn-view-map" onclick="setView('map')">&#128506; Carte</button>
+        </div>
       </div>
     </div>
+
+    {% set show_excluded_link = requirements and current_excl == '' and excluded_count %}
+    {% if fbar.chips or show_excluded_link %}
+    <div class="chips-row" aria-label="Filtres actifs">
+      {% for c in fbar.chips %}
+      <a href="{{ c.url }}" class="chip" data-keep-view title="{{ c.title }}">{{ c.label }} <span class="chip-x" aria-hidden="true">✕</span></a>
+      {% endfor %}
+      {% if fbar.chips | length > 1 %}<a href="{{ fbar.clear_url }}" class="chips-clear" data-keep-view>Tout effacer</a>{% endif %}
+      {% if show_excluded_link %}
+      <a href="{{ excluded_url }}" class="excluded-link" data-keep-view
+         title="Critères {{ profile.label }} : {{ requirements | join(' · ') }} — une information inconnue n’exclut jamais une annonce">{{ excluded_count }} annonce{{ 's' if excluded_count != 1 else '' }} exclue{{ 's' if excluded_count != 1 else '' }} par les critères →</a>
+      {% endif %}
+    </div>
+    {% endif %}
 
     {% if flash %}
     <div class="flash flash-{{ flash.type }}">{{ flash.msg }}</div>
     {% endif %}
 
-    {% if requirements %}
-    <p class="requirements-bar" title="Une information inconnue n’exclut jamais une annonce">
-      Critères {{ profile.label }} : {{ requirements | join(' · ') }}
-      {% if current_excl == '' and excluded_count %}
-      — <a href="{{ excluded_url }}">{{ excluded_count }} annonce{{ 's' if excluded_count != 1 else '' }} exclue{{ 's' if excluded_count != 1 else '' }}</a>
-      {% endif %}
-      <a href="/settings/requirements?profile={{ profile.key }}" class="requirements-edit">modifier</a>
-    </p>
-    {% endif %}
-
-    <form method="get" class="filter-bar">
-      <input type="hidden" name="profile" value="{{ profile.key }}">
-      <div class="filter-group">
-        <label>Plateforme</label>
-        <select name="site">
-          <option value="">Toutes</option>
-          {% for s in sites %}
-          <option value="{{ s }}" {% if s == current_site %}selected{% endif %}>{{ s }}</option>
-          {% endfor %}
-        </select>
-      </div>
-
-      <div class="filter-group">
-        <label>Statut</label>
-        <select name="status">
-          <option value="" {% if current_status == '' %}selected{% endif %}>Tous</option>
-          <option value="active" {% if current_status == 'active' %}selected{% endif %}>Actives</option>
-          <option value="expired" {% if current_status == 'expired' %}selected{% endif %}>Expirées</option>
-          <option value="hidden" {% if current_status == 'hidden' %}selected{% endif %}>Masquées</option>
-        </select>
-      </div>
-
-      <div class="filter-group">
-        <label>Doublons</label>
-        <select name="dups">
-          <option value="" {% if current_dups == '' %}selected{% endif %}>Afficher</option>
-          <option value="hide" {% if current_dups == 'hide' %}selected{% endif %}>Masquer</option>
-        </select>
-      </div>
-
-      <div class="filter-group">
-        <label>Retours</label>
-        <select name="fb">
-          <option value="" {% if current_fb == '' %}selected{% endif %}>Sans les 👎</option>
-          <option value="favorite" {% if current_fb == 'favorite' %}selected{% endif %}>⭐ Favoris</option>
-          <option value="contacted" {% if current_fb == 'contacted' %}selected{% endif %}>📞 Contactés</option>
-          <option value="dislike" {% if current_fb == 'dislike' %}selected{% endif %}>👎 Pas intéressé</option>
-          <option value="any" {% if current_fb == 'any' %}selected{% endif %}>Tout</option>
-        </select>
-      </div>
-
-      {% if requirements %}
-      <div class="filter-group">
-        <label title="Critères éliminatoires du profil : {{ requirements | join(' · ') }}">Critères</label>
-        <select name="excl">
-          <option value="" {% if current_excl == '' %}selected{% endif %}>Respectés</option>
-          <option value="show" {% if current_excl == 'show' %}selected{% endif %}>Tout afficher</option>
-          <option value="only" {% if current_excl == 'only' %}selected{% endif %}>Exclues seulement</option>
-        </select>
-      </div>
-      {% endif %}
-
-      <div class="filter-group">
-        <label>Prix (€)</label>
-        <div class="prix-range">
-          <input type="number" name="prix_min" value="{{ current_prix_min }}" placeholder="{{ profile.min_rent_eur or '' }}" min="0">
-          <input type="number" name="prix_max" value="{{ current_prix_max }}" placeholder="{{ profile.max_rent_eur or '' }}" min="0">
-        </div>
-      </div>
-
-      <div class="filter-group">
-        <label>Trier par</label>
-        <div style="display:flex;gap:8px;align-items:center">
-          <select name="sort">
-            <option value="score"            {% if current_sort == 'score' %}selected{% endif %}>Score</option>
-            <option value="price"            {% if current_sort == 'price' %}selected{% endif %}>Prix</option>
-            <option value="distance"         {% if current_sort in ('distance', 'distance_enac_km') %}selected{% endif %}>Distance {{ profile.label }}</option>
-            <option value="created_at"       {% if current_sort == 'created_at' %}selected{% endif %}>Derniers ajouts</option>
-          </select>
-          <input type="hidden" id="order-input" name="order" value="{{ current_order }}">
-          <button type="button" class="btn-order" id="order-btn" onclick="toggleOrder()" title="{{ 'Croissant' if current_order == 'asc' else 'Décroissant' }}">
-            {{ '↑' if current_order == 'asc' else '↓' }}
+    <dialog id="filters-dialog" class="drawer" aria-labelledby="filters-title">
+      <form method="get" action="/" class="drawer-form" id="filters-form">
+        <div class="drawer-head">
+          <h2 id="filters-title">Filtres</h2>
+          <button type="button" class="tb-btn tb-icon-btn" data-close-dialog aria-label="Fermer les filtres">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
           </button>
         </div>
-      </div>
 
-      <div class="filter-group">
-        <button type="submit" class="btn-filter">Filtrer</button>
-      </div>
-      <div class="filter-group">
-        <a href="/?profile={{ profile.key }}" class="btn-reset">Reset</a>
-      </div>
-      <input type="hidden" name="view" id="view-input" value="list">
-    </form>
+        <div class="drawer-body">
+          <input type="hidden" name="profile" value="{{ profile.key }}">
+          <input type="hidden" name="sort" value="{{ current_sort }}">
+          <input type="hidden" name="order" value="{{ current_order }}">
+          <input type="hidden" name="view" id="view-input" value="{{ request.args.get('view', '') }}">
+
+          <fieldset class="filter-group">
+            <legend>Loyer (€)</legend>
+            <div class="prix-range">
+              <label><span class="visually-hidden">Loyer minimum</span>
+                <input type="number" name="prix_min" value="{{ current_prix_min }}" placeholder="min {{ profile.min_rent_eur or '' }}" min="0" inputmode="numeric"></label>
+              <span aria-hidden="true">–</span>
+              <label><span class="visually-hidden">Loyer maximum</span>
+                <input type="number" name="prix_max" value="{{ current_prix_max }}" placeholder="max {{ profile.max_rent_eur or '' }}" min="0" inputmode="numeric"></label>
+            </div>
+          </fieldset>
+
+          <div class="filter-group">
+            <label for="f-site">Plateforme</label>
+            <select name="site" id="f-site">
+              <option value="">Toutes</option>
+              {% for s in sites %}
+              <option value="{{ s }}" {% if s == current_site %}selected{% endif %}>{{ s }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="filter-group">
+            <label for="f-status">Statut</label>
+            <select name="status" id="f-status">
+              <option value="" {% if current_status == '' %}selected{% endif %}>Tous (hors masquées)</option>
+              <option value="active" {% if current_status == 'active' %}selected{% endif %}>Actives</option>
+              <option value="expired" {% if current_status == 'expired' %}selected{% endif %}>Expirées</option>
+              <option value="hidden" {% if current_status == 'hidden' %}selected{% endif %}>Masquées</option>
+            </select>
+          </div>
+
+          <div class="filter-group">
+            <label for="f-fb">Retours</label>
+            <select name="fb" id="f-fb">
+              <option value="" {% if current_fb == '' %}selected{% endif %}>Sans les 👎</option>
+              <option value="favorite" {% if current_fb == 'favorite' %}selected{% endif %}>⭐ Favoris</option>
+              <option value="contacted" {% if current_fb == 'contacted' %}selected{% endif %}>📞 Contactés</option>
+              <option value="dislike" {% if current_fb == 'dislike' %}selected{% endif %}>👎 Pas intéressé</option>
+              <option value="any" {% if current_fb == 'any' %}selected{% endif %}>Tout</option>
+            </select>
+          </div>
+
+          <div class="filter-group">
+            <label for="f-dups">Doublons</label>
+            <select name="dups" id="f-dups">
+              <option value="" {% if current_dups == '' %}selected{% endif %}>Afficher</option>
+              <option value="hide" {% if current_dups == 'hide' %}selected{% endif %}>Masquer</option>
+            </select>
+          </div>
+
+          {% if requirements %}
+          <div class="filter-group">
+            <label for="f-excl">Critères éliminatoires</label>
+            <select name="excl" id="f-excl">
+              <option value="" {% if current_excl == '' %}selected{% endif %}>Respectés</option>
+              <option value="show" {% if current_excl == 'show' %}selected{% endif %}>Tout afficher</option>
+              <option value="only" {% if current_excl == 'only' %}selected{% endif %}>Exclues seulement</option>
+            </select>
+            <p class="filter-help">Critères {{ profile.label }} : {{ requirements | join(' · ') }}.
+              Une information inconnue n’exclut jamais une annonce.
+              <a href="/settings/requirements?profile={{ profile.key }}">Modifier</a></p>
+          </div>
+          {% endif %}
+        </div>
+
+        <div class="drawer-foot">
+          <a href="{{ fbar.clear_url }}" class="btn-reset" data-keep-view>Réinitialiser</a>
+          <button type="submit" class="btn-filter" id="filters-submit">Voir {{ total }} annonce{{ 's' if total != 1 else '' }}</button>
+        </div>
+      </form>
+    </dialog>
 
     <main class="grid" id="card-grid">
       {% for a in annonces %}
       <article class="card" data-id="{{ a.id }}" style="--i: {{ [loop.index0, 10]|min }}">
+        <label class="card-select" title="Sélectionner pour l’export">
+          <input type="checkbox" class="select-box" data-id="{{ a.id }}" aria-label="Sélectionner « {{ a.title or 'Annonce sans titre' }} » pour l’export">
+          <span class="select-mark" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 10.5l3.5 3.5 7.5-8"/></svg></span>
+        </label>
         {% set v = a.view %}
         <a href="{{ a.url }}" target="_blank" class="card-image">
           {% if a.thumbnail %}
@@ -251,7 +271,6 @@
                     aria-pressed="{{ 'true' if a.feedback == value else 'false' }}" title="{{ label }}" onclick="sendFeedback(this)">{{ icon }}</button>
             {% endfor %}
           </div>
-          <button class="btn-add-doc" id="doc-btn-{{ a.id }}" data-id="{{ a.id }}" onclick="toggleAnnonce({{ a.id }}, this)">+ Doc</button>
           {% if s == 'hidden' %}
           <form method="post" action="/restore" style="display:inline">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -295,6 +314,17 @@
       </div>
       <p id="map-ungeolocated"></p>
     </div>
+  </div>
+  {# Sélection pour l'export : visible dès qu'au moins une annonce est cochée #}
+  <div class="selection-bar" id="selection-bar" role="region" aria-label="Annonces sélectionnées" hidden>
+    <span class="selection-count" id="selection-count" aria-live="polite"></span>
+    <button type="button" class="btn-sel-export" onclick="exportDocument()">Exporter ↓</button>
+    <button type="button" class="btn-sel-clear" onclick="clearSelection()" title="Tout décocher">✕<span class="sel-clear-label"> Tout décocher</span></button>
+    <form id="doc-form" method="POST" action="/export-document" hidden>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="ids" id="doc-ids-input">
+      <input type="hidden" name="profile" value="{{ profile.key }}">
+    </form>
   </div>
   <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
